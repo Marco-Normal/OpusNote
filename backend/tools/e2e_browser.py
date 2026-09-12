@@ -40,37 +40,67 @@ DEFAULT_LEGACY = Path(__file__).resolve().parent.parent / "data" / "legacy-fixtu
 #: own MIDI layer to treat it as a real device.
 FAKE_MIDI = """
 (() => {
-  const input = {
-    id: 'fake-px870',
-    name: 'CASIO PX-870 (simulated)',
-    manufacturer: 'CASIO',
+  const makeInput = (id, name, manufacturer) => ({
+    id,
+    name,
+    manufacturer,
     type: 'input',
     state: 'connected',
     connection: 'open',
     onmidimessage: null,
-  };
-  const inputs = new Map([[input.id, input]]);
+  });
+  const through = makeInput('alsa-midi-through', 'Midi Through Port-0', 'Midi Through');
+  const casio = makeInput('alsa-casio-1', 'CASIO USB-MIDI MIDI 1', 'CASIO');
+  const ports = new Map();
   const access = {
     inputs: {
-      forEach: (callback) => inputs.forEach((value) => callback(value)),
-      get: (key) => inputs.get(key),
-      size: inputs.size,
+      forEach: (callback) => ports.forEach((value) => callback(value)),
+      get: (key) => ports.get(key),
+      get size() { return ports.size; },
     },
     outputs: { forEach: () => {}, size: 0 },
     sysexEnabled: false,
     onstatechange: null,
   };
+  const announce = () => {
+    if (typeof access.onstatechange === 'function') access.onstatechange({});
+  };
   navigator.requestMIDIAccess = async () => access;
   window.__fakeMidi = {
-    send(bytes) {
-      if (typeof input.onmidimessage !== 'function') return false;
-      input.onmidimessage({ data: new Uint8Array(bytes), timeStamp: performance.now() });
+    // The live port is what every existing scenario means by "send a note".
+    send(bytes, portId) {
+      const target = ports.get(portId ?? 'alsa-casio-1');
+      if (!target || typeof target.onmidimessage !== 'function') return false;
+      target.onmidimessage({ data: new Uint8Array(bytes), timeStamp: performance.now() });
       return true;
     },
+    // The same key reported by both ports, which is what a key echo looks like.
+    sendToAll(bytes) {
+      let delivered = 0;
+      for (const id of [...ports.keys()]) if (this.send(bytes, id)) delivered += 1;
+      return delivered;
+    },
     ready() {
-      return typeof input.onmidimessage === 'function';
+      return typeof casio.onmidimessage === 'function';
+    },
+    total() {
+      return ports.size;
+    },
+    unplugAll() {
+      ports.clear();
+      announce();
+    },
+    plug(portId) {
+      ports.set(portId, portId === 'alsa-casio-1' ? casio : through);
+      announce();
+    },
+    plugLater(ms, portId) {
+      setTimeout(() => this.plug(portId), ms);
     },
   };
+  // Plugged in and switched on before the app loads: the case the feature exists for.
+  ports.set(through.id, through);
+  ports.set(casio.id, casio);
 })();
 """
 
@@ -292,6 +322,32 @@ def click_button(page: Page, label: str, timeout: float = 20_000) -> None:
     page.get_by_role("button", name=label, exact=True).first.click(timeout=timeout)
 
 
+def open_ports(page: Page) -> None:
+    """Make sure the per-port list is on screen.
+
+    It is a toggle, so clicking unconditionally *closes* it when it is already open
+    — which is what happens after a device disappears and returns.
+    """
+    if page.locator("[data-port]").count() == 0:
+        page.get_by_role("button", name=re.compile(r"^Ports")).first.click()
+        page.wait_for_selector("[data-port]", timeout=10_000)
+
+
+def ensure_midi(page: Page, timeout: float = 15_000) -> None:
+    """Wait until the app has a usable MIDI input.
+
+    The app connects by itself when the browser already has permission, so this does
+    *not* click by default — clicking would hide the very behaviour the auto-detect
+    scenario exists to check. The click is only for a browser that refused without a
+    gesture.
+    """
+    page.wait_for_selector("text=Sight-Reading Trainer", timeout=timeout)
+    if page.get_by_role("button", name="Connect MIDI", exact=True).count():
+        click_button(page, "Connect MIDI")
+    page.wait_for_selector("text=MIDI connected", timeout=timeout)
+    check(page.evaluate("() => window.__fakeMidi.ready()"), "app installed a MIDI message handler")
+
+
 def wait_for_phase(page: Page, phase: str, timeout: float = 30_000) -> None:
     page.wait_for_function(
         f"() => !!document.querySelector('[data-phase=\"{phase}\"]')",
@@ -311,10 +367,7 @@ def load_first_exercise(page: Page) -> dict[str, Any]:
     page.goto(BASE_URL, wait_until="domcontentloaded")
     page.wait_for_selector("text=Sight-Reading Trainer")
 
-    # Simulated device should be discovered and auto-selected.
-    click_button(page, "Connect MIDI")
-    page.wait_for_selector("text=MIDI connected", timeout=10_000)
-    check(page.evaluate("() => window.__fakeMidi.ready()"), "app installed a MIDI message handler")
+    ensure_midi(page)
 
     first_label = "Get my first exercise" if page.get_by_role("button", name="Get my first exercise", exact=True).count() else "Get exercise"
     with page.expect_response(lambda r: "/api/exercise/next" in r.url) as caught:
@@ -356,7 +409,7 @@ def scenario_perfect(browser) -> None:
     check(len(expected) > 0, f"exercise #{exercise['exercise_id']} has {len(expected)} expected notes")
 
     # The badge, the rationale, and the payload must all describe the same skill.
-    badge = page.inner_text(".pill.accent").strip()
+    badge = page.inner_text("[data-exercise-badge]").strip()
     rationale = page.inner_text(".rationale").strip()
     skill_label = (exercise["target_skill"] or "").replace("_", " ")
     badge_skill = badge.split("·")[0].strip()
@@ -681,8 +734,7 @@ def scenario_long_exercises(browser) -> None:
         page.set_viewport_size(viewport)
         page.goto(BASE_URL, wait_until="domcontentloaded")
         page.wait_for_selector("text=Sight-Reading Trainer")
-        click_button(page, "Connect MIDI")
-        page.wait_for_selector("text=MIDI connected", timeout=10_000)
+        ensure_midi(page)
         load_first_exercise(page)
 
         label = f"{viewport['width']}x{viewport['height']}"
@@ -803,8 +855,7 @@ def scenario_two_hands(browser) -> None:
     page, errors = new_page(browser)
     page.goto(BASE_URL, wait_until="domcontentloaded")
     page.wait_for_selector("text=Sight-Reading Trainer")
-    click_button(page, "Connect MIDI")
-    page.wait_for_selector("text=MIDI connected", timeout=10_000)
+    ensure_midi(page)
 
     patterns: set[str] = set()
     checked_staves = False
@@ -1267,8 +1318,7 @@ def scenario_practice_log(browser) -> None:
     page, errors = new_page(browser)
     page.goto(BASE_URL, wait_until="domcontentloaded")
     page.wait_for_selector("text=Sight-Reading Trainer")
-    click_button(page, "Connect MIDI")
-    page.wait_for_selector("text=MIDI connected", timeout=10_000)
+    ensure_midi(page)
 
     click_button(page, "Log")
     page.wait_for_selector("text=Practice calendar", timeout=20_000)
@@ -1444,6 +1494,82 @@ def scenario_practice_log(browser) -> None:
     page.close()
 
 
+def scenario_midi_autodetect(browser) -> None:
+    print("\n[9] MIDI that sets itself up: one dead port, one live, no clicking")
+    page, errors = new_page(browser)
+    page.goto(BASE_URL, wait_until="domcontentloaded")
+    page.wait_for_selector("text=Sight-Reading Trainer")
+
+    # No click anywhere in this block: on the notebook a managed policy grants the
+    # MIDI permission, so connecting is the app's job.
+    page.wait_for_selector("text=MIDI connected", timeout=15_000)
+    check(True, "the app connects with no interaction at all")
+    check(
+        page.evaluate("() => window.__fakeMidi.total()") == 2,
+        "two inputs are exposed, as ALSA exposes them",
+    )
+    label = page.inner_text("[data-midi-active]")
+    check("CASIO" in label, f"the live port is chosen, not the first one ({label!r})")
+    check("Auto" in label, "and it is reported as an automatic choice")
+
+    # The dead port is listed, and honestly labelled rather than hidden.
+    open_ports(page)
+    through_row = page.locator('[data-port="alsa-midi-through"]').inner_text()
+    check("Midi Through" in through_row, f"the silent ALSA port is listed ({through_row!r})")
+    check("no notes yet" in through_row, "and marked as never having carried a note")
+    casio_row = page.locator('[data-port="alsa-casio-1"]').inner_text()
+    check("in use" in casio_row, f"the Casio port is the one in use ({casio_row!r})")
+
+    # A key reported by both ports is one key. Capture is on by default and flushes
+    # every two seconds, so the count is read from the API rather than the screen.
+    before = api("/api/practice/status")["notes"]
+    page.evaluate(
+        """() => {
+             window.__fakeMidi.sendToAll([0x90, 64, 80]);
+             setTimeout(() => window.__fakeMidi.sendToAll([0x80, 64, 0]), 60);
+           }"""
+    )
+    page.wait_for_timeout(2_600)
+    logged = api("/api/practice/status")["notes"] - before
+    check(logged == 1, f"a note reported by both ports is logged once (logged {logged})")
+
+    # The piano is switched on after the machine is already running: the normal case
+    # for a planted notebook.
+    page.evaluate("() => window.__fakeMidi.unplugAll()")
+    page.wait_for_selector("text=No MIDI input", timeout=15_000)
+    page.evaluate("() => window.__fakeMidi.plugLater(400, 'alsa-casio-1')")
+    page.wait_for_selector("text=MIDI connected", timeout=20_000)
+    check(True, "a piano switched on later is picked up with no reload and no click")
+
+    # Pinning is for the person who wants certainty rather than inference.
+    open_ports(page)
+    page.locator('[data-port="alsa-casio-1"]').get_by_role(
+        "button", name="Use only this", exact=True
+    ).click()
+    page.wait_for_timeout(300)
+    check("Pinned" in page.inner_text("[data-midi-active]"), "the choice can be pinned")
+
+    before = api("/api/practice/status")["notes"]
+    page.evaluate("() => window.__fakeMidi.send([0x90, 67, 80], 'alsa-midi-through')")
+    page.wait_for_timeout(2_600)
+    check(
+        api("/api/practice/status")["notes"] == before,
+        "notes from a port that was pinned out are ignored",
+    )
+
+    # And the choice survives a reload, which is the point of remembering it.
+    page.reload(wait_until="domcontentloaded")
+    page.wait_for_selector("text=MIDI connected", timeout=15_000)
+    check(
+        "Pinned" in page.inner_text("[data-midi-active]"),
+        "the pinned device survives a reload",
+    )
+
+    page.screenshot(path=str(SHOTS / "14-midi-autodetect.png"), full_page=True)
+    check(not errors, f"no console errors ({errors})")
+    page.close()
+
+
 def main() -> int:
     SHOTS.mkdir(parents=True, exist_ok=True)
     health = api("/api/health")
@@ -1472,6 +1598,7 @@ def main() -> int:
             scenario_two_hands(browser)
             scenario_repertoire(browser)
             scenario_practice_log(browser)
+            scenario_midi_autodetect(browser)
         finally:
             browser.close()
 

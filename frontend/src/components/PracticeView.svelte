@@ -345,7 +345,7 @@
   <section class="card panel">
     <div class="spread wrap">
       <div class="row wrap">
-        <span class="pill accent">
+        <span class="pill accent" data-exercise-badge>
           {exercise.target_skill?.replace(/_/g, ' ') ?? 'exercise'} · level
           {exercise.levels[exercise.target_skill ?? ''] ?? '—'}
         </span>
