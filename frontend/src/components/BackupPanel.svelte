@@ -10,6 +10,7 @@
    * and an explicit sentence, the same shape as deleting a piece.
    */
   import { api } from '../lib/api';
+  import { app } from '../lib/state.svelte';
 
   interface Props {
     onrestored: () => void;
@@ -86,12 +87,19 @@
       <span class="muted small">Restore mode</span>
       <select bind:value={mode} aria-label="Restore mode">
         <option value="merge">Add what is missing</option>
-        <option value="replace">Replace everything</option>
+        <option value="replace" disabled={!app.host?.loopback}>
+          Replace everything{app.host?.loopback ? '' : ' (piano machine only)'}
+        </option>
       </select>
     </label>
 
     {#if confirming}
-      <button class="danger" disabled={busy} onclick={() => void run()}>
+      <button
+        class="danger"
+        disabled={busy || !app.host?.loopback}
+        title={app.host?.loopback ? '' : 'Only on the piano machine'}
+        onclick={() => void run()}
+      >
         {busy ? 'Restoring…' : 'Replace everything for good'}
       </button>
       <button class="ghost" onclick={() => (confirming = false)}>Cancel</button>

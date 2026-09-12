@@ -422,7 +422,12 @@
                 </button>
                 <button class="ghost" onclick={() => (confirmingDelete = false)}>Keep</button>
               {:else}
-                <button class="ghost" onclick={() => (confirmingDelete = true)}>Delete</button>
+                <button
+                  class="ghost"
+                  disabled={!app.host?.loopback}
+                  title={app.host?.loopback ? '' : 'Only on the piano machine'}
+                  onclick={() => (confirmingDelete = true)}>Delete</button
+                >
               {/if}
               <button class="ghost" onclick={() => (detail = null)}>Close</button>
             </div>
@@ -538,7 +543,10 @@
                     </span>
                     <button
                       class="ghost tiny"
-                      title="Delete this entry"
+                      disabled={!app.host?.loopback}
+                      title={app.host?.loopback
+                        ? 'Delete this entry'
+                        : 'Only on the piano machine'}
                       onclick={() => void removeJournalEntry(entry)}>×</button
                     >
                   </div>
@@ -612,7 +620,10 @@
                       {/if}
                       <button
                         class="ghost tiny"
-                        title="Remove this recording from the library"
+                        disabled={!app.host?.loopback}
+                        title={app.host?.loopback
+                          ? 'Remove this recording from the library'
+                          : 'Only on the piano machine'}
                         onclick={() => void removeRecording(recording.id)}>×</button
                       >
                     </span>

@@ -8,8 +8,10 @@
 
 import type {
   AnalyticsSummary,
+  CaptureStatus,
   Composer,
   Exercise,
+  HostInfo,
   ImportReport,
   PieceDetail,
   PiecePracticeDetail,
@@ -120,6 +122,14 @@ async function requestForm<T>(path: string, form: FormData): Promise<T> {
 export const api = {
   health: () => request<{ status: string; database: string; exercises: number; performances: number }>('/health'),
 
+  /**
+   * Where this request came from and what the server can see.
+   *
+   * Used to explain what this page can and cannot do: MIDI only exists on the piano
+   * machine, and the irreversible actions are refused anywhere else.
+   */
+  host: () => request<HostInfo>('/host'),
+
   profile: () => request<Profile>('/profile'),
 
   resetProfile: () => request<Profile>('/profile/reset', { method: 'POST' }),
@@ -226,6 +236,13 @@ export const api = {
 
   practice: {
     status: () => request<PracticeStatus>('/practice/status'),
+
+    /** "I am still capturing." Sent every 15 s by whichever client is logging. */
+    reportCapture: (body: { origin: string; enabled: boolean; pending: number }) =>
+      request<CaptureStatus>('/practice/capture-status', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
 
     /**
      * Send a batch of played notes. Absolute epoch ms; the server decides which

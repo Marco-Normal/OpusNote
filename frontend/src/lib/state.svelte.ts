@@ -9,7 +9,7 @@ import { api } from './api';
 import { CaptureClient, type CaptureStatus } from './capture';
 import { MidiInput, type MidiDeviceInfo } from './midi';
 import { fingerprint, type PortSnapshot } from './midiDevice';
-import type { AppView, Profile, Workout } from './types';
+import type { AppView, HostInfo, Profile, Workout } from './types';
 
 const LATENCY_STORAGE_KEY = 'srt.latencyMs';
 const BARS_STORAGE_KEY = 'srt.bars';
@@ -145,6 +145,9 @@ class AppState {
   workout = $state<Workout | null>(null);
   workoutError = $state<string | null>(null);
 
+  /** What the server can tell us about this machine and this request. */
+  host = $state<HostInfo | null>(null);
+
   profile = $state<Profile | null>(null);
   apiOnline = $state<boolean | null>(null);
   errorMessage = $state<string | null>(null);
@@ -186,6 +189,11 @@ class AppState {
       await api.health();
       this.apiOnline = true;
       this.errorMessage = null;
+      try {
+        this.host = await api.host();
+      } catch {
+        // Only used to explain the deployment; never block the app on it.
+      }
     } catch (error) {
       this.apiOnline = false;
       this.errorMessage = error instanceof Error ? error.message : String(error);
@@ -198,6 +206,35 @@ class AppState {
   /** Called once by the app shell, after `bootstrap()`. */
   async startMidi(): Promise<void> {
     await this.autoConnectMidi();
+    if (this.captureEnabled) this.startCaptureHeartbeat();
+  }
+
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+
+  /**
+   * Tell the server that capture is running.
+   *
+   * Without this, a notebook whose browser died is indistinguishable from a quiet
+   * evening, and the person reading the statistics from another room cannot tell the
+   * difference. The heartbeat carries only liveness; the last note is read from the
+   * database by the server.
+   */
+  private startCaptureHeartbeat(): void {
+    if (this.heartbeatTimer !== null) return;
+    const send = () => {
+      void api.practice
+        .reportCapture({
+          origin: location.host,
+          enabled: this.captureStatus.enabled,
+          pending: this.captureStatus.buffered,
+        })
+        .catch(() => {
+          // A failed heartbeat is a symptom, not a cause: the capture bar already
+          // shows the API being unreachable.
+        });
+    };
+    send();
+    this.heartbeatTimer = setInterval(send, 15_000);
   }
 
   async refreshProfile(): Promise<void> {
@@ -217,6 +254,7 @@ class AppState {
     }
     if (enabled && this.midiConnected) this.capture.start();
     else this.capture.stop();
+    if (enabled) this.startCaptureHeartbeat();
   }
 
   /**
@@ -254,7 +292,10 @@ class AppState {
       }
       // Capture is app-level and follows the device: reconnecting after a replug
       // must not silently stop the log.
-      if (this.captureEnabled && devices.length > 0) this.capture.start();
+      if (this.captureEnabled && devices.length > 0) {
+        this.capture.start();
+        this.startCaptureHeartbeat();
+      }
     } catch (error) {
       this.midiConnected = false;
       if (options.quiet) {

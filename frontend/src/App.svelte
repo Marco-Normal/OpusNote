@@ -4,6 +4,7 @@
   import PracticeView from './components/PracticeView.svelte';
   import CalibrationView from './components/CalibrationView.svelte';
   import StatsView from './components/StatsView.svelte';
+  import HostBanner from './components/HostBanner.svelte';
   import PracticeLogView from './components/PracticeLogView.svelte';
   import RepertoireView from './components/RepertoireView.svelte';
   import ThemeControls from './components/ThemeControls.svelte';
@@ -59,6 +60,8 @@
   <DeviceBar />
 
   <WorkoutBar />
+
+  <HostBanner />
 
   {#if app.apiOnline === false}
     <div class="error-banner">

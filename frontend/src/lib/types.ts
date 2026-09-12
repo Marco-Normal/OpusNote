@@ -302,6 +302,29 @@ export interface PracticeStatus {
   last_date: string | null;
   /** True when the newest sitting is still receiving notes. */
   open_sitting: boolean;
+  /** Epoch ms of the last note the server stored, or null. */
+  last_note_ms: number | null;
+  capture: CaptureStatus | null;
+}
+
+/** What a capturing client tells the server about itself. */
+export interface CaptureStatus {
+  origin: string;
+  enabled: boolean;
+  pending: number;
+  at_ms: number;
+}
+
+/** Facts about where this page is being used from, and what the server can see. */
+export interface HostInfo {
+  /** The address this request arrived from, as the server sees it. */
+  host: string | null;
+  /** True when this page is on the machine running the server. */
+  loopback: boolean;
+  /** False means ALSA's sequencer is absent, so Web MIDI finds nothing at all. */
+  sequencer: boolean;
+  /** ALSA sequencer clients, e.g. ["Midi Through", "CASIO USB-MIDI"]. */
+  clients: string[];
 }
 
 export interface SittingSummary {
@@ -414,6 +437,8 @@ export interface AnalyticsSummary {
   recent: SittingSummary[];
   workouts_completed: number;
   workouts_this_week: number;
+  last_note_ms: number | null;
+  capture: CaptureStatus | null;
 }
 
 export interface PracticeImportReport {

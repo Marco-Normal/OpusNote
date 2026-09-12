@@ -35,6 +35,19 @@
   let importing = $state(false);
   let importNote = $state<string | null>(null);
 
+  /** "localhost:8000" when a client has checked in, "not reporting" when none has. */
+  function captureHeadline(data: AnalyticsSummary): string {
+    if (!data.capture) return 'not reporting';
+    return data.capture.enabled ? data.capture.origin : 'paused';
+  }
+
+  function lastNoteLabel(data: AnalyticsSummary): string {
+    if (data.last_note_ms === null) return 'no notes recorded yet';
+    const seconds = Math.max(0, Math.round((Date.now() - data.last_note_ms) / 1000));
+    if (seconds < 90) return `last note ${seconds} s ago`;
+    return `last note ${Math.round(seconds / 60)} min ago`;
+  }
+
   async function load(): Promise<void> {
     error = null;
     try {
@@ -179,6 +192,11 @@
       <span class="muted small">Workouts</span>
       <strong>{summary.workouts_this_week} this week</strong>
       <span class="muted small">{summary.workouts_completed} completed all time</span>
+    </div>
+    <div class="stat" data-capture-stat={summary.capture ? 'reporting' : 'silent'}>
+      <span class="muted small">Capture</span>
+      <strong>{captureHeadline(summary)}</strong>
+      <span class="muted small">{lastNoteLabel(summary)}</span>
     </div>
   </section>
 
