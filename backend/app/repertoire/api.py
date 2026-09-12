@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse
 
 from .. import db
 from ..config import settings
+from ..hostinfo import require_loopback
 from . import store
 from .importer import LegacyDatabaseMissing, LegacySchemaUnexpected, import_legacy
 from .media_pipeline import MediaError, probe, store_recording
@@ -215,7 +216,7 @@ def update_piece(piece_id: int, body: PieceUpdate) -> PieceDetail:
     return PieceDetail(**row)
 
 
-@router.delete("/pieces/{piece_id}", response_model=DeleteResult)
+@router.delete("/pieces/{piece_id}", response_model=DeleteResult, dependencies=[Depends(require_loopback)])
 def delete_piece(piece_id: int) -> DeleteResult:
     with db.transaction(settings.db_path) as conn:
         deleted, cascaded = store.delete_piece(conn, piece_id)
@@ -250,7 +251,7 @@ def update_composer(composer_id: int, body: ComposerUpdate) -> ComposerOut:
     return ComposerOut(**row)
 
 
-@router.delete("/composers/{composer_id}", response_model=DeleteResult)
+@router.delete("/composers/{composer_id}", response_model=DeleteResult, dependencies=[Depends(require_loopback)])
 def delete_composer(composer_id: int) -> DeleteResult:
     with db.transaction(settings.db_path) as conn:
         deleted, cascaded = store.delete_composer(conn, composer_id)
@@ -283,7 +284,7 @@ def update_journal_entry(entry_id: int, body: JournalUpdate) -> JournalEntryOut:
     return JournalEntryOut(**row)
 
 
-@router.delete("/journal/{entry_id}", response_model=DeleteResult)
+@router.delete("/journal/{entry_id}", response_model=DeleteResult, dependencies=[Depends(require_loopback)])
 def delete_journal_entry(entry_id: int) -> DeleteResult:
     with db.transaction(settings.db_path) as conn:
         deleted = store.delete_journal_entry(conn, entry_id)
@@ -313,12 +314,29 @@ def upload_recording(
         if not store.piece_exists(conn, piece_id):
             raise HTTPException(status_code=404, detail=f"no piece {piece_id}")
 
+    limit_bytes = settings.max_upload_mb * 1024 * 1024
+    if file.size is not None and file.size > limit_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"the recording is larger than {settings.max_upload_mb} MB",
+        )
+
     suffix = Path(file.filename or "").suffix
     media_dir = Path(settings.media_dir)
     with tempfile.TemporaryDirectory() as scratch:
         staged = Path(scratch) / f"upload{suffix}"
+        written = 0
         with staged.open("wb") as handle:
-            shutil.copyfileobj(file.file, handle, length=1024 * 1024)
+            while chunk := file.file.read(1024 * 1024):
+                written += len(chunk)
+                # Checked while writing, not only against the declared size: a client
+                # can lie about that, and the point of the cap is to protect the disk.
+                if written > limit_bytes:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"the recording is larger than {settings.max_upload_mb} MB",
+                    )
+                handle.write(chunk)
         if staged.stat().st_size == 0:
             raise HTTPException(status_code=422, detail="the uploaded file is empty")
         try:
@@ -384,7 +402,7 @@ def update_recording(media_id: int, body: MediaUpdate) -> MediaOut:
     return MediaOut(**row)
 
 
-@router.delete("/media/{media_id}", response_model=DeleteResult)
+@router.delete("/media/{media_id}", response_model=DeleteResult, dependencies=[Depends(require_loopback)])
 def delete_recording(media_id: int) -> DeleteResult:
     """Remove a recording from the library.
 

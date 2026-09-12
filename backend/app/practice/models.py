@@ -11,6 +11,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from .capture_status import CaptureReport
+
 #: What kind of practice produced these notes. A closed set, so a typo cannot
 #: silently invent a third category that the analytics then have to display.
 PracticeSource = Literal["web_midi", "sight_reading"]
@@ -186,6 +188,8 @@ class AnalyticsSummary(BaseModel):
     #: counted by whoever owns them.
     workouts_completed: int = 0
     workouts_this_week: int = 0
+    last_note_ms: int | None = None
+    capture: CaptureReport | None = None
 
 
 class PracticeStatus(BaseModel):
@@ -198,6 +202,23 @@ class PracticeStatus(BaseModel):
     #: True when the most recent sitting is still open, i.e. notes are arriving.
     #: Shown so "is capture working?" is answerable without playing a note.
     open_sitting: bool = False
+    #: Epoch ms of the end of the last note the server stored, or None. Read from
+    #: the database, so it is a fact rather than a client's claim.
+    last_note_ms: int | None = None
+    #: The last capture heartbeat, or None when nothing has reported recently.
+    capture: CaptureReport | None = None
+
+
+class CaptureReportIn(BaseModel):
+    """What a capturing client tells the server about itself.
+
+    The timestamp is the server's, not the client's, so it lives on `CaptureReport`
+    rather than here.
+    """
+
+    origin: str = Field(max_length=120)
+    enabled: bool
+    pending: int = Field(default=0, ge=0)
 
 
 class PracticeImportReport(BaseModel):

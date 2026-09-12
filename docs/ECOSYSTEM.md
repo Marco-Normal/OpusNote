@@ -441,16 +441,24 @@ device list showing two MIDI inputs, one called something like `0` and one calle
 `Casio MIDI 1`, with only the Casio working — has a specific cause:
 
 ```
-$ aconnect -i -l
-open /dev/snd/seq failed: No such file or directory
-$ lsmod | grep snd_seq        # nothing
+$ cat /proc/asound/seq/clients
+Client   0 : "System" [Kernel Legacy]
+  Port   0 : "Timer" (Rwe-) [In/Out]
+Client  14 : "Midi Through" [Kernel Legacy]
+  Port   0 : "Midi Through Port-0" (RWe-) [In/Out]
 ```
 
-The ALSA **sequencer is not loaded** on this machine, and when it is, ALSA creates a
-virtual client — **Midi Through Port-0** — that never carries notes. Chromium
-enumerates every sequencer port as a Web MIDI input, so a plugged-in Casio shows up
-*beside* that dead port. Today's code selects `devices[0]`, which is precisely the
-kind of choice that picks the wrong one.
+**Midi Through Port-0 is the "0" in the device list.** ALSA's sequencer always
+creates that virtual client, and Chromium enumerates every sequencer port as a Web
+MIDI input, so a plugged-in Casio appears *beside* a port that can never carry a
+note. Today's code selects `devices[0]`, which is precisely the kind of choice that
+picks the wrong one.
+
+(The first version of this section claimed the sequencer was not loaded, because
+`aconnect` reported `/dev/snd/seq` missing. That was a sandbox artefact: the module
+was loaded and procfs listed its clients. The probe now accepts either signal — see
+`hostinfo.sequencer_available` — because reporting a missing kernel module on a
+machine that has one is the wrong diagnosis in the most confusing possible way.)
 
 Two browser facts make this fixable without ceremony, both managed policy
 settings:

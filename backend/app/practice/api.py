@@ -6,13 +6,15 @@ import sqlite3
 import time
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
 from ..config import settings
+from ..hostinfo import require_loopback
 from ..store import open_connection
 from ..workout import store as workout_store
-from . import store
+from . import capture_status, store
+from .capture_status import CaptureReport
 from .legacy import LegacyDatabaseMissing, import_legacy_practice
 from .models import (
     AnalyticsSummary,
@@ -20,6 +22,7 @@ from .models import (
     EventBatch,
     IngestResult,
     MergeRequest,
+    CaptureReportIn,
     PracticeImportReport,
     PracticeStatus,
     PiecePracticeDetail,
@@ -89,10 +92,22 @@ def status(conn: sqlite3.Connection = Depends(get_conn)) -> PracticeStatus:
         first_date=totals["first_date"],
         last_date=totals["last_date"],
         open_sitting=open_sitting,
+        # The end of the last note the server stored. Read from the database, so it
+        # is a fact rather than something a client claims.
+        last_note_ms=int(last_end) if last_end is not None else None,
+        capture=capture_status.snapshot(),
     )
 
 
 # --- sittings --------------------------------------------------------------
+
+
+@router.post("/capture-status", response_model=CaptureReport)
+def report_capture(body: CaptureReportIn) -> CaptureReport:
+    """A client saying "I am capturing". Cheap on purpose: it is sent every 15 s."""
+    return capture_status.record(
+        origin=body.origin, enabled=body.enabled, pending=body.pending
+    )
 
 
 @router.get("/sittings", response_model=list[SittingSummary])
@@ -109,7 +124,13 @@ def sitting_detail(sitting_id: int) -> SittingDetail:
 
 
 @router.post("/sittings/{sitting_id}/resegment", response_model=list[SegmentSummary])
-def resegment(sitting_id: int, body: ResegmentRequest) -> list[SegmentSummary]:
+def resegment(
+    sitting_id: int, body: ResegmentRequest, request: Request
+) -> list[SegmentSummary]:
+    # `confirm=false` recomputes unlabelled boundaries and destroys nothing;
+    # `confirm=true` throws labels away, so only that variant is restricted.
+    if body.confirm:
+        require_loopback(request)
     return _handle(store.resegment_sitting, sitting_id, confirm=body.confirm)
 
 

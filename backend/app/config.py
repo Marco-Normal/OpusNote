@@ -107,6 +107,12 @@ class Settings:
     #: as an infinitely fast tempo.
     attack_window_ms: int = _env_int("SRT_ATTACK_WINDOW_MS", 50)
 
+    # --- serving over the LAN ---------------------------------------------
+    #: Largest recording accepted by the upload endpoint, in megabytes. A cap that
+    #: only trusts the client's declared size is not a cap, so it is enforced while
+    #: writing rather than only on the way in.
+    max_upload_mb: int = _env_int("SRT_MAX_UPLOAD_MB", 512)
+
     @property
     def weights(self) -> dict[str, float]:
         total = self.weight_pitch + self.weight_rhythm + self.weight_continuity

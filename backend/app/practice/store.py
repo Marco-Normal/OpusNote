@@ -26,6 +26,7 @@ from pathlib import Path
 
 from .. import db
 from ..config import settings
+from . import capture_status
 from . import schema as practice_schema
 from .metrics import SegmentMetrics, segment_metrics
 from .models import (
@@ -869,6 +870,7 @@ def summary(conn: sqlite3.Connection, days: int = 30, recent: int = 10) -> Analy
     today = _today().isoformat()
     totals = conn.execute(
         "SELECT COALESCE(SUM(ended_ms - started_ms), 0) / 60000.0 AS minutes,"
+        " MAX(ended_ms) AS last_ms,"
         " (SELECT COUNT(*) FROM note_events) AS notes FROM sittings"
     ).fetchone()
     return AnalyticsSummary(
@@ -884,6 +886,10 @@ def summary(conn: sqlite3.Connection, days: int = 30, recent: int = 10) -> Analy
         neglected=neglected(conn),
         sources=sources(conn, days),
         recent=list_sittings_conn(conn, recent),
+        last_note_ms=(
+            int(totals["last_ms"]) if totals["last_ms"] is not None else None
+        ),
+        capture=capture_status.snapshot(),
     )
 
 

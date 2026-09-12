@@ -118,6 +118,10 @@ def connect(db_path: Path | None = None) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
+    # Two machines write to this file over the LAN (capture on the notebook, an
+    # upload from the main computer), so "database is locked" must be waited out
+    # rather than raised. Five seconds is far longer than any write here takes.
+    conn.execute("PRAGMA busy_timeout = 5000")
     return conn
 
 

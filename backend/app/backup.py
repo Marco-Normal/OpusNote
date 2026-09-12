@@ -20,11 +20,12 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Literal, Mapping
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from . import db
+from .hostinfo import require_loopback
 from .store import open_connection
 
 #: Bumped whenever the document's shape changes in a way an older reader could
@@ -214,7 +215,11 @@ def export(conn: sqlite3.Connection = Depends(get_conn)) -> JSONResponse:
 
 
 @router.post("/import", response_model=BackupImportResult)
-def import_backup(body: BackupImportRequest) -> BackupImportResult:
+def import_backup(request: Request, body: BackupImportRequest) -> BackupImportResult:
+    # Conditional, because the same route is safe in one mode: a merge adds what is
+    # missing and destroys nothing, so it stays available over the LAN.
+    if body.mode == "replace":
+        require_loopback(request)
     try:
         with db.transaction() as conn:
             return BackupImportResult(

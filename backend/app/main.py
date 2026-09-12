@@ -20,6 +20,7 @@ from . import services, store
 from .backup import router as backup_router
 from .config import settings
 from .db import init_db
+from .hostinfo import require_loopback, router as hostinfo_router
 from .models import ExerciseOut, HealthOut, ProfileOut, ScoreRequest, SkillOut
 from .practice.api import router as practice_router
 from .repertoire.api import router as repertoire_router
@@ -59,6 +60,7 @@ app.include_router(repertoire_router)
 app.include_router(practice_router)
 app.include_router(workout_router)
 app.include_router(backup_router)
+app.include_router(hostinfo_router)
 
 
 def get_conn() -> Iterator[Connection]:
@@ -106,7 +108,11 @@ def profile(conn: Connection = Depends(get_conn)) -> ProfileOut:
     )
 
 
-@app.post("/api/profile/reset", response_model=ProfileOut)
+@app.post(
+    "/api/profile/reset",
+    response_model=ProfileOut,
+    dependencies=[Depends(require_loopback)],
+)
 def reset_profile(conn: Connection = Depends(get_conn)) -> ProfileOut:
     user_id = current_user_id()
     services.reset_profile(conn, user_id)

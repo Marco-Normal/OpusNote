@@ -1674,7 +1674,15 @@ Expected: `pass 8` / `0 errors and 0 warnings` / `✓ built in` / `631 passed`
 **Why.** Two questions must be answerable from the main computer: "may this client
 delete things?" and "is the piano attached to the notebook at all?" The second one
 matters because Web MIDI silently finds *zero* devices when ALSA's sequencer is not
-loaded, which looks exactly like broken hardware.
+present, which looks exactly like broken hardware.
+
+**Correction found while implementing step 1.3.** This plan first claimed the
+sequencer was not loaded on the development machine, on the strength of
+`/dev/snd/seq` being missing. It is loaded: `/proc/asound/seq/clients` lists
+`Client 14 : "Midi Through" Port 0 : "Midi Through Port-0"`. The sandbox simply has
+no `/dev/snd`. The probe therefore accepts either signal
+(`sequencer_available()`), and `sequencer: true` on a machine whose `/dev` is
+populated only by udev is not a lie.
 
 **Change Necessity.** No configuration-only option can answer either question.
 
@@ -1952,10 +1960,15 @@ def test_require_loopback_refuses_a_lan_client() -> None:
     assert "piano machine" in str(error.value)
 
 
-def test_the_host_route_reports_this_machine(client) -> None:
+def test_the_host_route_answers_with_this_machines_view(client) -> None:
     body = client.get("/api/host").json()
-    assert body["loopback"] is True, "TestClient is local"
-    assert "sequencer" in body
+    # TestClient is not a socket, so its client address is the literal "testclient"
+    # and `loopback` is False here. That is the honest answer, and it is why the
+    # fixture overrides `is_loopback` for the rest of the suite rather than this
+    # route pretending to be local.
+    assert body["host"] == "testclient"
+    assert body["loopback"] is False
+    assert isinstance(body["sequencer"], bool)
     assert isinstance(body["clients"], list)
 
 

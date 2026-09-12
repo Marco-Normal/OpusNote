@@ -31,6 +31,11 @@ from app.config import settings  # noqa: E402
 
 
 def _wipe() -> None:
+    # The capture heartbeat is process-local, so it outlives a database wipe.
+    from app.practice import capture_status
+
+    capture_status.reset()
+
     for path in (_TEST_DB, Path(str(_TEST_DB) + "-wal"), Path(str(_TEST_DB) + "-shm")):
         if path.exists():
             path.unlink()
@@ -70,10 +75,26 @@ def conn(fresh_db):
 
 @pytest.fixture
 def client(fresh_db):
+    """A client that is treated as the piano machine.
+
+    `TestClient` is not a socket, so its client address is the literal "testclient"
+    and `hostinfo.is_loopback` answers False. That is correct behaviour and useless
+    for a suite in which almost every write is a delete: rather than weaken the
+    check, the suite declares itself local for the duration and the two directions
+    are tested explicitly in `test_server_hardening.py` (the real implementation
+    directly, and a 403 by patching `is_loopback` back to False).
+    """
     from fastapi.testclient import TestClient
 
-    with TestClient(main_module.app) as test_client:
-        yield test_client
+    from app import hostinfo
+
+    original = hostinfo.is_loopback
+    hostinfo.is_loopback = lambda request: True
+    try:
+        with TestClient(main_module.app) as test_client:
+            yield test_client
+    finally:
+        hostinfo.is_loopback = original
 
 
 LEGACY_SCHEMA = """
