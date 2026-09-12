@@ -1,0 +1,8 @@
+# Runtime dependencies for the Sight-Reading Trainer API.
+# Install into a virtual environment:
+#   python3.11 -m venv .venv
+#   .venv/bin/pip install -r requirements.txt
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pydantic>=2.7
+music21>=9.1

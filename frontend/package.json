@@ -1,0 +1,27 @@
+{
+  "name": "sight-reading-trainer-frontend",
+  "version": "1.0.0",
+  "description": "Adaptive sight-reading trainer — browser client",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "check": "svelte-check --tsconfig ./tsconfig.json"
+  },
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^7.3.0",
+    "@tsconfig/svelte": "^5.0.8",
+    "svelte": "^5.57.0",
+    "svelte-check": "^4.7.6",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.0"
+  },
+  "dependencies": {
+    "opensheetmusicdisplay": "^2.1.2",
+    "tone": "^15.1.22"
+  },
+  "private": true
+}

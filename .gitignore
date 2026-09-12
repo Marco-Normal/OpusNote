@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Backend data / scratch
+backend/data/
+backend/.pytest-tmp/
+backend/screenshots/
+
+# Node
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Tooling caches (kept inside the repo because $HOME is not always writable)
+.cache/
+.npm/
+
+# Scratch
+.scratch/
+
+# Editors / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/

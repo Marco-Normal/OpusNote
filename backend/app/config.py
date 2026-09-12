@@ -1,0 +1,88 @@
+"""Runtime configuration for the Sight-Reading Trainer API.
+
+Everything is overridable by environment variable so the same code runs as a
+local script (SQLite file next to the repo) or as a deployed service without a
+code change.
+"""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from pathlib import Path
+
+BACKEND_DIR = Path(__file__).resolve().parent.parent
+REPO_DIR = BACKEND_DIR.parent
+
+
+def _env_path(name: str, default: Path) -> Path:
+    raw = os.environ.get(name)
+    return Path(raw).expanduser().resolve() if raw else default
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    return float(raw) if raw else default
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    return int(raw) if raw else default
+
+
+@dataclass(frozen=True)
+class Settings:
+    # --- persistence -----------------------------------------------------
+    db_path: Path = _env_path("SRT_DB_PATH", BACKEND_DIR / "data" / "sightreading.sqlite3")
+
+    # --- app -------------------------------------------------------------
+    api_prefix: str = "/api"
+    cors_origins: tuple[str, ...] = ("http://localhost:5173", "http://127.0.0.1:5173")
+    frontend_dist: Path = _env_path("SRT_FRONTEND_DIST", REPO_DIR / "frontend" / "dist")
+
+    # --- MVP single-user profile ----------------------------------------
+    default_username: str = os.environ.get("SRT_USER", "local")
+
+    # --- adaptive engine --------------------------------------------------
+    # Exercise Elo = elo_base + elo_per_level * (mean_level - 1)
+    elo_base: float = _env_float("SRT_ELO_BASE", 600.0)
+    elo_per_level: float = _env_float("SRT_ELO_PER_LEVEL", 100.0)
+    default_rating: float = _env_float("SRT_DEFAULT_RATING", 700.0)
+    elo_k: float = _env_float("SRT_ELO_K", 32.0)
+    elo_k_calibration: float = _env_float("SRT_ELO_K_CALIBRATION", 56.0)
+    # How far around the target Elo an exercise may be picked.
+    selection_window: float = _env_float("SRT_SELECTION_WINDOW", 60.0)
+    # Fraction of notes a learner should get right on a well-chosen exercise.
+    # Exercises are aimed *below* the rating so this stays in the 70-85% zone.
+    target_success_rate: float = _env_float("SRT_TARGET_SUCCESS_RATE", 0.78)
+
+    # --- scoring ----------------------------------------------------------
+    match_window_s: float = _env_float("SRT_MATCH_WINDOW_S", 0.200)
+    # Continuity is about *timing drift*, which by definition can exceed the
+    # tight pitch window, so hesitation detection uses a much wider tolerance.
+    continuity_window_s: float = _env_float("SRT_CONTINUITY_WINDOW_S", 1.500)
+    hesitation_ms: float = _env_float("SRT_HESITATION_MS", 500.0)
+    # Onset error (in beats) at which the rhythm sub-score reaches zero.
+    rhythm_tolerance_beats: float = _env_float("SRT_RHYTHM_TOLERANCE_BEATS", 0.50)
+    weight_pitch: float = _env_float("SRT_WEIGHT_PITCH", 0.50)
+    weight_rhythm: float = _env_float("SRT_WEIGHT_RHYTHM", 0.30)
+    weight_continuity: float = _env_float("SRT_WEIGHT_CONTINUITY", 0.20)
+    pass_threshold: float = _env_float("SRT_PASS_THRESHOLD", 80.0)
+
+    # --- exercise shape ---------------------------------------------------
+    exercise_bars: int = _env_int("SRT_EXERCISE_BARS", 4)
+    calibration_length: int = _env_int("SRT_CALIBRATION_LENGTH", 8)
+    session_length: int = _env_int("SRT_SESSION_LENGTH", 8)
+    default_meter: str = "4/4"
+
+    @property
+    def weights(self) -> dict[str, float]:
+        total = self.weight_pitch + self.weight_rhythm + self.weight_continuity
+        return {
+            "pitch": self.weight_pitch / total,
+            "rhythm": self.weight_rhythm / total,
+            "continuity": self.weight_continuity / total,
+        }
+
+
+settings = Settings()

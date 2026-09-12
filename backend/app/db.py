@@ -1,0 +1,172 @@
+"""SQLite persistence layer.
+
+Schema follows the MVP blueprint: users, skills, user_skills, exercises,
+exercise_skills, performances. Three *additive* columns/columns-sets exist
+beyond the blueprint so the API can be stateless about exercise content:
+
+* ``exercises.params_json``   - generator parameters (for reproducibility)
+* ``exercises.expected_json`` - the expected-note timeline used by scoring
+* ``performances.analysis_json`` - per-note feedback for the stats screen
+
+No ORM: plain sqlite3 with short-lived connections keeps the layer swappable for
+PostgreSQL later (the SQL is ANSI apart from the AUTOINCREMENT spelling).
+"""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Iterable, Iterator
+
+from .config import settings
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS users (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    username      TEXT NOT NULL UNIQUE,
+    created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS skills (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    slug          TEXT NOT NULL UNIQUE,
+    name          TEXT NOT NULL UNIQUE,
+    description   TEXT,
+    sort_order    INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS user_skills (
+    user_id           INTEGER NOT NULL,
+    skill_id          INTEGER NOT NULL,
+    elo_rating        REAL NOT NULL DEFAULT 700.0,
+    attempts          INTEGER NOT NULL DEFAULT 0,
+    last_practiced_at TIMESTAMP,
+    PRIMARY KEY (user_id, skill_id),
+    FOREIGN KEY (user_id)  REFERENCES users(id)  ON DELETE CASCADE,
+    FOREIGN KEY (skill_id) REFERENCES skills(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS exercises (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    musicxml_blob   TEXT NOT NULL,
+    difficulty_elo  REAL NOT NULL,
+    key_name        TEXT,
+    meter           TEXT,
+    bars            INTEGER,
+    tempo_bpm       REAL,
+    generator_seed  INTEGER,
+    source          TEXT NOT NULL DEFAULT 'generated',
+    params_json     TEXT,
+    expected_json   TEXT,
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS exercise_skills (
+    exercise_id INTEGER NOT NULL,
+    skill_id    INTEGER NOT NULL,
+    level       INTEGER NOT NULL,
+    PRIMARY KEY (exercise_id, skill_id),
+    FOREIGN KEY (exercise_id) REFERENCES exercises(id) ON DELETE CASCADE,
+    FOREIGN KEY (skill_id)    REFERENCES skills(id)    ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS performances (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id             INTEGER NOT NULL,
+    exercise_id         INTEGER NOT NULL,
+    score               REAL,
+    pitch_accuracy      REAL,
+    rhythm_accuracy     REAL,
+    continuity_accuracy REAL,
+    mode                TEXT NOT NULL DEFAULT 'practice',
+    tempo_bpm           REAL,
+    latency_ms          REAL DEFAULT 0,
+    played_notes_json   TEXT,
+    analysis_json       TEXT,
+    performed_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id)     REFERENCES users(id)     ON DELETE CASCADE,
+    FOREIGN KEY (exercise_id) REFERENCES exercises(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_performances_user_time
+    ON performances (user_id, performed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_exercise_skills_skill
+    ON exercise_skills (skill_id);
+"""
+
+
+def utcnow_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0, tzinfo=None).isoformat(sep=" ")
+
+
+def connect(db_path: Path | None = None) -> sqlite3.Connection:
+    path = Path(db_path or settings.db_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(path, isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")
+    return conn
+
+
+@contextmanager
+def transaction(db_path: Path | None = None) -> Iterator[sqlite3.Connection]:
+    conn = connect(db_path)
+    try:
+        conn.execute("BEGIN")
+        yield conn
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    finally:
+        conn.close()
+
+
+def init_db(db_path: Path | None = None) -> None:
+    conn = connect(db_path)
+    try:
+        conn.executescript(SCHEMA)
+    finally:
+        conn.close()
+
+
+def row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
+    return dict(row) if row is not None else None
+
+
+def json_load(raw: str | None, default: Any) -> Any:
+    if not raw:
+        return default
+    try:
+        return json.loads(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+def json_dump(value: Any) -> str:
+    return json.dumps(value, separators=(",", ":"), sort_keys=False)
+
+
+def get_or_create_user(conn: sqlite3.Connection, username: str | None = None) -> int:
+    username = username or settings.default_username
+    row = conn.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone()
+    if row:
+        return int(row["id"])
+    cur = conn.execute("INSERT INTO users (username) VALUES (?)", (username,))
+    return int(cur.lastrowid)
+
+
+def ensure_user_skill_rows(conn: sqlite3.Connection, user_id: int, skills: Iterable[dict[str, Any]]) -> None:
+    for skill in skills:
+        conn.execute(
+            """
+            INSERT INTO user_skills (user_id, skill_id, elo_rating)
+            VALUES (?, ?, ?)
+            ON CONFLICT (user_id, skill_id) DO NOTHING
+            """,
+            (user_id, skill["id"], settings.default_rating),
+        )
