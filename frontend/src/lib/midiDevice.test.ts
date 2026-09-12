@@ -48,6 +48,16 @@ test('a different key is never an echo', () => {
   assert.equal(gate.accept(60, 70, 'b', 1_001), true, 'different velocity');
 });
 
+test('a port that has carried a note beats the name hint', () => {
+  const activity = new PortActivity();
+  activity.note(through.id, 1_000);
+  assert.equal(
+    chooseActive([through, casio], { activity }),
+    through.id,
+    'evidence wins even when it contradicts the name',
+  );
+});
+
 test('activity remembers which port actually carried notes', () => {
   const activity = new PortActivity();
   activity.note('silent', 1_000);
@@ -62,7 +72,16 @@ test('activity remembers which port actually carried notes', () => {
 test('the active port is the pin, then the fingerprint, then the loudest, then the first', () => {
   const ports = [through, casio];
   assert.equal(chooseActive([]), null);
-  assert.equal(chooseActive(ports), through.id, 'nothing known yet: first port');
+  assert.equal(
+    chooseActive(ports),
+    casio.id,
+    'before the first note: the port that is not called Midi Through',
+  );
+  assert.equal(
+    chooseActive([through]),
+    through.id,
+    'and with nothing else present, even the silent-looking port is used',
+  );
 
   const activity = new PortActivity();
   activity.note(casio.id, 2_000);

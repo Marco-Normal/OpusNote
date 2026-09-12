@@ -161,6 +161,14 @@ export function chooseActive(
     const remembered = ports.find((port) => fingerprint(port) === options.pinnedFingerprint);
     if (remembered) return remembered.id;
   }
+  // Evidence first: a port that has carried a note is the one in use, whatever the
+  // driver decided to call it.
   const loud = options.activity?.loudest(ids) ?? null;
-  return loud ?? ids[0];
+  if (loud) return loud;
+  // Then the name, which is only a hint: before the first note, "the port that is
+  // not called Midi Through" is a better guess than "whichever was enumerated
+  // first", and it is what the device bar displays in the meantime. It never
+  // overrides evidence, and it is never trusted enough to *ignore* a port.
+  const audible = ports.find((port) => !looksSilent(port));
+  return audible?.id ?? ids[0];
 }

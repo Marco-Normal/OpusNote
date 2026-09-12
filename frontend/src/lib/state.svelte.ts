@@ -8,12 +8,14 @@
 import { api } from './api';
 import { CaptureClient, type CaptureStatus } from './capture';
 import { MidiInput, type MidiDeviceInfo } from './midi';
+import { fingerprint, type PortSnapshot } from './midiDevice';
 import type { AppView, Profile, Workout } from './types';
 
 const LATENCY_STORAGE_KEY = 'srt.latencyMs';
 const BARS_STORAGE_KEY = 'srt.bars';
 const FOCUS_STORAGE_KEY = 'srt.focusMode';
 const CAPTURE_STORAGE_KEY = 'srt.capture';
+const MIDI_PIN_STORAGE_KEY = 'srt.midi.pin';
 
 /** Exercise lengths offered in the UI. Length is a preference, not difficulty. */
 export const BAR_CHOICES = [4, 8, 12, 16] as const;
@@ -45,6 +47,14 @@ function readCapture(): boolean {
   }
 }
 
+function readPinnedFingerprint(): string | null {
+  try {
+    return localStorage.getItem(MIDI_PIN_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
 function readStoredLatency(): number {
   try {
     const raw = localStorage.getItem(LATENCY_STORAGE_KEY);
@@ -65,7 +75,19 @@ class AppState {
   midiConnected = $state(false);
   midiError = $state<string | null>(null);
   devices = $state<MidiDeviceInfo[]>([]);
-  selectedDeviceId = $state<string | null>(null);
+  /** Every port, with what has been heard from it: drives the device bar. */
+  ports = $state<PortSnapshot[]>([]);
+  /** The port in use, and the player's explicit choice if there is one. */
+  midiActiveId = $state<string | null>(null);
+  /** True when a choice is in force, however it was remembered. */
+  midiPinned = $state(false);
+  /** True when access was granted without an explicit click. */
+  midiAutoConnected = $state(false);
+  /** True when the browser refused MIDI until the user asks for it. */
+  midiNeedsGesture = $state(false);
+
+  private midiWired = false;
+  private reconnectTimer: ReturnType<typeof setInterval> | null = null;
 
   latencyMs = $state(readStoredLatency());
 
@@ -173,6 +195,11 @@ class AppState {
     await this.refreshWorkout();
   }
 
+  /** Called once by the app shell, after `bootstrap()`. */
+  async startMidi(): Promise<void> {
+    await this.autoConnectMidi();
+  }
+
   async refreshProfile(): Promise<void> {
     try {
       this.profile = await api.profile();
@@ -192,39 +219,107 @@ class AppState {
     else this.capture.stop();
   }
 
-  async connectMidi(): Promise<void> {
-    this.midiError = null;
+  /**
+   * Ask for MIDI access and attach to whatever is there.
+   *
+   * `quiet` is for the automatic attempts: a refusal there is not an error worth
+   * showing, because the browser may simply require a gesture, and the Connect
+   * button is the honest fallback.
+   */
+  async connectMidi(options: { quiet?: boolean } = {}): Promise<void> {
+    if (!this.midiWired) {
+      this.midiWired = true;
+      this.midi.onPorts((ports) => {
+        this.ports = ports;
+        this.midiActiveId = this.midi.activeId;
+        this.midiPinned = this.midi.hasPin;
+      });
+      this.midi.onDevices((next) => {
+        this.devices = next;
+        this.midiConnected = next.length > 0;
+        if (next.length > 0) this.midiNeedsGesture = false;
+      });
+    }
+    if (!options.quiet) this.midiError = null;
     try {
       const devices = await this.midi.connect();
       this.devices = devices;
-      this.selectedDeviceId = this.midi.selectedId;
       this.midiConnected = devices.length > 0;
-      if (devices.length === 0) {
+      this.midiNeedsGesture = false;
+      this.midiActiveId = this.midi.activeId;
+      this.midiPinned = this.midi.hasPin;
+      if (devices.length === 0 && !options.quiet) {
         this.midiError =
           'No MIDI input found. Connect the PX-870 over USB, make sure it is powered on, then rescan.';
       }
-      this.midi.onDevices((next) => {
-        this.devices = next;
-        if (!this.selectedDeviceId && next.length > 0) {
-          this.selectDevice(next[0].id);
-        }
-      });
-      // Capture resumes with the device: the preference outlives the connection,
-      // so reconnecting after a replug does not silently stop the log.
+      // Capture is app-level and follows the device: reconnecting after a replug
+      // must not silently stop the log.
       if (this.captureEnabled && devices.length > 0) this.capture.start();
     } catch (error) {
       this.midiConnected = false;
-      this.midiError = error instanceof Error ? error.message : String(error);
+      if (options.quiet) {
+        // A refusal without a gesture is not worth shouting about; it only means
+        // the Connect button is needed once.
+        this.midiNeedsGesture = true;
+      } else {
+        this.midiError = error instanceof Error ? error.message : String(error);
+      }
     }
   }
 
-  selectDevice(id: string): void {
+  /**
+   * Try to connect with no interaction, then keep trying.
+   *
+   * On the notebook a managed policy has already granted the MIDI permission, so
+   * this succeeds silently on load. Everywhere else the browser may want a
+   * gesture; a bare refusal only arms the Connect button.
+   */
+  async autoConnectMidi(): Promise<void> {
+    if (!this.midiSupported || this.midiConnected) return;
+    this.midi.restorePin(readPinnedFingerprint());
+    await this.connectMidi({ quiet: true });
+    this.midiAutoConnected = this.midiConnected;
+    this.startReconnectLoop();
+  }
+
+  /**
+   * A piano switched on ten minutes after the machine is already running is the
+   * normal case, so poll while nothing is attached.
+   *
+   * `statechange` covers plugging and unplugging; this covers the browser not
+   * delivering it, and the piano having been off when the page loaded.
+   */
+  private startReconnectLoop(): void {
+    if (this.reconnectTimer !== null) return;
+    const attempt = () => {
+      if (this.midiConnected || !this.midiSupported) {
+        if (this.reconnectTimer !== null) clearInterval(this.reconnectTimer);
+        this.reconnectTimer = null;
+        return;
+      }
+      void this.connectMidi({ quiet: true });
+    };
+    this.reconnectTimer = setInterval(attempt, 5_000);
+    // A laptop that was asleep is the other way devices go missing.
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') attempt();
+    });
+  }
+
+  /** Use only this device, or null to go back to automatic selection. */
+  pinDevice(id: string | null): void {
     try {
-      this.midi.select(id);
-      this.selectedDeviceId = id;
-      this.midiConnected = true;
-      this.midiError = null;
-      if (this.captureEnabled) this.capture.start();
+      this.midi.pin(id);
+      this.midiPinned = this.midi.hasPin;
+      this.midiActiveId = this.midi.activeId;
+      const active = this.ports.find((port) => port.id === id);
+      if (active) {
+        // Stored as a fingerprint so the choice survives the id changing, which is
+        // exactly what happens when site data is cleared during a setup.
+        localStorage.setItem(MIDI_PIN_STORAGE_KEY, fingerprint(active));
+      } else {
+        localStorage.removeItem(MIDI_PIN_STORAGE_KEY);
+      }
     } catch (error) {
       this.midiError = error instanceof Error ? error.message : String(error);
     }

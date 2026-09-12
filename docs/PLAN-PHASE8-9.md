@@ -538,8 +538,16 @@ export function chooseActive(
     const remembered = ports.find((port) => fingerprint(port) === options.pinnedFingerprint);
     if (remembered) return remembered.id;
   }
+  // Evidence first: a port that has carried a note is the one in use, whatever the
+  // driver decided to call it.
   const loud = options.activity?.loudest(ids) ?? null;
-  return loud ?? ids[0];
+  if (loud) return loud;
+  // Then the name, which is only a hint: before the first note, "the port that is
+  // not called Midi Through" is a better guess than "whichever was enumerated
+  // first", and it is what the device bar displays in the meantime. It never
+  // overrides evidence, and it is never trusted enough to *ignore* a port.
+  const audible = ports.find((port) => !looksSilent(port));
+  return audible?.id ?? ids[0];
 }
 ```
 
@@ -558,6 +566,15 @@ the remembered choice would have been lost on a machine change. The implementati
 compares **token sets** and drops the noise tokens (bare digits, `midiin\d*`,
 `midi`, `port`) instead, which also makes it order-insensitive. `midi through` is
 deliberately **not** dropped, so the dead port keeps a distinct fingerprint.
+
+**Second deviation, found by the e2e.** E2E scenario 9 failed with
+`the live port is chosen, not the first one ('Auto · Midi Through Port-0')`: with no
+note played yet, `activity.loudest` is empty and the rule fell back to position, so
+the device bar announced the dead port as the one in use. The fix keeps evidence
+first and adds the name as a *tie-break only* — prefer a port that is not
+`looksSilent` before falling back to `ids[0]`. It never overrides a note that has
+actually been heard, and it never causes a port to be ignored, so a strangely-named
+real device still works (covered by a test with only `Midi Through` present).
 
 **1.5 Commit.** Title: `Auto-select the live MIDI port instead of the first one`
 
@@ -1110,6 +1127,13 @@ with:
     void app.bootstrap().then(() => app.startMidi());
   });
 ```
+
+**Deviation, found by e2e scenario 9.** A pin restored from storage arrives as a
+fingerprint only, so `pinnedId` is null and the device bar read `Auto` while the
+remembered device was in fact being honoured — the pin worked and looked broken.
+`MidiInput` now exposes `hasPin` (id *or* fingerprint), `emitPorts` marks the row
+`pinned` from it, and the store keeps a boolean `midiPinned` instead of the session
+id, which the interface never needed.
 
 **3.7 Regression check.**
 

@@ -20,7 +20,7 @@
   ];
 
   onMount(() => {
-    void app.bootstrap();
+    void app.bootstrap().then(() => app.startMidi());
   });
 
   // Drives the focus-mode layout in app.css. Set on <html> so the rules can
