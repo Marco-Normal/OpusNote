@@ -22,6 +22,9 @@ from pathlib import Path
 from typing import Any, Iterable, Iterator
 
 from .config import settings
+from .practice.schema import PRACTICE_SCHEMA, migrate as migrate_practice
+from .repertoire.schema import REPERTOIRE_SCHEMA, migrate as migrate_repertoire
+from .workout.schema import WORKOUT_SCHEMA, migrate as migrate_workouts
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -105,7 +108,13 @@ def utcnow_iso() -> str:
 def connect(db_path: Path | None = None) -> sqlite3.Connection:
     path = Path(db_path or settings.db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path, isolation_level=None)
+    # check_same_thread=False is required, not a shortcut. FastAPI resolves a
+    # sync dependency and runs a sync endpoint in *different* threadpool threads,
+    # so a connection created in the dependency would be used from another
+    # thread and SQLite refuses it. Safe here because a connection is opened per
+    # request, handed to exactly one request, and used sequentially — never
+    # shared concurrently, which is the hazard the flag actually guards.
+    conn = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
@@ -127,9 +136,23 @@ def transaction(db_path: Path | None = None) -> Iterator[sqlite3.Connection]:
 
 
 def init_db(db_path: Path | None = None) -> None:
+    """Create or upgrade the database. The single creation path.
+
+    Each domain owns its own DDL; this function owns the order. The order is not
+    arbitrary — ``segments`` references ``pieces`` and ``workouts``, so the
+    practice schema runs between them, and a migration must run before the script
+    that indexes the column it adds. Columns are added first on an existing
+    database (a no-op on a fresh one, where the CREATE handles everything).
+    """
     conn = connect(db_path)
     try:
         conn.executescript(SCHEMA)
+        migrate_repertoire(conn)
+        conn.executescript(REPERTOIRE_SCHEMA)
+        migrate_practice(conn)
+        conn.executescript(PRACTICE_SCHEMA)
+        migrate_workouts(conn)
+        conn.executescript(WORKOUT_SCHEMA)
     finally:
         conn.close()
 

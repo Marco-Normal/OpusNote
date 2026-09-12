@@ -21,7 +21,8 @@
   let unsubscribe: (() => void) | null = null;
   let finishTimer: ReturnType<typeof setTimeout> | null = null;
 
-  const secondsPerBeat = 60 / BPM;
+  // The calibration clicks are plain quarter-note pulses, so the beat unit is 1.
+  const secondsPerQuarter = 60 / BPM;
 
   onDestroy(() => {
     if (finishTimer) clearTimeout(finishTimer);
@@ -37,12 +38,17 @@
     running = true;
 
     const clickTimes: number[] = [];
-    metronome.start({ barsBeats: [CLICKS], secondsPerBeat, countInBeats: COUNT_IN });
+    metronome.start({
+      barsBeats: [CLICKS],
+      barBeatUnits: [1],
+      secondsPerQuarter,
+      countInBeats: COUNT_IN,
+    });
     // Onsets are reported relative to beat 1, which is exactly where the first
     // click we score against falls.
     app.midi.startRecording(metronome.downbeatMs);
     for (let index = 0; index < CLICKS; index += 1) {
-      clickTimes.push(index * secondsPerBeat * 1000);
+      clickTimes.push(index * secondsPerQuarter * 1000);
     }
 
     unsubscribe?.();
@@ -55,11 +61,11 @@
         if (Math.abs(distance) < Math.abs(nearest)) nearest = distance;
       }
       // Ignore attacks that are nowhere near a click (wrong notes, rests).
-      if (Math.abs(nearest) > secondsPerBeat * 1000 * 0.45) return;
+      if (Math.abs(nearest) > secondsPerQuarter * 1000 * 0.45) return;
       samples = [...samples, Math.round(nearest)];
     });
 
-    const totalMs = (COUNT_IN + CLICKS) * secondsPerBeat * 1000;
+    const totalMs = (COUNT_IN + CLICKS) * secondsPerQuarter * 1000;
     finishTimer = setTimeout(() => stop(), totalMs + 600);
   }
 

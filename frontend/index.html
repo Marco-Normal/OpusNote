@@ -10,6 +10,30 @@
     />
     <meta name="description" content="Adaptive sight-reading trainer for a real MIDI piano." />
     <title>Sight-Reading Trainer</title>
+    <!--
+      Resolve the theme before first paint so a dark-mode reload never flashes
+      white. Kept inline and dependency-free for that reason; `theme.svelte.ts`
+      takes over once the app has mounted.
+    -->
+    <script>
+      (function () {
+        try {
+          var preference = localStorage.getItem('srt.theme') || 'system';
+          var dark =
+            preference === 'dark' ||
+            (preference === 'system' &&
+              window.matchMedia('(prefers-color-scheme: dark)').matches);
+          var root = document.documentElement;
+          root.dataset.theme = dark ? 'dark' : 'light';
+          var paper = localStorage.getItem('srt.scorePaper') || 'theme';
+          root.dataset.scorePaper = paper === 'theme' && dark ? 'dark' : 'light';
+          root.style.colorScheme = dark ? 'dark' : 'light';
+        } catch (error) {
+          document.documentElement.dataset.theme = 'light';
+          document.documentElement.dataset.scorePaper = 'light';
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="app"></div>

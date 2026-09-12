@@ -47,13 +47,13 @@
 
   .chip.target {
     background: var(--accent-soft);
-    border-color: #cdd2ff;
+    border-color: var(--accent-line);
     color: var(--accent);
     font-weight: 600;
   }
 
   .value {
-    background: rgba(0, 0, 0, 0.05);
+    background: var(--scrim);
     border-radius: 999px;
     padding: 0 0.3rem;
     font-size: 0.7rem;

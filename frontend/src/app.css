@@ -1,26 +1,81 @@
 :root {
+  /* ---- light theme ---- */
   --bg: #f2f2ef;
   --surface: #ffffff;
   --surface-2: #f8f8f6;
   --line: #e2e2dd;
   --ink: #1b1b1a;
   --muted: #6b6f76;
+
   --accent: #4338ca;
   --accent-soft: #eef0ff;
+  --accent-line: #d5d8ff;
+  --accent-ink: #ffffff;
+
   --good: #15803d;
   --good-soft: #eaf6ee;
+  --good-line: #b9dfc6;
+
   --bad: #b91c1c;
   --bad-soft: #fdecec;
+  --bad-line: #efc4c4;
+
   --warn: #b45309;
   --warn-soft: #fdf3e7;
-  --radius: 10px;
+  --warn-line: #eed6b4;
+
+  /* Reusable surfaces that are not semantic colours. */
+  --track: #e9e9e4;
+  --scrim: rgba(0, 0, 0, 0.05);
   --shadow: 0 1px 2px rgba(20, 20, 20, 0.06), 0 6px 18px rgba(20, 20, 20, 0.05);
+  --score-bg: #ffffff;
+
+  --radius: 10px;
   --mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
 
   color-scheme: light;
   font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   color: var(--ink);
   background: var(--bg);
+}
+
+[data-theme='dark'] {
+  --bg: #0f1012;
+  --surface: #17191d;
+  --surface-2: #1e2126;
+  --line: #2b2f36;
+  --ink: #e7e8ea;
+  --muted: #9aa1ab;
+
+  --accent: #8b93ff;
+  --accent-soft: #23264a;
+  --accent-line: #3a3f78;
+  --accent-ink: #0f1012;
+
+  --good: #4ade80;
+  --good-soft: #14301f;
+  --good-line: #2b6a45;
+
+  --bad: #f87171;
+  --bad-soft: #3a1b1b;
+  --bad-line: #7f3b3b;
+
+  --warn: #fbbf24;
+  --warn-soft: #3a2c12;
+  --warn-line: #7d5f24;
+
+  --track: #2b2f36;
+  --scrim: rgba(255, 255, 255, 0.07);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 6px 18px rgba(0, 0, 0, 0.35);
+  --score-bg: #0b0c0e;
+
+  color-scheme: dark;
+}
+
+/* The score's paper is chosen independently of the chrome's theme, so this rule
+   must come after the theme blocks: equal specificity, source order decides. */
+[data-score-paper='light'] {
+  --score-bg: #ffffff;
 }
 
 * {
@@ -31,6 +86,18 @@ html,
 body {
   margin: 0;
   min-height: 100%;
+}
+
+/*
+ * Reserve the scrollbar track permanently.
+ *
+ * Without this the layout oscillates: the score grows, the page scrollbar
+ * appears, the available width shrinks, OSMD re-wraps the music onto another
+ * system, the height changes, the scrollbar disappears — forever. Reserving the
+ * gutter breaks the loop at its source.
+ */
+html {
+  scrollbar-gutter: stable;
 }
 
 body {
@@ -54,7 +121,7 @@ button {
 
 button:hover:not(:disabled) {
   background: var(--surface-2);
-  border-color: #cfcfc8;
+  border-color: var(--muted);
 }
 
 button:active:not(:disabled) {
@@ -69,12 +136,12 @@ button:disabled {
 button.primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--accent-ink);
 }
 
 button.primary:hover:not(:disabled) {
-  background: #3730a3;
-  border-color: #3730a3;
+  filter: brightness(0.92);
+  border-color: var(--accent);
 }
 
 button.ghost {
@@ -84,7 +151,7 @@ button.ghost {
 }
 
 button.ghost:hover:not(:disabled) {
-  background: rgba(0, 0, 0, 0.04);
+  background: var(--scrim);
   border-color: transparent;
 }
 
@@ -152,25 +219,25 @@ input[type='number'] {
 
 .pill.good {
   background: var(--good-soft);
-  border-color: #c6e6d1;
+  border-color: var(--good-line);
   color: var(--good);
 }
 
 .pill.bad {
   background: var(--bad-soft);
-  border-color: #f2c9c9;
+  border-color: var(--bad-line);
   color: var(--bad);
 }
 
 .pill.warn {
   background: var(--warn-soft);
-  border-color: #f0dcc0;
+  border-color: var(--warn-line);
   color: var(--warn);
 }
 
 .pill.accent {
   background: var(--accent-soft);
-  border-color: #d5d8ff;
+  border-color: var(--accent-line);
   color: var(--accent);
 }
 
@@ -200,16 +267,16 @@ h3 {
 
 .error-banner {
   background: var(--bad-soft);
-  border: 1px solid #f2c9c9;
+  border: 1px solid var(--bad-line);
   color: var(--bad);
   padding: 0.65rem 0.85rem;
   border-radius: var(--radius);
   font-size: 0.9rem;
 }
 
-/* Sheet music needs black ink on white, whatever the UI theme does. */
+/* Sheet music keeps its own paper colour, independent of the chrome. */
 .score-surface {
-  background: #fff;
+  background: var(--score-bg);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 0.5rem;
@@ -240,4 +307,44 @@ th {
   font-size: 0.78rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
+}
+
+/*
+ * Performance layout.
+ *
+ * Reading music must not involve scrolling, so while an exercise is running the
+ * surrounding chrome collapses and the score keeps the space. `data-playing` is
+ * set on <html> by the practice view so these rules can reach across components.
+ */
+[data-playing='true'] .practice-chrome,
+[data-playing='true'] .rationale,
+[data-playing='true'] .exercise-meta,
+[data-playing='true'] .strip,
+[data-playing='true'] .chips,
+[data-playing='true'] .footer {
+  display: none;
+}
+
+/* Focus mode: the score owns the window. */
+[data-focus='true'] .topbar,
+[data-focus='true'] .device-bar,
+[data-focus='true'] .chips,
+[data-focus='true'] .footer {
+  display: none;
+}
+
+[data-focus='true'] .shell {
+  max-width: none;
+  padding: 0.5rem 0.6rem 0.75rem;
+}
+
+[data-focus='true'] .score-surface {
+  padding: 0.35rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
 }

@@ -4,6 +4,10 @@
   import PracticeView from './components/PracticeView.svelte';
   import CalibrationView from './components/CalibrationView.svelte';
   import StatsView from './components/StatsView.svelte';
+  import PracticeLogView from './components/PracticeLogView.svelte';
+  import RepertoireView from './components/RepertoireView.svelte';
+  import ThemeControls from './components/ThemeControls.svelte';
+  import WorkoutBar from './components/WorkoutBar.svelte';
   import { app } from './lib/state.svelte';
   import type { AppView } from './lib/types';
 
@@ -11,10 +15,18 @@
     { id: 'practice', label: 'Practice' },
     { id: 'calibrate', label: 'Calibrate' },
     { id: 'stats', label: 'Progress' },
+    { id: 'log', label: 'Log' },
+    { id: 'repertoire', label: 'Repertoire' },
   ];
 
   onMount(() => {
     void app.bootstrap();
+  });
+
+  // Drives the focus-mode layout in app.css. Set on <html> so the rules can
+  // reach the header and footer.
+  $effect(() => {
+    document.documentElement.dataset.focus = String(app.focusMode);
   });
 </script>
 
@@ -28,20 +40,25 @@
       </div>
     </div>
 
-    <nav class="tabs" aria-label="Sections">
-      {#each tabs as tab (tab.id)}
-        <button
-          class:active={app.view === tab.id}
-          aria-current={app.view === tab.id ? 'page' : undefined}
-          onclick={() => (app.view = tab.id)}
-        >
-          {tab.label}
-        </button>
-      {/each}
-    </nav>
+    <div class="row">
+      <nav class="tabs" aria-label="Sections">
+        {#each tabs as tab (tab.id)}
+          <button
+            class:active={app.view === tab.id}
+            aria-current={app.view === tab.id ? 'page' : undefined}
+            onclick={() => (app.view = tab.id)}
+          >
+            {tab.label}
+          </button>
+        {/each}
+      </nav>
+      <ThemeControls />
+    </div>
   </header>
 
   <DeviceBar />
+
+  <WorkoutBar />
 
   {#if app.apiOnline === false}
     <div class="error-banner">
@@ -55,8 +72,12 @@
       <PracticeView />
     {:else if app.view === 'calibrate'}
       <CalibrationView />
-    {:else}
+    {:else if app.view === 'stats'}
       <StatsView />
+    {:else if app.view === 'log'}
+      <PracticeLogView />
+    {:else}
+      <RepertoireView />
     {/if}
   </main>
 
@@ -97,7 +118,7 @@
     height: 2.1rem;
     border-radius: 9px;
     background: var(--accent);
-    color: #fff;
+    color: var(--accent-ink);
     font-size: 1.1rem;
   }
 

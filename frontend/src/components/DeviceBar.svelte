@@ -10,7 +10,7 @@
   }
 </script>
 
-<section class="card bar">
+<section class="card bar device-bar">
   <div class="row wrap">
     <span class="pill" class:good={app.midiConnected} class:bad={!app.midiConnected}>
       <span class="dot" class:on={app.midiConnected}></span>
@@ -75,7 +75,7 @@
     width: 0.5rem;
     height: 0.5rem;
     border-radius: 50%;
-    background: #c4c4bd;
+    background: var(--track);
   }
 
   .dot.on {

@@ -104,19 +104,19 @@
 
   .note.correct {
     background: var(--good-soft);
-    border-color: #b9dfc6;
+    border-color: var(--good-line);
     color: var(--good);
   }
 
   .note.wrong_pitch {
     background: var(--bad-soft);
-    border-color: #efc4c4;
+    border-color: var(--bad-line);
     color: var(--bad);
   }
 
   .note.missed {
     background: var(--warn-soft);
-    border-color: #eed6b4;
+    border-color: var(--warn-line);
     color: var(--warn);
   }
 

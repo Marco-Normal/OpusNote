@@ -138,6 +138,74 @@ def test_reused_exercise_focus_matches_what_was_asked_for(client):
             assert f"level {payload['levels'][skill]}" in payload["rationale"]
 
 
+@pytest.mark.parametrize("bars", [1, 4, 8, 12, 16])
+def test_requested_length_is_always_honoured(client, bars):
+    """Regression: the reuse lookup ignored bar count, so a request for 12 bars
+    could be served a stored 4-bar exercise."""
+    for _ in range(3):
+        payload = client.get("/api/exercise/next", params={"bars": bars}).json()
+        assert payload["bars"] == bars, f"asked for {bars} bars, got {payload['bars']}"
+        assert len(payload["measures"]) == bars
+
+
+def test_length_change_produces_a_different_exercise(client):
+    short = client.get("/api/exercise/next", params={"bars": 4}).json()
+    long = client.get("/api/exercise/next", params={"bars": 12}).json()
+    assert short["exercise_id"] != long["exercise_id"]
+    assert long["bars"] == 12
+
+
+def test_played_exercises_lead_to_fresh_material(client):
+    """Sight-reading is defeated by replaying the same handful of exercises."""
+    ids = []
+    for _ in range(10):
+        exercise = client.get("/api/exercise/next").json()
+        ids.append(exercise["exercise_id"])
+        client.post(
+            "/api/score",
+            json={"exercise_id": exercise["exercise_id"], "notes": perfect_performance(exercise)},
+        )
+    assert len(set(ids)) >= 8, f"only {len(set(ids))} distinct exercises in 10 attempts"
+
+
+def test_an_unplayed_exercise_is_reused_rather_than_regenerated(client):
+    first = client.get("/api/exercise/next").json()
+    second = client.get("/api/exercise/next").json()
+    assert first["exercise_id"] == second["exercise_id"]
+
+
+def test_reuse_never_crosses_level_profiles(client):
+    """Regression: reuse matched on the target skill alone, so a plan calling for
+    two hands could be served a stored right-hand-alone exercise."""
+    conn = store.open_connection()
+    try:
+        conn.execute(
+            """
+            UPDATE user_skills SET elo_rating = 1300
+            WHERE user_id = 1 AND skill_id = (SELECT id FROM skills WHERE slug = 'texture')
+            """
+        )
+    finally:
+        conn.close()
+
+    saw_two_hands = False
+    for _ in range(12):
+        payload = client.get("/api/exercise/next").json()
+        levels = payload["levels"]
+        hands = {note["hand"] for note in payload["expected_notes"]}
+        # texture 1 is right hand alone, 2 is left hand alone, 3+ is both.
+        if levels["texture"] >= 3:
+            saw_two_hands = True
+            assert hands == {"RH", "LH"}, f"texture {levels['texture']} produced {hands}"
+        elif levels["texture"] == 1:
+            assert hands == {"RH"}, f"texture 1 produced {hands}"
+        else:
+            assert hands == {"LH"}, f"texture 2 produced {hands}"
+        if payload["bass_pattern"]:
+            assert levels["texture"] >= 3
+    assert saw_two_hands, "a high texture rating should have produced two-hand material"
+
+
 def test_exercises_are_reused_before_being_regenerated(client):
     first = client.get("/api/exercise/next", params={"skill": "key_signature"}).json()
     second = client.get("/api/exercise/next", params={"skill": "key_signature"}).json()
@@ -376,3 +444,57 @@ def test_performance_history_accumulates(client):
     assert len(stats["history"]) == 3
     # History is ordered oldest first for charting.
     assert stats["history"][0]["performed_at"] <= stats["history"][-1]["performed_at"]
+
+
+# --------------------------------------------------------------------------
+# Cross-domain: practising in the key of a piece
+# --------------------------------------------------------------------------
+
+
+def test_exercise_can_be_pinned_to_a_key(client):
+    payload = client.get("/api/exercise/next", params={"key": "F#"}).json()
+    assert payload["key_name"] == "F#"
+    # The key-signature level is whatever makes that key legal, regardless of the
+    # rating that dimension would otherwise have chosen.
+    assert payload["levels"]["key_signature"] == 7
+
+
+def test_pinning_a_key_sets_the_level_that_makes_it_legal(client):
+    from app.skills_data import level_for_key
+
+    for key in ("C", "Gb", "bb"):
+        payload = client.get("/api/exercise/next", params={"key": key}).json()
+        assert payload["key_name"] == key
+        assert payload["levels"]["key_signature"] == level_for_key(key)
+
+
+def test_an_unknown_key_is_refused(client):
+    response = client.get("/api/exercise/next", params={"key": "H"})
+    assert response.status_code == 422
+    assert "unknown key" in response.json()["detail"]
+
+
+def test_a_pinned_key_is_honoured_on_every_request(client):
+    """The reuse lookup must not hand back an exercise in some other key."""
+    for _ in range(6):
+        payload = client.get("/api/exercise/next", params={"key": "Gb"}).json()
+        assert payload["key_name"] == "Gb", payload["rationale"]
+
+
+def test_pinning_a_key_is_reported_in_the_rationale(client):
+    payload = client.get("/api/exercise/next", params={"key": "Ab"}).json()
+    assert "Ab" in payload["rationale"]
+
+
+def test_the_suggestion_endpoint_output_can_be_fed_back_as_a_key(client, legacy_db):
+    """The whole point of the bridge: repertoire tells the trainer what to write."""
+    client.post("/api/repertoire/import", json={"copy_media": False})
+    suggestions = client.get("/api/practice-suggestions").json()
+    assert suggestions, "the fixture has active pieces"
+    for suggestion in suggestions:
+        if not suggestion["suggested_key"]:
+            continue
+        exercise = client.get(
+            "/api/exercise/next", params={"key": suggestion["suggested_key"]}
+        ).json()
+        assert exercise["key_name"] == suggestion["suggested_key"]

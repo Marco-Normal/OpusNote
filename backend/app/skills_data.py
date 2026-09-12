@@ -104,13 +104,13 @@ SKILLS: tuple[SkillSpec, ...] = (
     SkillSpec(
         slug="hand_position",
         name="Hand position",
-        description="Staying put, extending, shifting, and arpeggiating.",
+        description="How far a hand reaches, and how often it has to move.",
         levels=(
-            "Five-finger position, right hand",
-            "Five-finger position, left hand",
-            "Sixth extensions in one hand",
+            "Five-finger position, no movement",
+            "Five-finger position with a sixth",
+            "A full octave under the hand",
             "One clean position shift per phrase",
-            "Frequent shifts in both hands",
+            "Frequent shifts within the phrase",
             "Triad arpeggios across an octave",
             "Seventh-chord arpeggios",
             "Broken octaves",
@@ -121,18 +121,18 @@ SKILLS: tuple[SkillSpec, ...] = (
     SkillSpec(
         slug="texture",
         name="Texture",
-        description="Single lines through to chords and polyphony.",
+        description="Single lines through to chords, accompaniments and polyphony.",
         levels=(
             "Right hand alone",
             "Left hand alone",
-            "Melody with sustained bass notes",
+            "Melody over sustained bass notes",
             "Hands together in similar rhythm",
             "Melody over a moving bass line",
-            "Chords in the right hand",
-            "Two voices in one hand",
+            "Right-hand chords over a moving bass",
+            "Two voices in one hand over a bass",
             "Imitation between the hands",
             "Three independent voices",
-            "Dense four-voice writing",
+            "Dense writing with a stride or wide bass",
         ),
     ),
     SkillSpec(
@@ -211,6 +211,22 @@ KEY_SIGNATURE_LEVELS: dict[int, tuple[str, ...]] = {
     10: ("b", "f#", "c", "f", "bb"),
 }
 
+#: The level at which each key spelling first becomes available, derived from the
+#: table above so the two can never disagree.
+KEY_LEVELS: dict[str, int] = {
+    key: level for level, keys in KEY_SIGNATURE_LEVELS.items() for key in keys
+}
+
+
+def level_for_key(key_name: str) -> int | None:
+    """The key-signature level that makes ``key_name`` legal, or None."""
+    return KEY_LEVELS.get(key_name)
+
+
+def keys_at_level(level: int) -> tuple[str, ...]:
+    return KEY_SIGNATURE_LEVELS.get(level, ())
+
+
 #: Meters available at each level. Levels 9-10 return *sequences*: the
 #: generator alternates them bar by bar.
 METER_LEVELS: dict[int, tuple[str, ...]] = {
@@ -247,34 +263,68 @@ TEMPO_LEVELS: dict[int, tuple[int, int]] = {
 #: ``(low_degree, high_degree, shifts)`` where shifts is the number of distinct
 #: positions the hand visits.
 HAND_POSITION_LEVELS: dict[int, dict[str, object]] = {
-    1: {"span": 5, "centre": "tonic", "shifts": 1, "arpeggio": False},
-    2: {"span": 5, "centre": "tonic", "shifts": 1, "arpeggio": False},
-    3: {"span": 6, "centre": "tonic", "shifts": 1, "arpeggio": False},
-    4: {"span": 7, "centre": "tonic", "shifts": 2, "arpeggio": False},
-    5: {"span": 8, "centre": "tonic", "shifts": 3, "arpeggio": False},
-    6: {"span": 10, "centre": "tonic", "shifts": 2, "arpeggio": True, "chord": "triad"},
-    7: {"span": 14, "centre": "tonic", "shifts": 2, "arpeggio": True, "chord": "seventh"},
-    8: {"span": 15, "centre": "tonic", "shifts": 2, "arpeggio": False, "broken_octaves": True},
-    9: {"span": 15, "centre": "tonic", "shifts": 2, "arpeggio": False, "scale_runs": True},
-    10: {"span": 19, "centre": "tonic", "shifts": 4, "arpeggio": False, "free": True},
+    1: {"span": 5, "shifts": 1},  # five-finger, no movement
+    2: {"span": 6, "shifts": 1},  # a sixth under the hand
+    3: {"span": 7, "shifts": 1},  # a full octave
+    4: {"span": 7, "shifts": 2},  # one shift per phrase
+    5: {"span": 8, "shifts": 3},  # frequent shifts
+    6: {"span": 10, "shifts": 2, "arpeggio": True},
+    7: {"span": 14, "shifts": 2, "arpeggio": True},
+    8: {"span": 15, "shifts": 2, "broken_octaves": True},
+    9: {"span": 15, "shifts": 2, "scale_runs": True},
+    10: {"span": 19, "shifts": 4},
 }
 
 #: Which hands play and how, per texture level.
-#: ``hands``  - parts to emit
-#: ``bass``   - left-hand accompaniment style ("" when the LH carries melody)
-#: ``rh_chord_every`` - add a chord tone in the RH every N melody notes (0 = never)
-#: ``imitation`` / ``inner_voice`` / ``three_voices`` toggle the polyphonic modes
+#:
+#: ``hands``           - parts to emit
+#: ``prefer``          - left-hand patterns this texture implies; the library in
+#:                       ``music/bass_patterns.py`` may still choose another that
+#:                       the meter and level allow, so exercises do not all sound
+#:                       identical
+#: ``rh_chord_every``  - add a chord tone in the RH every N melody notes (0 = never)
+#: ``inner_voice`` / ``three_voices`` - polyphonic modes inside the melody hand
 TEXTURE_LEVELS: dict[int, dict[str, object]] = {
-    1: {"hands": ("RH",), "bass": ""},
-    2: {"hands": ("LH",), "bass": ""},
-    3: {"hands": ("RH", "LH"), "bass": "sustain", "bass_duration": 4.0},
-    4: {"hands": ("RH", "LH"), "bass": "mirror"},
-    5: {"hands": ("RH", "LH"), "bass": "quarters"},
-    6: {"hands": ("RH", "LH"), "bass": "quarters", "rh_chord_every": 3},
-    7: {"hands": ("RH", "LH"), "bass": "quarters", "inner_voice": True},
-    8: {"hands": ("RH", "LH"), "bass": "quarters", "imitation": True},
-    9: {"hands": ("RH", "LH"), "bass": "quarters", "inner_voice": True, "three_voices": True},
-    10: {"hands": ("RH", "LH"), "bass": "moving", "rh_chord_every": 2, "inner_voice": True},
+    1: {"hands": ("RH",)},
+    2: {"hands": ("LH",)},
+    3: {
+        "hands": ("RH", "LH"),
+        "prefer": ("sustained_root", "sustained_fifth", "block_chords"),
+    },
+    4: {
+        "hands": ("RH", "LH"),
+        "prefer": ("mirror", "root_fifth_pulse", "waltz_bass", "march_bass"),
+    },
+    5: {
+        "hands": ("RH", "LH"),
+        "prefer": ("alberti", "murky_bass", "broken_chord", "root_fifth_pulse"),
+    },
+    6: {
+        "hands": ("RH", "LH"),
+        "prefer": ("alberti", "broken_chord", "murky_bass", "walking_bass"),
+        "rh_chord_every": 3,
+    },
+    7: {
+        "hands": ("RH", "LH"),
+        "prefer": ("broken_octaves", "walking_bass", "broken_chord", "tenths"),
+        "inner_voice": True,
+    },
+    8: {
+        "hands": ("RH", "LH"),
+        "prefer": ("canon",),
+    },
+    9: {
+        "hands": ("RH", "LH"),
+        "prefer": ("walking_bass", "free_line", "countermelody", "alberti"),
+        "inner_voice": True,
+        "three_voices": True,
+    },
+    10: {
+        "hands": ("RH", "LH"),
+        "prefer": ("stride_bass", "arpeggio_wide", "tenths", "free_line"),
+        "rh_chord_every": 2,
+        "inner_voice": True,
+    },
 }
 
 #: Allowed melodic scale-degree intervals per interval level. ``0`` means a

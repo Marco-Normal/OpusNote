@@ -34,6 +34,129 @@ press **Get my first exercise**.
 > Use `localhost`, not `127.0.0.1`, for the dev server — that is where Vite binds
 > by default. Web MIDI requires a secure context, and `localhost` counts as one.
 
+### Two hands and the left-hand library
+
+From texture level 3 up, exercises are written on a grand staff and both hands
+are read together. The left hand is drawn from a library of **18 named
+accompaniment figures** spanning the common vocabulary:
+
+- **Sustained** — held root, root-and-fifth, block chords
+- **Pulse** — root-fifth "boom-chick", march bass, waltz bass, stride bass, tenths
+- **Broken chord** — Alberti bass, the 6/8 (compound) form, ascending broken
+  chords, wide arpeggios, broken octaves
+- **Independent** — walking bass, a free left-hand line, countermelody, and canon
+  (the left hand answers the melody a bar later)
+
+The figure is chosen from the meter and the texture level — a waltz bass never
+appears in 4/4 — and every figure is unit-tested for exact bar fill, register,
+and diatonicism. The exercise header shows which figure you are reading.
+
+Figures need something to outline, so a small diatonic progression engine
+supplies a chord per bar (I–V at the beginner end, through vi and ii and
+inversions later) and always cadences onto the dominant then the tonic. When both
+hands play, the melody's downbeats are anchored to the chord; a solo line is left
+free because it has nothing to clash with.
+
+### Exercise length and Focus mode
+
+The **Bars** control picks 4 / 8 / 12 / 16 bars. Length is a *preference*, not
+part of difficulty, so `difficulty_elo` keeps meaning one thing.
+
+The hard rule for sight-reading is that **the music must never scroll during a
+performance** — looking away is the failure this app exists to train against.
+So:
+
+- The engraving scales down (to a floor of 55%) until the whole exercise fits.
+- While a run is in progress the surrounding chrome collapses, so nothing is
+  competing with the score for height.
+- **Focus** hides the header, device bar, and note strip outright, which is the
+  right choice for a small window.
+- If a length genuinely cannot fit even at minimum zoom, the app says so and
+  offers a shorter one. It never leaves you with a score that scrolls.
+
+### Practice log
+
+Everything you play is logged without pressing anything, once a MIDI device is
+connected — capture is a standing switch, not a per-sitting button. The server
+groups notes into **sittings** by silence (five minutes closes one) and into
+**segments** by shorter silence (twenty seconds), which is normally one piece per
+segment. Nothing is recomputed behind your back: a boundary you move by hand stays
+moved.
+
+- **Log** tab: today, streak, a twelve-week calendar, time per piece, neglected
+  pieces, and the sitting timeline where you tag a segment with a piece, split a
+  boundary the silence detector got wrong, merge two it split, or re-segment.
+  Re-segmenting is the only destructive action and asks first when segments carry
+  labels.
+- **Workouts** are declared, not inferred: *Start workout* in the banner, play,
+  *Finish workout*. Everything inside the window is labelled sight-reading rather
+  than mistaken for ordinary practice, and a finished workout links to the sitting
+  it happened inside. The Progress/Log views then separate "how long did I play"
+  from "how much deliberate sight-reading did I do".
+- Per-piece, the Repertoire detail shows measured minutes from MIDI beside the
+  minutes written in the journal — deliberately not summed, because a session can
+  be both measured and written down, and adding them would count it twice.
+
+Pieces are measured, not claimed: `median_tempo` is a **note rate** over attack
+clusters (chords are one attack, so they do not read as infinite BPM). It is
+comparable with itself over time, not an absolute metronome reading.
+
+### Export and backup
+
+**Log → Export & backup** downloads one JSON document containing every table:
+library, journal, media rows, sittings, note events, segments, workouts and
+ratings. Recording *files* are not inside it; copy the media directory alongside
+it. Restoring defaults to *add what is missing*, which never deletes local work;
+*replace everything* empties every table first and takes two clicks.
+
+See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for running it on the piano machine,
+WAL-aware backup, and a machine move.
+
+### Repertoire
+
+The app also owns your piece library — composers, pieces, the journal you write
+about them, and your recordings. It is the successor to a separate Rust desktop
+app; see [`docs/ECOSYSTEM.md`](docs/ECOSYSTEM.md) for why the ecosystem is one
+web app rather than three programs sharing a file.
+
+Open the **Repertoire** tab to browse pieces grouped by composer or difficulty,
+filter them, and read the journal and recording catalogue for any piece. Each
+piece shows its *sight-reading fit* — the key and starting level the exercise
+generator would use for it.
+
+To bring an existing `piano-progress` library across:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/repertoire/import \
+     -H 'Content-Type: application/json' -d '{"copy_media": false}'
+```
+
+The import reads that database **read-only**, can be run again to pick up changes
+while you are still using the old app, and refuses a missing file or a database of
+the wrong shape rather than importing nothing quietly. It copies the recordings
+into the ecosystem media directory by default (`"copy_media": false` to skip a
+large copy).
+
+Recordings are playable straight away. Each one is reported as **in library**
+(copied into this app), **not copied yet** (still only in the old
+`piano-progress` directory, and streamed from there), or **file missing** (in
+neither place). The Repertoire tab offers a one-click copy for anything still
+pending.
+
+`GET /api/practice-suggestions` maps the pieces you are working on onto a
+sight-reading key and level — so exercises can be built around the piece in front
+of you.
+
+### Appearance
+
+The **Appearance** control in the header offers:
+
+- **Interface**: Auto (follows the OS), Light, Dark — persisted, and applied by
+  an inline script before first paint so a dark reload never flashes white.
+- **Sheet music**: Themed, or always paper-white. Inverting notation divides
+  readers, so it is a choice rather than a rule; the notation can be dark while
+  the chrome stays light, or vice versa.
+
 ### Single-process mode (production-style)
 
 The API serves the built SPA itself, which is handy for a self-contained setup
@@ -48,7 +171,7 @@ cd ../backend && .venv/bin/python -m uvicorn app.main:app --port 8000
 ### Tests
 
 ```bash
-# Backend unit + API integration (173 tests)
+# Backend unit + API integration
 cd backend && .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m pytest -q
 
@@ -61,7 +184,10 @@ script runs, so the real MIDI input path — status-byte decoding, input
 selection, onset measurement against the count-in anchor — is exercised rather
 than stubbed. It plays a perfect performance (expecting 100/100), an all-wrong
 performance, a silent one, and walks a calibration rung, asserting on the
-rendered notation, the results panel, and the progress view.
+rendered notation, the results panel, and the progress view. Eight scenarios in
+all: the last two drive the Repertoire library (import, edit, upload, stream,
+playback) and the practice log (passive capture, a workout, tagging, splitting,
+merging, re-segmenting, and a backup round trip).
 
 ---
 
@@ -211,6 +337,41 @@ frontend/
 
 ---
 
+## OSMD integration notes
+
+Three non-obvious behaviours cost real debugging time. They are commented at the
+call site in `frontend/src/lib/score.ts`; summarised here so they are not
+rediscovered:
+
+- **`Pitch.getHalfTone()` is not a MIDI number.** It returns
+  `12 * (MusicXML octave) + fundamental`, exactly one octave below MIDI. A
+  written C4 comes back as 48. The renderer adds 12 and warns to the console if
+  fewer notes correlate than the exercise contains.
+- **`autoResize` wipes per-note colours.** OSMD's resize observer re-renders on
+  ordinary layout shifts (the results panel appearing is enough), and a
+  re-render rebuilds the SVG. `autoResize` is therefore off and the renderer owns
+  layout, re-rendering only when the *width* changes.
+- **`darkMode` does not colour noteheads.** It lightens the music but leaves
+  `defaultColorNotehead` at black, giving black noteheads on a black page.
+  Explicit ink colours are passed for music, noteheads, stems, and rests.
+- Noteheads are plain `<path>` elements with no class of their own, so any check
+  on notation colour must measure the painted `fill` rather than a selector.
+- **`render()` appends, it does not replace.** Calling it twice stacks two whole
+  scores and the container height becomes their sum. Every re-render clears
+  first, and renders are serialized.
+- **No courtesy time signature at system breaks.** OSMD reprints the clef but not
+  the time signature, and exposes no rule for it. Meter changes are rendered
+  correctly; a constant meter across systems is only shown once. Forcing system
+  breaks with an explicit `<time>` is the alternative — see the roadmap.
+- **Layout can oscillate.** Growing content can toggle the page scrollbar, which
+  changes the width, which re-wraps the music. `scrollbar-gutter: stable` plus a
+  coarse resize threshold breaks that loop.
+- **A tempo marking is not a beat.** Tempo is quarter notes per minute; the beat
+  is whatever the meter says — a dotted quarter in 6/8, a half note in cut time.
+  Treating seconds-per-quarter as seconds-per-beat made the metronome, the
+  count-in, and the end-of-run timer wrong in every compound meter, and the
+  timer silently truncated the performance.
+
 ## Notes and limitations
 
 - **Browser support.** Web MIDI needs Chrome, Edge, or Opera on desktop.
@@ -237,7 +398,9 @@ Environment variables, all optional:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `SRT_DB_PATH` | `backend/data/sightreading.sqlite3` | SQLite file |
+| `SRT_DB_PATH` | `~/.local/share/piano-ecosystem/piano.db` | SQLite file for the whole ecosystem |
+| `SRT_MEDIA_DIR` | `~/.local/share/piano-ecosystem/media` | Recordings, content-hashed |
+| `SRT_LEGACY_DB` | `~/.local/share/piano-progress/piano.db` | The Rust app's database, read once by the importer |
 | `SRT_TARGET_SUCCESS_RATE` | `0.78` | Target success rate (sets the selection offset) |
 | `SRT_PASS_THRESHOLD` | `80` | Score needed to pass |
 | `SRT_MATCH_WINDOW_S` | `0.200` | Pitch matching window |
@@ -245,4 +408,9 @@ Environment variables, all optional:
 | `SRT_HESITATION_MS` | `500` | Extra gap that counts as a hesitation |
 | `SRT_ELO_K` | `32` | Rating step |
 | `SRT_EXERCISE_BARS` | `4` | Bars per exercise |
+| `SRT_WORKOUT_LENGTH` | `8` | Exercises in a workout |
+| `SRT_SITTING_GAP_S` | `300` | Silence that closes a sitting |
+| `SRT_SEGMENT_GAP_S` | `20` | Silence that splits a sitting into segments |
+| `SRT_RESTART_GAP_MS` | `3000` | Mid-segment silence counted as a restart |
+| `SRT_ATTACK_WINDOW_MS` | `50` | Notes closer than this are one attack, for tempo |
 | `SRT_API_TARGET` | `http://127.0.0.1:8000` | Proxy target for the dev server |

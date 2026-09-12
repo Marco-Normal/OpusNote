@@ -50,6 +50,9 @@ class ExerciseOut(BaseModel):
     source: str
     expected_notes: list[dict[str, Any]]
     measures: list[dict[str, Any]] = Field(default_factory=list)
+    #: Left-hand figure used, when the exercise has two hands.
+    bass_pattern: str | None = None
+    bass_pattern_description: str | None = None
     rationale: str | None = None
     complete: bool | None = None
     step: int | None = None

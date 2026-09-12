@@ -171,19 +171,19 @@
   }
 
   .score-ring.tone.good {
-    border-color: #8fcea5;
+    border-color: var(--good-line);
     background: var(--good-soft);
     color: var(--good);
   }
 
   .score-ring.tone.warn {
-    border-color: #e3c48d;
+    border-color: var(--warn-line);
     background: var(--warn-soft);
     color: var(--warn);
   }
 
   .score-ring.tone.bad {
-    border-color: #e6a9a9;
+    border-color: var(--bad-line);
     background: var(--bad-soft);
     color: var(--bad);
   }
@@ -216,7 +216,7 @@
 
   .track {
     height: 0.5rem;
-    background: #e9e9e4;
+    background: var(--track);
     border-radius: 999px;
     overflow: hidden;
   }

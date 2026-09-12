@@ -22,6 +22,13 @@ frontend/.vite/
 # Scratch
 .scratch/
 
+# Sibling projects under this workspace root, each currently its own repository.
+# They are NOT part of this repo and `git add .` must not record them as
+# gitlinks. Note that `practice-logger` is a planned merge into this app, not an
+# unrelated neighbour — see docs/INTEGRATION-practice-logger.md.
+piano-progress/
+practice-logger/
+
 # Editors / OS
 .DS_Store
 *.swp

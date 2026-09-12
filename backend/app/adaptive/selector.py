@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import Mapping, Sequence
 
 from ..config import Settings, settings as default_settings
-from ..skills_data import SKILL_SLUGS
+from ..skills_data import SKILL_SLUGS, level_for_key
 from . import elo
 from .elo import MAX_LEVEL, MIN_LEVEL, exercise_elo, level_for_rating, rating_for_level
 
@@ -53,6 +53,7 @@ def plan_exercise(
     target_skill: str | None = None,
     recent_skills: Sequence[str] = (),
     max_level: int | None = None,
+    forced_key: str | None = None,
     config: Settings | None = None,
 ) -> ExercisePlan:
     cfg = config or default_settings
@@ -66,7 +67,13 @@ def plan_exercise(
 
     # Other dimensions follow the user's own rating, but never run far ahead of
     # the skill under test: an exercise is only as hard as its hardest surprise.
-    ceiling = min(MAX_LEVEL, target_level + 1)
+    #
+    # The allowance is +3 rather than +1 because at +1 the guard swallowed real
+    # capability. A player whose texture rating is high but whose accidentals are
+    # weak was capped at texture 2 — left hand alone — so they could never be
+    # given hands-together material at all, which is the opposite of the point.
+    # Three levels still prevents one runaway dimension from dominating.
+    ceiling = min(MAX_LEVEL, target_level + 3)
     floor = max(MIN_LEVEL, target_level - 3)
     levels: dict[str, int] = {}
     for other in SKILL_SLUGS:
@@ -74,13 +81,24 @@ def plan_exercise(
         levels[other] = max(floor, min(ceiling, own))
     levels[slug] = target_level
 
+    if forced_key is not None:
+        # A pinned key is a hard constraint from the repertoire bridge, so it
+        # overrides the level that the key-signature rating would have chosen.
+        # The ceiling exists to stop one dimension running away; a deliberate
+        # choice by the player is not that.
+        key_level = level_for_key(forced_key)
+        if key_level is None:
+            raise ValueError(f"{forced_key!r} is not a key this taxonomy knows")
+        levels["key_signature"] = key_level
+
     # Deliberately no further tuning of the focus level. Each skill is scored
     # against the Elo implied by *its own* level, so the level derived from the
     # rating is already exactly the right challenge. Nudging it to move the
     # exercise's blended mean would let an easy melodic dimension push the
     # focus skill up to a level the learner cannot actually read.
+    key_note = f" in {forced_key}" if forced_key else ""
     rationale = (
-        f"Targeting {slug} at level {target_level} "
+        f"Targeting {slug} at level {target_level}{key_note} "
         f"(your rating {target_rating:.0f}, aiming for "
         f"{cfg.target_success_rate * 100:.0f}% success)"
     )

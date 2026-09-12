@@ -17,6 +17,17 @@ from .skills_data import SKILLS
 _NOTE_NAMES = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
 
 
+def levels_key(levels: Mapping[str, int]) -> str:
+    """A stable signature of a complete level profile.
+
+    Reuse used to match on the *target* skill alone, which meant an exercise
+    built for one profile could be served for a completely different one — a
+    two-hand plan satisfied by a stored right-hand-alone exercise. The signature
+    covers every dimension, so a reused exercise is the same exercise.
+    """
+    return ",".join(f"{slug}:{int(levels[slug])}" for slug in sorted(levels))
+
+
 def midi_to_name(pitch: int) -> str:
     return f"{_NOTE_NAMES[pitch % 12]}{pitch // 12 - 1}"
 
@@ -132,7 +143,13 @@ def insert_exercise(
     measures: Sequence[Mapping[str, Any]],
     target_skill: str,
     source: str = "generated",
+    bass_pattern: str | None = None,
+    pinned_key: str | None = None,
 ) -> int:
+    # `key_name` above is the key the exercise is *in*; `pinned_key` records that
+    # the player asked for that key specifically. Only the latter is part of the
+    # exercise's identity for reuse, or an exercise that happened to land in B
+    # would satisfy a request to practise in B.
     cursor = conn.execute(
         """
         INSERT INTO exercises
@@ -154,6 +171,9 @@ def insert_exercise(
                     "levels": dict(levels),
                     "target_skill": target_skill,
                     "measures": [dict(item) for item in measures],
+                    "bass_pattern": bass_pattern,
+                    "levels_key": levels_key(levels),
+                    "pinned_key": pinned_key,
                 }
             ),
             json_dump([note.to_dict() for note in expected]),
@@ -174,42 +194,71 @@ def insert_exercise(
 def find_reusable_exercise(
     conn,
     *,
-    skill_slug: str,
-    level: int,
-    target_elo: float,
-    window: float,
+    levels: Mapping[str, int],
+    target_skill: str,
+    bars: int,
+    key_name: str | None = None,
     source: str = "generated",
+    library_cap: int = 32,
 ) -> dict[str, Any] | None:
-    """Prefer an untried exercise at the right difficulty before generating.
+    """Pick a stored exercise for this exact profile and focus, if one should be reused.
 
-    Two filters here are load-bearing:
+    Both halves of the match are needed and neither is sufficient. Matching on
+    the target skill alone served exercises built for a different level profile;
+    matching on the profile alone served exercises focused on a different skill,
+    because two skills can share an identical profile.
 
-    * ``source`` — recycling a calibration exercise into normal practice would
-      also advance the calibration counter, which is derived from how many
-      calibration exercises have been played.
-    * ``target_skill`` — every exercise is tagged with *all* nine skills at
-      their levels, so matching on the skill tag alone can return an exercise
-      whose actual focus is a different dimension. That produced exercises
-      labelled "articulation" in the plan while the notation said otherwise.
+    Reuse policy, in order:
+
+    1. An exercise nobody has played yet — no reason to write a new one.
+    2. Otherwise, *nothing*, until the profile has ``library_cap`` exercises.
+
+    Step 2 is what makes this a sight-reading trainer rather than a memory test:
+    replaying the same eight exercises forever defeats the point. Generating
+    fresh material is cheap; the cap only exists so the table cannot grow without
+    bound.
+    3. Past the cap, rotate the least recently played.
     """
-    row = conn.execute(
-        """
-        SELECT e.*, COUNT(p.id) AS uses
+    key = levels_key(levels)
+    where = """
         FROM exercises e
-        JOIN exercise_skills es ON es.exercise_id = e.id
-        JOIN skills s ON s.id = es.skill_id AND s.slug = ?
-        LEFT JOIN performances p ON p.exercise_id = e.id
-        WHERE es.level = ?
-          AND e.source = ?
+        WHERE e.source = ?
+          AND e.bars = ?
+          AND json_extract(e.params_json, '$.levels_key') = ?
           AND json_extract(e.params_json, '$.target_skill') = ?
-          AND e.difficulty_elo BETWEEN ? AND ?
-        GROUP BY e.id
-        ORDER BY uses ASC, RANDOM()
+          AND IFNULL(json_extract(e.params_json, '$.pinned_key'), '') = ?
+    """
+    params = (source, int(bars), key, target_skill, key_name or "")
+
+    untried = conn.execute(
+        f"""
+        SELECT e.*
+        {where}
+          AND NOT EXISTS (SELECT 1 FROM performances p WHERE p.exercise_id = e.id)
+        ORDER BY RANDOM()
         LIMIT 1
         """,
-        (skill_slug, int(level), source, skill_slug, target_elo - window, target_elo + window),
+        params,
     ).fetchone()
-    return dict(row) if row else None
+    if untried is not None:
+        return dict(untried)
+
+    total = conn.execute(f"SELECT COUNT(*) AS n {where}", params).fetchone()["n"]
+    if total < library_cap:
+        return None
+
+    stale = conn.execute(
+        f"""
+        SELECT e.*, MAX(p.performed_at) AS last_used
+        {where}
+        LEFT JOIN performances p ON p.exercise_id = e.id
+        GROUP BY e.id
+        ORDER BY last_used ASC
+        LIMIT 1
+        """,
+        params,
+    ).fetchone()
+    return dict(stale) if stale else None
 
 
 def get_exercise(conn, exercise_id: int) -> dict[str, Any] | None:
@@ -221,6 +270,7 @@ def get_exercise(conn, exercise_id: int) -> dict[str, Any] | None:
     exercise["levels"] = params.get("levels", {})
     exercise["target_skill"] = params.get("target_skill")
     exercise["measures"] = params.get("measures", [])
+    exercise["bass_pattern"] = params.get("bass_pattern")
     exercise["expected"] = expected_from_dicts(json_load(exercise.get("expected_json"), []))
     return exercise
 

@@ -15,6 +15,17 @@ BACKEND_DIR = Path(__file__).resolve().parent.parent
 REPO_DIR = BACKEND_DIR.parent
 
 
+def _default_data_dir() -> Path:
+    """The ecosystem's own data directory.
+
+    Deliberately not `~/.local/share/piano-progress`: that directory belongs to
+    the Rust app we are replacing, and borrowing another program's storage is what
+    made the data look duplicated across machines.
+    """
+    base = os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share")
+    return Path(base) / "piano-ecosystem"
+
+
 def _env_path(name: str, default: Path) -> Path:
     raw = os.environ.get(name)
     return Path(raw).expanduser().resolve() if raw else default
@@ -33,7 +44,14 @@ def _env_int(name: str, default: int) -> int:
 @dataclass(frozen=True)
 class Settings:
     # --- persistence -----------------------------------------------------
-    db_path: Path = _env_path("SRT_DB_PATH", BACKEND_DIR / "data" / "sightreading.sqlite3")
+    db_path: Path = _env_path("SRT_DB_PATH", _default_data_dir() / "piano.db")
+    #: Where recordings live. Content-hashed file names, matching the Rust app,
+    #: so an imported recording keeps working without renaming anything.
+    media_dir: Path = _env_path("SRT_MEDIA_DIR", _default_data_dir() / "media")
+    #: The legacy `piano-progress` database, read once by the importer. Never written.
+    legacy_db: Path = _env_path(
+        "SRT_LEGACY_DB", Path.home() / ".local" / "share" / "piano-progress" / "piano.db"
+    )
 
     # --- app -------------------------------------------------------------
     api_prefix: str = "/api"
@@ -72,8 +90,22 @@ class Settings:
     # --- exercise shape ---------------------------------------------------
     exercise_bars: int = _env_int("SRT_EXERCISE_BARS", 4)
     calibration_length: int = _env_int("SRT_CALIBRATION_LENGTH", 8)
-    session_length: int = _env_int("SRT_SESSION_LENGTH", 8)
+    #: Exercises in a workout. Was `SRT_SESSION_LENGTH`, which was dead config
+    #: while only single exercises existed; a workout is what it always meant.
+    workout_length: int = _env_int("SRT_WORKOUT_LENGTH", 8)
     default_meter: str = "4/4"
+
+    # --- practice logging -------------------------------------------------
+    #: Silence that closes a sitting. Long on purpose: walking to the piano,
+    #: thinking, and playing again is one sitting.
+    sitting_gap_s: int = _env_int("SRT_SITTING_GAP_S", 300)
+    #: Silence that splits a sitting into segments — one per piece attempted.
+    segment_gap_s: int = _env_int("SRT_SEGMENT_GAP_S", 20)
+    #: Mid-segment silence counted as a restart rather than as phrasing.
+    restart_gap_ms: int = _env_int("SRT_RESTART_GAP_MS", 3000)
+    #: Notes closer together than this are one attack, so a chord does not read
+    #: as an infinitely fast tempo.
+    attack_window_ms: int = _env_int("SRT_ATTACK_WINDOW_MS", 50)
 
     @property
     def weights(self) -> dict[str, float]:

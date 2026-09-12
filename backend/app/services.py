@@ -50,9 +50,11 @@ def _plan_to_levels(plan: ExercisePlan) -> dict[str, int]:
 
 
 def _generate(
-    plan: ExercisePlan, bars: int, seed: int | None = None
+    plan: ExercisePlan, bars: int, seed: int | None = None, key_name: str | None = None
 ) -> tuple[GeneratedExercise, list[ExpectedNote], list[dict[str, Any]]]:
-    generated = generate_exercise(_plan_to_levels(plan), bars=bars, seed=seed)
+    generated = generate_exercise(
+        _plan_to_levels(plan), bars=bars, seed=seed, key_name=key_name
+    )
     expected = extract_expected(generated.score, generated.tempo_bpm)
     measures = measure_meta(generated.score)
     return generated, expected, measures
@@ -72,6 +74,7 @@ def _exercise_payload(exercise: dict[str, Any], *, rationale: str | None = None)
         "source": exercise.get("source", "generated"),
         "expected_notes": [note.to_dict() for note in exercise.get("expected", [])],
         "measures": exercise.get("measures", []),
+        "bass_pattern": exercise.get("bass_pattern"),
         "rationale": rationale,
     }
 
@@ -93,18 +96,18 @@ def create_exercise_from_plan(
     source: str = "generated",
     config: Settings | None = None,
     reuse: bool = True,
+    key_name: str | None = None,
 ) -> dict[str, Any]:
     cfg = config or default_settings
     bar_count = bars or cfg.exercise_bars
 
     if reuse and source == "generated":
-        target_level = plan.levels.get(plan.target_skill, 1)
         existing = store.find_reusable_exercise(
             conn,
-            skill_slug=plan.target_skill,
-            level=target_level,
-            target_elo=plan.difficulty_elo,
-            window=cfg.selection_window,
+            levels=plan.levels,
+            target_skill=plan.target_skill,
+            bars=bar_count,
+            key_name=key_name,
         )
         if existing is not None:
             exercise = store.get_exercise(conn, int(existing["id"]))
@@ -116,12 +119,12 @@ def create_exercise_from_plan(
                     exercise,
                     rationale=_rationale_for(
                         served_skill,
-                        exercise.get("levels", {}).get(served_skill, target_level),
+                        exercise.get("levels", {}).get(served_skill, 1),
                         config=cfg,
                     ),
                 )
 
-    generated, expected, measures = _generate(plan, bar_count)
+    generated, expected, measures = _generate(plan, bar_count, key_name=key_name)
     exercise_id = store.insert_exercise(
         conn,
         musicxml=generated.musicxml,
@@ -136,6 +139,8 @@ def create_exercise_from_plan(
         measures=measures,
         target_skill=plan.target_skill,
         source=source,
+        bass_pattern=generated.bass_pattern,
+        pinned_key=key_name,
     )
     exercise = store.get_exercise(conn, exercise_id)
     assert exercise is not None
@@ -148,13 +153,22 @@ def next_exercise(
     *,
     skill: str | None = None,
     bars: int | None = None,
+    key_name: str | None = None,
     config: Settings | None = None,
 ) -> dict[str, Any]:
     cfg = config or default_settings
     ratings = store.get_ratings(conn, user_id)
     recent = store.recent_target_skills(conn, user_id, limit=3)
-    plan = plan_exercise(ratings, target_skill=skill, recent_skills=recent, config=cfg)
-    return create_exercise_from_plan(conn, plan=plan, bars=bars, config=cfg)
+    plan = plan_exercise(
+        ratings,
+        target_skill=skill,
+        recent_skills=recent,
+        forced_key=key_name,
+        config=cfg,
+    )
+    return create_exercise_from_plan(
+        conn, plan=plan, bars=bars, config=cfg, key_name=key_name
+    )
 
 
 def calibration_exercise(conn, user_id: int, *, config: Settings | None = None) -> dict[str, Any]:

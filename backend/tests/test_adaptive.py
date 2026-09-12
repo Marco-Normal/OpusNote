@@ -113,10 +113,19 @@ def test_plan_aims_below_the_rating_for_a_70_to_85_percent_zone():
 
 def test_plan_never_runs_other_dimensions_far_ahead():
     ratings = {slug: 700.0 for slug in SKILL_SLUGS}
-    ratings["texture"] = 1400.0  # virtuoso texture
+    ratings["texture"] = 1900.0  # virtuoso texture, far above everything else
     ratings["rhythm"] = 640.0
     plan = plan_exercise(ratings, target_skill="rhythm")
-    assert plan.levels["texture"] <= plan.levels["rhythm"] + 1
+    assert plan.levels["texture"] <= plan.levels["rhythm"] + 3
+
+
+def test_a_strong_dimension_is_still_honoured():
+    """Regression: a +1 allowance capped a strong texture rating at left hand
+    alone, so hands-together material was unreachable."""
+    ratings = {slug: 700.0 for slug in SKILL_SLUGS}
+    ratings["texture"] = 1300.0  # comfortably two-handed
+    plan = plan_exercise(ratings, target_skill="accidentals")
+    assert plan.levels["texture"] >= 3, plan.levels
 
 
 def test_plan_keeps_a_weak_user_on_easy_material():

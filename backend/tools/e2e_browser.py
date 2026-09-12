@@ -18,16 +18,23 @@ Usage::
 from __future__ import annotations
 
 import json
+import os
+import re
+import sqlite3
 import sys
 import urllib.request
 from pathlib import Path
 from typing import Any
+
+from urllib.request import urlopen
 
 from playwright.sync_api import Page, sync_playwright
 
 BASE_URL = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8000"
 CHROMIUM = "/usr/bin/chromium"
 SHOTS = Path(__file__).resolve().parent.parent / "screenshots"
+DEFAULT_DB = Path(__file__).resolve().parent.parent / "data" / "e2e.sqlite3"
+DEFAULT_LEGACY = Path(__file__).resolve().parent.parent / "data" / "legacy-fixture.db"
 
 #: Injected before every page script. Mimics a Casio PX-870 enough for the app's
 #: own MIDI layer to treat it as a real device.
@@ -73,14 +80,35 @@ FAKE_MIDI = """
 PLAY_NOTES = """
 ([notes, velocity, holdMs]) => {
   const anchor = performance.now();
+  const queue = notes
+    .map((note) => ({ pitch: note.pitch, at: Math.max(0, note.onset_s * 1000) }))
+    .sort((a, b) => a.at - b.at);
   window.__playTimers = [];
-  for (const note of notes) {
-    const at = Math.max(0, note.onset_s * 1000);
-    window.__playTimers.push(
-      setTimeout(() => window.__fakeMidi.send([0x90, note.pitch, velocity]), at),
-      setTimeout(() => window.__fakeMidi.send([0x80, note.pitch, 0]), at + holdMs),
-    );
-  }
+  window.__playCancelled = false;
+  window.__playEmitted = 0;
+
+  // Driven from requestAnimationFrame rather than one setTimeout per note: a
+  // dense exercise is a hundred-odd notes, and that many independent timers
+  // drift well past the 200 ms match window under load, which makes the harness
+  // look like a scoring bug.
+  let index = 0;
+  const pump = () => {
+    // The pump is a frame loop, so clearing timers alone would not stop it and
+    // its notes would leak into whatever the test does next.
+    if (window.__playCancelled) return;
+    const elapsed = performance.now() - anchor;
+    while (index < queue.length && queue[index].at <= elapsed + 1) {
+      const note = queue[index];
+      window.__fakeMidi.send([0x90, note.pitch, velocity]);
+      window.__playEmitted += 1;
+      window.__playTimers.push(
+        setTimeout(() => window.__fakeMidi.send([0x80, note.pitch, 0]), holdMs),
+      );
+      index += 1;
+    }
+    if (index < queue.length) requestAnimationFrame(pump);
+  };
+  requestAnimationFrame(pump);
   return anchor;
 }
 """
@@ -89,11 +117,123 @@ PLAY_NOTES = """
 #: exercise keeps firing notes into whatever the test does next.
 CANCEL_PLAYBACK = """
 () => {
+  window.__playCancelled = true;
   (window.__playTimers || []).forEach(clearTimeout);
   window.__playTimers = [];
   return true;
 }
 """
+
+
+#: WCAG relative-luminance contrast, so "is the red readable on black?" is a
+#: measurement rather than an opinion.
+CONTRAST = """
+([foreground, background]) => {
+  const parse = (value) => {
+    const rgb = value.match(/rgba?\\(([^)]+)\\)/);
+    if (rgb) return rgb[1].split(',').slice(0, 3).map(Number);
+    let hex = value.replace('#', '').trim();
+    if (hex.length === 3) hex = hex.split('').map((c) => c + c).join('');
+    return [0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  };
+  const luminance = ([r, g, b]) => {
+    const channel = (v) => {
+      const x = v / 255;
+      return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4);
+    };
+    return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+  };
+  const a = luminance(parse(foreground));
+  const b = luminance(parse(background));
+  const [hi, lo] = a > b ? [a, b] : [b, a];
+  return (hi + 0.05) / (lo + 0.05);
+}
+"""
+
+#: The paper the notation sits on.
+#:
+#: Deliberately the CSS surface rather than the first <rect> in the SVG: staff
+#: lines are rects too, and picking one of those made an earlier version of this
+#: check pass trivially while the noteheads were invisible.
+SCORE_BACKGROUND = """
+() => getComputedStyle(document.querySelector('.score-surface')).backgroundColor
+"""
+
+#: WCAG relative luminance of a colour, 0 (black) to 1 (white).
+LUMINANCE = """
+(value) => {
+  const parse = (v) => {
+    const rgb = v.match(/rgba?\\(([^)]+)\\)/);
+    if (rgb) return rgb[1].split(',').slice(0, 3).map(Number);
+    let hex = v.replace('#', '').trim();
+    if (hex.length === 3) hex = hex.split('').map((c) => c + c).join('');
+    return [0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  };
+  const channel = (x) => {
+    const c = x / 255;
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  };
+  const [r, g, b] = parse(value);
+  return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+}
+"""
+
+#: Noteheads are plain <path> elements with no class of their own, so measure the
+#: painted fill directly. (An earlier version keyed off `vf-notehead`, which
+#: matches different elements and made a working feature look broken.)
+NOTE_FILL = """
+() => {
+  const counts = {};
+  for (const el of document.querySelectorAll('.score-surface svg path')) {
+    const fill = getComputedStyle(el).fill;
+    if (fill && fill !== 'none') counts[fill] = (counts[fill] || 0) + 1;
+  }
+  let best = null;
+  let bestCount = 0;
+  for (const [fill, count] of Object.entries(counts)) {
+    if (count > bestCount) { best = fill; bestCount = count; }
+  }
+  return best;
+}
+"""
+
+#: Histogram of painted notehead fills.
+NOTE_FILL_COUNTS = """
+() => {
+  const counts = {};
+  for (const el of document.querySelectorAll('.score-surface svg path')) {
+    const fill = getComputedStyle(el).fill;
+    if (fill && fill !== 'none') counts[fill] = (counts[fill] || 0) + 1;
+  }
+  return counts;
+}
+"""
+
+#: hex -> the rgb() form getComputedStyle reports, for exact comparisons.
+HEX_TO_RGB = """
+(hex) => {
+  const h = hex.replace('#', '');
+  return 'rgb(' + [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)).join(', ') + ')';
+}
+"""
+
+
+def contrast(page: Page, foreground: str, background: str) -> float:
+    return float(page.evaluate(CONTRAST, [foreground, background]))
+
+
+def luminance(page: Page, colour: str) -> float:
+    return float(page.evaluate(LUMINANCE, colour))
+
+
+def open_appearance(page: Page) -> None:
+    page.get_by_role("button", name="Appearance settings").click()
+
+
+def set_theme(page: Page, label: str) -> None:
+    open_appearance(page)
+    page.get_by_role("button", name=label, exact=True).click()
+    page.get_by_role("button", name="Close", exact=True).click()
 
 
 class CheckFailure(AssertionError):
@@ -112,18 +252,32 @@ def api(path: str, method: str = "GET") -> Any:
         return json.load(response)
 
 
-def new_page(browser) -> tuple[Page, list[str]]:
+def new_page(browser, *, allow_statuses: set[int] | None = None) -> tuple[Page, list[str]]:
+    """A page whose console and network errors are collected.
+
+    `allow_statuses` names HTTP codes a scenario provokes on purpose, so a
+    deliberate 409 is not reported as a defect.
+    """
+    allowed = allow_statuses or set()
     page = browser.new_page(viewport={"width": 1280, "height": 1000})
     page.add_init_script(FAKE_MIDI)
     errors: list[str] = []
-    page.on("console", lambda message: errors.append(f"{message.type}: {message.text}")
-            if message.type == "error" else None)
+    page.on(
+        "console",
+        lambda message: errors.append(f"{message.type}: {message.text}")
+        # A failed resource load is already reported below with its URL and
+        # status; repeating it here adds noise without adding information.
+        if message.type == "error" and not message.text.startswith("Failed to load resource")
+        else None,
+    )
     page.on("pageerror", lambda error: errors.append(f"pageerror: {error}"))
     # A missing favicon is not a defect; a missing bundle or API route is.
     page.on(
         "response",
         lambda response: errors.append(f"http {response.status}: {response.url}")
-        if response.status >= 400 and not response.url.endswith("/favicon.ico")
+        if response.status >= 400
+        and response.status not in allowed
+        and not response.url.endswith("/favicon.ico")
         else None,
     )
     return page, errors
@@ -235,6 +389,17 @@ def scenario_perfect(browser) -> None:
     print(f"      score = {score}")
     check(int(score) >= 95, f"perfect MIDI input scored {score}/100")
 
+    # The headline feature: notes are coloured *on the score*. Asserting on the
+    # rendered fill is what makes this real — a broken correlation leaves every
+    # note black and the note strip still looks perfect.
+    correct = page.evaluate(HEX_TO_RGB, "#15803d")
+    counts = page.evaluate(NOTE_FILL_COUNTS)
+    print(f"      notehead colours: {counts}")
+    check(
+        counts.get(correct, 0) == len(expected),
+        f"every note is coloured as correct on the score ({counts.get(correct, 0)}/{len(expected)} at {correct})",
+    )
+
     notes_right = result_stat(page, "Notes right")
     check(
         notes_right == f"{len(expected)}/{len(expected)}",
@@ -264,7 +429,15 @@ def scenario_wrong_and_silence(browser) -> None:
     start_run(page)
     page.evaluate(PLAY_NOTES, [shifted, 80, 200])
     page.wait_for_function("() => document.querySelectorAll('.notes .note.wrong_pitch').length > 0", timeout=30_000)
-    check(True, "wrong pitches highlighted live in practice mode")
+    check(True, "wrong pitches highlighted live in the note strip")
+
+    # And on the notation itself.
+    wrong = page.evaluate(HEX_TO_RGB, "#b91c1c")
+    live_counts = page.evaluate(NOTE_FILL_COUNTS)
+    check(
+        live_counts.get(wrong, 0) > 0,
+        f"wrong pitches are coloured red on the score ({live_counts})",
+    )
     click_button(page, "Stop & score")
     wait_for_phase(page, "result", timeout=60_000)
 
@@ -349,6 +522,928 @@ def scenario_calibration_and_stats(browser) -> None:
     page.close()
 
 
+
+def scenario_theming(browser) -> None:
+    print("\n[4] Theming: dark mode, score paper, and no flash of the wrong theme")
+    context = browser.new_context(viewport={"width": 1280, "height": 1000})
+    page = context.new_page()
+    page.add_init_script(FAKE_MIDI)
+    errors: list[str] = []
+    page.on("pageerror", lambda error: errors.append(f"pageerror: {error}"))
+    page.on(
+        "response",
+        lambda response: errors.append(f"http {response.status}: {response.url}")
+        if response.status >= 400 and not response.url.endswith("/favicon.ico")
+        else None,
+    )
+
+    page.goto(BASE_URL, wait_until="domcontentloaded")
+    page.wait_for_selector("text=Sight-Reading Trainer")
+    check(
+        page.evaluate("() => document.documentElement.dataset.theme") == "light",
+        "a fresh profile starts in light",
+    )
+
+    # --- dark chrome ---
+    set_theme(page, "Dark")
+    check(
+        page.evaluate("() => document.documentElement.dataset.theme") == "dark",
+        "selecting Dark switches the interface immediately",
+    )
+
+    # --- dark notation, checked BEFORE anything is played ---
+    # This is where the bug lived: OSMD's darkMode lightens the music but leaves
+    # noteheads at their own default of black, so un-played exercises were
+    # invisible. Checking only after scoring hides it, because feedback colours
+    # are applied separately.
+    exercise = load_first_exercise(page)
+    expected = exercise["expected_notes"]
+    page.wait_for_timeout(400)
+
+    background = page.evaluate(SCORE_BACKGROUND)
+    resting_ink = page.evaluate(NOTE_FILL)
+    background_luminance = luminance(page, background)
+    ink_luminance = luminance(page, resting_ink)
+    print(f"      dark paper {background} (L={background_luminance:.3f}), resting ink {resting_ink} (L={ink_luminance:.3f})")
+    check(
+        background_luminance < 0.1,
+        f"dark theme actually renders dark paper (luminance {background_luminance:.3f})",
+    )
+    check(
+        ink_luminance > 0.5,
+        f"un-played notation is light on dark paper, not black on black (luminance {ink_luminance:.3f})",
+    )
+    check(
+        contrast(page, resting_ink, background) >= 3.0,
+        f"resting notation meets WCAG 3:1 ({contrast(page, resting_ink, background):.2f}:1)",
+    )
+    page.screenshot(path=str(SHOTS / "05-dark-unplayed.png"), full_page=True)
+
+    # --- feedback colours stay legible on dark paper ---
+    start_run(page)
+    page.evaluate(PLAY_NOTES, [expected, 80, 220])
+    wait_for_phase(page, "result", timeout=90_000)
+
+    fill = page.evaluate(NOTE_FILL)
+    ratio = contrast(page, fill, background)
+    print(f"      dark: correct-note {fill} on {background} = {ratio:.2f}:1")
+    check(ratio >= 3.0, f"correct-note colour meets WCAG 3:1 on dark paper ({ratio:.2f}:1)")
+    check(
+        luminance(page, fill) > background_luminance,
+        "feedback colour is lighter than the paper it sits on",
+    )
+    check(
+        page.evaluate("() => document.documentElement.dataset.scorePaper") == "dark",
+        "the notation follows the theme by default",
+    )
+    page.screenshot(path=str(SHOTS / "06-dark-scored.png"), full_page=True)
+
+    # --- decoupled paper: dark chrome, paper music ---
+    set_theme(page, "Paper music")
+    page.wait_for_function(
+        "() => document.documentElement.dataset.scorePaper === 'light'", timeout=10_000
+    )
+    page.wait_for_timeout(400)  # let the re-render settle
+    paper = page.evaluate("() => getComputedStyle(document.querySelector('.score-surface')).backgroundColor")
+    body = page.evaluate("() => getComputedStyle(document.body).backgroundColor")
+    check(
+        page.evaluate("() => document.documentElement.dataset.theme") == "dark",
+        "the chrome stays dark when only the paper is changed",
+    )
+    print(f"      decoupled: body {body}, score {paper}")
+    check(paper != body, f"score paper is independent of the chrome ({paper} vs {body})")
+    check("255, 255, 255" in paper, f"paper music renders on white ({paper})")
+    page.screenshot(path=str(SHOTS / "07-dark-paper.png"), full_page=True)
+
+    set_theme(page, "Themed music")
+    set_theme(page, "Light")
+    check(
+        page.evaluate("() => document.documentElement.dataset.theme") == "light",
+        "switching back to Light works",
+    )
+
+    # --- preference survives a reload ---
+    set_theme(page, "Dark")
+    page.reload(wait_until="domcontentloaded")
+    check(
+        page.evaluate("() => document.documentElement.dataset.theme") == "dark",
+        "the theme preference survives a reload",
+    )
+
+    # --- no flash of the wrong theme, proven without the app bundle ---
+    # With the module bundle blocked, only the inline <head> script can have set
+    # the theme; if it were applied by the app there would be a white flash.
+    bare = context.new_page()
+    bare.route("**/assets/*.js", lambda route: route.abort())
+    bare.goto(BASE_URL, wait_until="domcontentloaded")
+    check(
+        bare.evaluate("() => document.documentElement.dataset.theme") == "dark",
+        "the pre-paint script applies the theme before any app JavaScript runs",
+    )
+    bare.close()
+
+    check(not errors, f"no console errors ({errors})")
+    context.close()
+
+
+
+#: Layout facts for the score, used to prove nothing must be scrolled to read it.
+LAYOUT = """
+() => {
+  const surface = document.querySelector('.score-surface');
+  const rect = surface.getBoundingClientRect();
+  return {
+    top: Math.round(rect.top),
+    height: Math.round(rect.height),
+    bottom: Math.round(rect.bottom),
+    viewportHeight: window.innerHeight,
+    svgCount: surface.querySelectorAll('svg').length,
+    fullyVisible: rect.bottom <= window.innerHeight + 1,
+    tooLong: !!document.querySelector('.too-long'),
+    focusMode: document.documentElement.dataset.focus === 'true',
+  };
+}
+"""
+
+
+def load_length(page: Page, bars: int) -> None:
+    """Choose a length and wait for the new exercise to actually render."""
+    with page.expect_response(lambda r: "/api/exercise/next" in r.url):
+        click_button(page, str(bars))
+    wait_for_phase(page, "ready")
+    page.wait_for_timeout(500)
+
+
+def scenario_long_exercises(browser) -> None:
+    print("\n[5] Long exercises: the whole score stays readable without scrolling")
+    for viewport in ({"width": 1280, "height": 800}, {"width": 1440, "height": 900}):
+        page, errors = new_page(browser)
+        page.set_viewport_size(viewport)
+        page.goto(BASE_URL, wait_until="domcontentloaded")
+        page.wait_for_selector("text=Sight-Reading Trainer")
+        click_button(page, "Connect MIDI")
+        page.wait_for_selector("text=MIDI connected", timeout=10_000)
+        load_first_exercise(page)
+
+        label = f"{viewport['width']}x{viewport['height']}"
+        for bars in (4, 8, 12, 16):
+            load_length(page, bars)
+            start_run(page)
+            page.wait_for_timeout(800)
+
+            layout = page.evaluate(LAYOUT)
+            # Stable: a scrollbar feedback loop used to oscillate the height.
+            page.wait_for_timeout(700)
+            settled = page.evaluate(LAYOUT)
+
+            check(
+                layout["svgCount"] == 1 and settled["svgCount"] == 1,
+                f"{label} {bars} bars: exactly one SVG ({layout['svgCount']}, {settled['svgCount']})",
+            )
+            check(
+                layout["height"] == settled["height"],
+                f"{label} {bars} bars: layout is stable at {layout['height']}px",
+            )
+            # The honest invariant: either the score is fully readable, or the
+            # app says the length does not fit. Never a silent scrollbar.
+            check(
+                layout["fullyVisible"] or layout["tooLong"],
+                f"{label} {bars} bars: score fully visible or explicitly refused "
+                f"(bottom {layout['bottom']} / viewport {layout['viewportHeight']}, "
+                f"tooLong={layout['tooLong']})",
+            )
+            print(
+                f"      {label} {bars:2d} bars: {layout['height']}px, "
+                f"{'refused' if layout['tooLong'] else 'visible'}"
+            )
+            click_button(page, "Stop & score")
+            wait_for_phase(page, "result", timeout=60_000)
+
+        # Focus mode must buy real room: a length that is refused normally
+        # should become readable.
+        page.set_viewport_size({"width": 1280, "height": 600})
+        page.wait_for_timeout(400)
+        load_length(page, 16)
+        start_run(page)
+        page.wait_for_timeout(800)
+        cramped = page.evaluate(LAYOUT)
+        click_button(page, "Stop & score")
+        wait_for_phase(page, "result", timeout=60_000)
+
+        click_button(page, "Focus")
+        page.wait_for_timeout(400)
+        load_length(page, 16)
+        start_run(page)
+        page.wait_for_timeout(800)
+        spacious = page.evaluate(LAYOUT)
+        click_button(page, "Stop & score")
+        wait_for_phase(page, "result", timeout=60_000)
+
+        print(f"      16 bars at 1280x600: normal={cramped['height']}px focus={spacious['height']}px")
+        check(spacious["focusMode"], "focus mode is applied to the document")
+        check(
+            spacious["height"] > cramped["height"],
+            f"focus mode gives the score more room ({cramped['height']} -> {spacious['height']})",
+        )
+        check(
+            spacious["fullyVisible"] and not spacious["tooLong"],
+            "16 bars fits at 1280x600 once focus mode is on",
+        )
+        check(not errors, f"no console errors ({errors})")
+        page.close()
+
+
+
+#: Distinct vertical positions of staff lines. A grand staff has two, a single
+#: staff has one, and this is measured from the rendered SVG rather than assumed
+#: from the payload.
+STAFF_TOPS = """
+() => {
+  const tops = [...document.querySelectorAll('.score-surface svg g.staffline')]
+    .map((group) => Math.round(group.getBBox().y));
+  return { stafflines: tops.length, distinctTops: new Set(tops).size };
+}
+"""
+
+
+def clear_repertoire() -> None:
+    """Empty the repertoire tables so the import can be driven from the UI.
+
+    Test setup, not an assertion: the import button only exists on an empty
+    library, and the scenario must run the same way twice.
+    """
+    conn = sqlite3.connect(os.environ.get("SRT_DB_PATH", str(DEFAULT_DB)), timeout=15)
+    try:
+        for table in ("media", "piece_journal", "pieces", "composers"):
+            conn.execute(f"DELETE FROM {table}")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def set_all_ratings(rating: float) -> None:
+    """Arrange the precondition for a scenario.
+
+    Ratings are set through the database rather than the UI because driving them
+    through play would take dozens of exercises; this is test setup, not an
+    assertion about behaviour.
+    """
+    conn = sqlite3.connect(os.environ.get("SRT_DB_PATH", str(DEFAULT_DB)), timeout=15)
+    try:
+        conn.execute("UPDATE user_skills SET elo_rating = ?", (float(rating),))
+        conn.execute("DELETE FROM performances")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def scenario_two_hands(browser) -> None:
+    print("\n[6] Two hands: a real grand staff with a left-hand accompaniment")
+    set_all_ratings(1300)  # comfortably two-handed
+    page, errors = new_page(browser)
+    page.goto(BASE_URL, wait_until="domcontentloaded")
+    page.wait_for_selector("text=Sight-Reading Trainer")
+    click_button(page, "Connect MIDI")
+    page.wait_for_selector("text=MIDI connected", timeout=10_000)
+
+    patterns: set[str] = set()
+    checked_staves = False
+    for _ in range(6):
+        exercise = load_first_exercise(page)
+        expected = exercise["expected_notes"]
+        hands = {note["hand"] for note in expected}
+        pattern = exercise.get("bass_pattern")
+
+        check(
+            exercise["levels"]["texture"] >= 3 and hands == {"RH", "LH"},
+            f"a two-hand exercise serves both hands (texture {exercise['levels']['texture']}, {hands})",
+        )
+        check(bool(pattern), f"the left-hand figure is reported ({pattern})")
+
+        if pattern:
+            patterns.add(pattern)
+            label = page.locator('[title="Left-hand figure"]').first.inner_text()
+            check(
+                pattern.replace("_", " ") in label,
+                f"the interface names the figure ({label.strip()})",
+            )
+
+        # Measure the engraving rather than trusting the payload.
+        layout = page.evaluate(STAFF_TOPS)
+        if not checked_staves:
+            check(
+                layout["distinctTops"] >= 2,
+                f"two staves are engraved ({layout['stafflines']} staff groups, "
+                f"{layout['distinctTops']} distinct positions)",
+            )
+            checked_staves = True
+
+        # Play it perfectly and confirm both hands are scored separately.
+        start_run(page)
+        page.evaluate(PLAY_NOTES, [expected, 80, 200])
+        wait_for_phase(page, "result", timeout=120_000)
+
+        score = int(page.inner_text(".score-ring .value"))
+        # Pitch is the meaningful assertion here. The synthetic performance is
+        # scheduled with setTimeout, which cannot place a hundred-odd notes to
+        # the millisecond, so a dense exercise loses a little rhythm accuracy to
+        # the harness rather than to the app.
+        pitch = int(page.inner_text(".bar-row:nth-child(1) .bar-value").rstrip("%"))
+        check(pitch >= 98, f"every note matched by pitch ({pitch}%)")
+        # Regression guard for the end-of-run timer: it used to be computed from
+        # a "seconds per beat" that ignored compound meters, so a 12/8 exercise
+        # stopped listening early and silently truncated the performance.
+        emitted = page.evaluate("() => window.__playEmitted")
+        check(
+            emitted == len(expected),
+            f"the whole performance was captured before the run ended ({emitted}/{len(expected)} notes)",
+        )
+        check(score >= 85, f"perfect two-hand performance scored {score}/100")
+        by_hand = page.evaluate(
+            """() => [...document.querySelectorAll('.pill')]
+                 .map((pill) => pill.innerText.trim())
+                 .filter((text) => /^(RH|LH) \\d+%$/.test(text))"""
+        )
+        check(len(by_hand) == 2, f"both hands are reported separately ({by_hand})")
+        page.screenshot(path=str(SHOTS / f"08-twohand-{len(patterns)}.png"), full_page=True)
+
+        with page.expect_response(lambda r: "/api/exercise/next" in r.url):
+            click_button(page, "Next exercise")
+        wait_for_phase(page, "ready")
+
+    check(len(patterns) >= 2, f"the left hand varies across exercises ({sorted(patterns)})")
+    check(not errors, f"no console errors ({errors})")
+    page.close()
+
+
+
+#: A small database shaped like the Rust `piano-progress` schema, so the import
+#: scenario asserts on data it controls rather than on whatever library happens
+#: to be on the machine.
+LEGACY_FIXTURE_SQL = """
+CREATE TABLE composers (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, notes TEXT);
+CREATE TABLE pieces (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, composer_id INTEGER, title TEXT NOT NULL,
+    difficulty TEXT, key TEXT, started_on TEXT, status TEXT NOT NULL DEFAULT 'active',
+    description TEXT, created_at TEXT, opus TEXT
+);
+CREATE TABLE notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, piece_id INTEGER, entry_date TEXT,
+    content TEXT, practice_minutes INTEGER, created_at TEXT
+);
+CREATE TABLE media (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, piece_id INTEGER, kind TEXT, file_name TEXT,
+    original_name TEXT, title TEXT, duration_secs REAL, size_bytes INTEGER,
+    codec TEXT, taken_on TEXT, created_at TEXT
+);
+"""
+
+
+def ensure_legacy_fixture(path: Path) -> Path:
+    """Build the fixture only if it is not already there."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        return path
+    conn = sqlite3.connect(path)
+    conn.executescript(LEGACY_FIXTURE_SQL)
+    conn.execute("INSERT INTO composers (id, name) VALUES (1, 'Brahms'), (2, 'Debussy')")
+    conn.execute(
+        "INSERT INTO pieces (id, composer_id, title, opus, difficulty, key, status, started_on)"
+        " VALUES (1, 1, 'Intermezzo', 'Op. 118 No. 2', 'Late Intermediate', 'A Major',"
+        " 'active', '2026-04-02')"
+    )
+    conn.execute(
+        "INSERT INTO pieces (id, composer_id, title, opus, difficulty, key, status)"
+        " VALUES (2, 2, 'Clair de Lune', 'L. 75', 'Intermediate', 'Db Major', 'active')"
+    )
+    conn.execute(
+        "INSERT INTO pieces (id, composer_id, title, difficulty, key, status)"
+        " VALUES (3, 1, 'Ballade', 'Advanced', 'D Minor', 'completed')"
+    )
+    conn.execute(
+        "INSERT INTO notes (id, piece_id, entry_date, content, practice_minutes)"
+        " VALUES (1, 1, '2026-05-01', 'Inner voices still uneven.', 25)"
+    )
+    conn.execute(
+        "INSERT INTO notes (id, piece_id, entry_date, content) VALUES (2, 1, '2026-05-02', 'Better.')"
+    )
+    media_dir = path.parent / "media"
+    media_dir.mkdir(parents=True, exist_ok=True)
+    (media_dir / "fixture-recording.ogg").write_bytes(b"OggS fixture audio bytes")
+    conn.execute(
+        "INSERT INTO media (id, piece_id, kind, file_name, original_name, duration_secs,"
+        " size_bytes, codec) VALUES (1, 1, 'audio', 'fixture-recording.ogg', 'TAKE01.WAV',"
+        " 81.0, 1023, 'opus')"
+    )
+    conn.commit()
+    conn.close()
+    return path
+
+
+def make_tone_wav(destination: Path, *, seconds: int = 2) -> Path:
+    """A real WAV, so the import path is exercised end to end.
+
+    Generated by ffmpeg rather than faked: the whole point is that ffprobe and
+    ffmpeg accept the file.
+    """
+    import subprocess
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+            "-f", "lavfi", "-i", f"sine=frequency=440:duration={seconds}",
+            str(destination),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    return destination
+
+
+def scenario_repertoire(browser) -> None:
+    print("\n[7] Repertoire: the library, the journal, and the sight-reading bridge")
+    fixture = ensure_legacy_fixture(
+        Path(os.environ.get("SRT_LEGACY_DB", str(DEFAULT_LEGACY)))
+    )
+    expected = json.load(urlopen(f"{BASE_URL}/api/repertoire/status"))
+    if Path(expected["legacy_db"]) != fixture:
+        # The server was started against a different legacy database, so the
+        # fixture is not what it will import. Say so rather than asserting on
+        # someone's real library.
+        print(f"      skipped: server reads {expected['legacy_db']}, fixture is {fixture}")
+        return
+
+    clear_repertoire()
+    # The duplicate-upload check provokes a 409 on purpose.
+    page, errors = new_page(browser, allow_statuses={409})
+    page.goto(BASE_URL, wait_until="domcontentloaded")
+    page.wait_for_selector("text=Sight-Reading Trainer")
+    click_button(page, "Repertoire")
+    page.wait_for_selector(".panel", timeout=20_000)
+
+    with page.expect_response(lambda r: "/api/repertoire/import" in r.url) as caught:
+        click_button(page, "Import from piano-progress")
+    report = caught.value.json()
+    check(report["pieces"] == 3, f"imported {report['pieces']} pieces")
+    check(report["composers"] == 2, f"imported {report['composers']} composers")
+    check(report["journal_entries"] == 2, f"imported {report['journal_entries']} journal entries")
+
+    page.wait_for_selector(".row-piece", timeout=20_000)
+    check(
+        page.evaluate("() => document.querySelectorAll('.row-piece').length") == 3,
+        "three pieces are listed",
+    )
+    groups = page.evaluate("() => [...document.querySelectorAll('.group')].map((e) => e.innerText)")
+    check(len(groups) == 2, f"grouped by composer ({groups})")
+
+    # Filtering
+    page.fill('input[type="search"]', "clair")
+    page.wait_for_timeout(250)
+    check(
+        page.evaluate("() => document.querySelectorAll('.row-piece').length") == 1,
+        "search narrows the list",
+    )
+    page.fill('input[type="search"]', "")
+    page.wait_for_timeout(250)
+
+    # The journal and the bridge, on an active piece.
+    page.locator(".row-piece", has_text="Intermezzo").first.click()
+    # `.detail` also matches the loading placeholder, so wait for the title,
+    # which only exists once the piece has actually loaded.
+    page.wait_for_selector(".detail-title", timeout=10_000)
+    check(
+        page.evaluate("() => document.querySelectorAll('.journal li').length") == 2,
+        "the piece's journal entries are shown",
+    )
+    suggestion = page.locator(".suggestion").first.inner_text()
+    check("A" in suggestion and "level 8" in suggestion, f"key and level mapped ({suggestion!r})")
+
+    # Recordings: imported by default, marked as ours, and actually playable.
+    chips = page.evaluate(
+        "() => [...document.querySelectorAll('.recordings .pill')].map((e) => e.innerText)"
+    )
+    check(chips == ["in library"], f"the recording is reported as copied in ({chips})")
+    check(
+        page.evaluate("() => document.querySelectorAll('.recordings audio').length") == 1,
+        "a player is rendered for the recording",
+    )
+    source = page.evaluate("() => document.querySelector('.recordings audio')?.getAttribute('src')")
+    check(bool(source), f"the player points at the file ({source})")
+    streamed = page.evaluate(
+        """async (src) => {
+             const response = await fetch(src, { headers: { Range: 'bytes=0-63' } });
+             return { status: response.status, type: response.headers.get('content-type') };
+           }""",
+        source,
+    )
+    # 206 rather than 200 proves Range support, which is what makes seeking work.
+    check(streamed["status"] == 206, f"the file streams with range support ({streamed})")
+    check(
+        (streamed["type"] or "").startswith("audio/"),
+        f"served with an audio content type ({streamed['type']})",
+    )
+
+    # A completed piece is deliberately excluded from suggestions.
+    page.locator(".row-piece", has_text="Ballade").first.click()
+    page.wait_for_function(
+        "() => document.querySelector('.detail-title')?.textContent?.includes('Ballade')",
+        timeout=10_000,
+    )
+    check(
+        page.locator(".suggestion").count() == 0,
+        "a completed piece gets no sight-reading suggestion",
+    )
+    page.screenshot(path=str(SHOTS / "09-repertoire.png"), full_page=True)
+
+    # --- the bridge: practise in the key of the piece you are looking at ---
+    page.locator(".row-piece", has_text="Intermezzo").first.click()
+    page.wait_for_selector(".detail-title", timeout=10_000)
+    with page.expect_response(lambda r: "/api/exercise/next" in r.url):
+        click_button(page, "Practise in A")
+    page.wait_for_selector(".score-surface svg", timeout=20_000)
+    wait_for_phase(page, "ready")
+    pinned = page.locator('[title="Set from the Repertoire tab"]')
+    check(pinned.count() == 1, "the practice view shows that a key is pinned")
+    check("Intermezzo" in pinned.first.inner_text(), f"and names the piece ({pinned.first.inner_text()!r})")
+    check(
+        page.locator(".panel .pill", has_text="key A").count() == 1,
+        "the exercise is written in the pinned key",
+    )
+    page.screenshot(path=str(SHOTS / "11-pinned-key.png"), full_page=True)
+    pinned.first.locator("button").click()
+    page.wait_for_timeout(300)
+
+    click_button(page, "Repertoire")
+    page.wait_for_selector(".row-piece", timeout=20_000)
+
+    # --- editing: create, journal, edit, delete ---
+    click_button(page, "New piece")
+    page.wait_for_selector(".editor", timeout=10_000)
+    page.fill('.editor input[placeholder="Intermezzo"]', "E2E Nocturne")
+    page.fill('.editor input[placeholder="Op. 118 No. 2"]', "Op. 9 No. 2")
+    page.fill('.editor input[placeholder="A Major"]', "Eb Major")
+    page.fill('.editor input[placeholder="Late Intermediate"]', "Intermediate")
+    with page.expect_response(lambda r: r.url.endswith("/api/repertoire/pieces") and r.request.method == "POST"):
+        click_button(page, "Add piece")
+    page.wait_for_function(
+        "() => document.querySelector('.detail-title')?.textContent?.includes('E2E Nocturne')",
+        timeout=10_000,
+    )
+    check(True, "a piece can be created from the interface")
+
+    # Journal entry, through the form.
+    page.fill('.journal-form input[aria-label="Journal entry"]', "Sight-read the exposition.")
+    page.fill('.journal-form input[aria-label="Practice minutes"]', "35")
+    with page.expect_response(lambda r: "/journal" in r.url and r.request.method == "POST"):
+        click_button(page, "Add")
+    page.wait_for_timeout(500)
+    check(
+        page.evaluate("() => document.querySelectorAll('.journal li').length") == 1,
+        "a journal entry can be added",
+    )
+    check(
+        "35" in page.locator(".journal").inner_text(),
+        "the practice minutes are recorded",
+    )
+
+    # Editing a field changes only that field.
+    click_button(page, "Edit")
+    page.wait_for_selector(".editor", timeout=10_000)
+    check(
+        page.input_value('.editor input[placeholder="Op. 118 No. 2"]') == "Op. 9 No. 2",
+        "the editor is pre-filled with the piece",
+    )
+    page.fill('.editor input[placeholder="Intermezzo"]', "E2E Nocturne (revised)")
+    with page.expect_response(
+        lambda r: "/api/repertoire/pieces/" in r.url and r.request.method == "PATCH"
+    ):
+        click_button(page, "Save changes")
+    page.wait_for_function(
+        "() => document.querySelector('.detail-title')?.textContent?.includes('revised')",
+        timeout=10_000,
+    )
+    # The untouched field is the point: PATCH must not clear what was not sent.
+    check(
+        "Eb Major" in page.locator(".detail").inner_text(),
+        "a field the edit did not mention survives the update",
+    )
+
+    # --- importing a recording through the interface ---
+    tone = make_tone_wav(DEFAULT_DB.parent / "e2e-tone.wav", seconds=3)
+    page.set_input_files('input[aria-label="Recording file"]', str(tone))
+    page.wait_for_timeout(400)
+    reached = page.evaluate(
+        "() => document.querySelector('input[aria-label=\"Recording file\"]')?.files?.length ?? -1"
+    )
+    check(reached == 1, f"the chosen file reached the input ({reached})")
+    page.fill('input[aria-label="Recording title"]', "e2e take")
+    check(
+        not page.evaluate("() => document.querySelector('.upload button').disabled"),
+        "the import button becomes available once a file is chosen",
+    )
+    with page.expect_response(
+        lambda r: "/media" in r.url and r.request.method == "POST", timeout=120_000
+    ) as uploaded:
+        click_button(page, "Import recording")
+    recording = uploaded.value.json()
+    check(recording["codec"] == "opus", f"the upload was converted to Opus ({recording['codec']})")
+    check(recording["file_name"].endswith(".ogg"), "stored with a content-hashed .ogg name")
+    page.wait_for_timeout(700)
+    check(
+        page.evaluate("() => document.querySelectorAll('.recordings audio').length") == 1,
+        "the imported recording is playable",
+    )
+    check("e2e take" in page.locator(".recordings").inner_text(), "the title was kept")
+
+    # The same audio again is refused rather than stored twice.
+    page.set_input_files('input[aria-label="Recording file"]', str(tone))
+    with page.expect_response(
+        lambda r: "/media" in r.url and r.request.method == "POST", timeout=120_000
+    ) as duplicate:
+        click_button(page, "Import recording")
+    check(
+        duplicate.value.status == 409,
+        f"re-importing the same recording is refused ({duplicate.value.status})",
+    )
+    page.wait_for_timeout(500)
+    check(
+        page.evaluate("() => document.querySelectorAll('.recordings li').length") == 1,
+        "and no second recording appeared",
+    )
+    tone.unlink(missing_ok=True)
+
+    # Deleting asks first, then removes the piece.
+    click_button(page, "Delete")
+    page.wait_for_selector(".notice", timeout=5_000)
+    check("Recording files are left on disk" in page.inner_text(".notice"), "the delete warns about cascades")
+    click_button(page, "Keep")
+    page.wait_for_timeout(200)
+    check(
+        page.locator(".detail-title").count() == 1,
+        "cancelling the delete keeps the piece",
+    )
+
+    check(not errors, f"no console errors ({errors})")
+    page.close()
+
+
+#: Send a short phrase straight from the simulated device.
+PLAY_PHRASE = """
+([pitches, spacing, hold]) => {
+  pitches.forEach((pitch, index) => {
+    setTimeout(() => window.__fakeMidi.send([0x90, pitch, 72]), index * spacing);
+    setTimeout(() => window.__fakeMidi.send([0x80, pitch, 0]), index * spacing + hold);
+  });
+}
+"""
+
+
+def play_phrase(page: Page, pitches: list[int], *, spacing_ms: int = 130, hold_ms: int = 90) -> None:
+    page.evaluate(PLAY_PHRASE, [pitches, spacing_ms, hold_ms])
+    page.wait_for_timeout(len(pitches) * spacing_ms + 400)
+
+
+def clear_practice() -> None:
+    """Empty the practice tables so this scenario is deterministic.
+
+    Unlike the repertoire scenarios, nothing here depends on what the earlier
+    scenarios played — and leaving their notes in place makes "which sitting did
+    this note join" depend on how long the suite happened to take, because the
+    five-minute silence gap is real. Test setup, not an assertion.
+    """
+    conn = sqlite3.connect(os.environ.get("SRT_DB_PATH", str(DEFAULT_DB)), timeout=15)
+    try:
+        for table in ("segment_metrics", "segments", "note_events", "sittings", "workouts"):
+            conn.execute(f"DELETE FROM {table}")
+        conn.execute("UPDATE performances SET workout_id = NULL")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def seed_closed_sitting(*, minutes_ago: int = 60) -> int:
+    """A sitting that is already closed, so its segments exist to be edited.
+
+    Fresh notes open a sitting, and segmentation deliberately waits for silence,
+    so the timeline interactions need one from the past. Test setup, not an
+    assertion — the same helper the backend tests use, driven over HTTP.
+    """
+    import time
+
+    base = int(time.time() * 1000) - minutes_ago * 60_000
+    payload = {
+        "tz_offset_minutes": -180,
+        "source": "web_midi",
+        "events": [
+            {
+                "epoch_ms": base + offset,
+                "pitch": pitch,
+                "velocity": 70,
+                "duration_ms": 300,
+                "channel": 0,
+            }
+            for pitch, offset in zip((60, 64, 67, 72), (0, 500, 20_000, 60_000))
+        ],
+    }
+    request = urllib.request.Request(
+        f"{BASE_URL}/api/practice/events",
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return json.load(response)["sitting_id"]
+
+
+def scenario_practice_log(browser) -> None:
+    print("\n[8] Practice log: passive capture, a workout, and the segment timeline")
+    clear_practice()
+    seeded = seed_closed_sitting()
+    pieces = api("/api/repertoire/pieces")
+    check(len(pieces) > 0, f"the library has pieces to tag with ({len(pieces)})")
+    target = next((piece for piece in pieces if piece["status"] != "completed"), pieces[0])
+
+    page, errors = new_page(browser)
+    page.goto(BASE_URL, wait_until="domcontentloaded")
+    page.wait_for_selector("text=Sight-Reading Trainer")
+    click_button(page, "Connect MIDI")
+    page.wait_for_selector("text=MIDI connected", timeout=10_000)
+
+    click_button(page, "Log")
+    page.wait_for_selector("text=Practice calendar", timeout=20_000)
+
+    # --- capture is a standing switch, not a per-sitting button ---
+    check(
+        page.locator('[data-capture="on"]').count() == 1,
+        "capture is on as soon as a device is connected",
+    )
+    check(
+        "Logging everything you play" in page.inner_text('[data-capture="on"]'),
+        "and says so, rather than making you infer it from the database",
+    )
+
+    before = api("/api/practice/status")["notes"]
+    play_phrase(page, [60, 64, 67, 71])
+    # The client batches every two seconds, which is the whole cadence.
+    page.wait_for_timeout(2_600)
+    after = api("/api/practice/status")["notes"]
+    check(
+        after - before >= 4,
+        f"playing is logged without pressing anything ({before} -> {after} notes)",
+    )
+    counter = page.inner_text('[data-capture="on"]')
+    check("notes sent" in counter, f"the capture bar reports what it has sent ({counter!r})")
+
+    # --- a workout: declared, and therefore distinguishable from noodling ---
+    click_button(page, "Start workout")
+    page.wait_for_selector('[data-workout="running"]', timeout=10_000)
+    check(True, "a workout can be started from anywhere in the app")
+    play_phrase(page, [62, 65, 69])
+    page.wait_for_timeout(2_600)
+    click_button(page, "Finish workout")
+    page.wait_for_selector('[data-workout="idle"]', timeout=10_000)
+
+    home = api("/api/workout")
+    check(home["current"] is None, "finishing leaves no workout running")
+    check(home["workouts_completed"] == 1, f"the workout is recorded ({home['workouts_completed']})")
+    check(
+        home["recent"][0]["sitting_id"] is not None,
+        f"and linked to the sitting it happened inside (sitting {home['recent'][0]['sitting_id']})",
+    )
+    check(
+        "Last workout" in page.inner_text('[data-workout="idle"]'),
+        "the banner reports the workout that just ended",
+    )
+    page.screenshot(path=str(SHOTS / "12-log-capture.png"), full_page=True)
+
+    # --- the segment timeline: tag, split, merge, re-segment ---
+    # Control first: the API is the source of truth for how many segments the
+    # sitting has, so a mismatch is a rendering bug rather than an API one.
+    seeded_detail = api(f"/api/practice/sittings/{seeded}")
+    check(
+        len(seeded_detail["segments"]) == 2,
+        f"the seeded sitting is segmented into two ({len(seeded_detail['segments'])})",
+    )
+    with page.expect_response(lambda r: f"/api/practice/sittings/{seeded}" in r.url):
+        page.click(f'[data-sitting="{seeded}"]')
+    page.wait_for_selector("[data-segments]", timeout=20_000)
+    check(
+        page.get_attribute("section.timeline", "data-segments") == "2",
+        "and the interface draws both of them",
+    )
+    check(
+        page.locator(".block").count() == 2,
+        "both are drawn on the timeline strip",
+    )
+
+    with page.expect_response(lambda r: "/api/practice/segments/" in r.url and r.request.method == "PATCH"):
+        page.select_option('select[aria-label="Piece for this segment"] >> nth=0', str(target["id"]))
+    page.wait_for_timeout(600)
+    check(
+        page.locator(".block.labelled").count() == 1,
+        "the tagged segment is drawn as identified on the strip",
+    )
+    check(
+        page.evaluate(
+            "() => document.querySelector('select[aria-label=\"Piece for this segment\"]').value"
+        )
+        == str(target["id"]),
+        "and the tag survives a re-read",
+    )
+    bars = page.evaluate(
+        """() => [...document.querySelectorAll('.bars li')].map((item) => item.innerText)"""
+    )
+    check(
+        any(target["title"] in bar for bar in bars),
+        f"the tagged piece appears in time-per-piece ({bars})",
+    )
+    page.screenshot(path=str(SHOTS / "13-log-segments.png"), full_page=True)
+
+    # The repertoire side must show the same measurement, not a rival number.
+    click_button(page, "Repertoire")
+    page.wait_for_selector(".row-piece", timeout=20_000)
+    page.locator(".row-piece", has_text=target["title"]).first.click()
+    page.wait_for_selector(".detail-title", timeout=10_000)
+    # Headings are uppercased in CSS and `innerText` returns what is rendered, so
+    # the comparison is case-insensitive.
+    logged = page.inner_text(".detail").lower()
+    check("logged practice" in logged, "the piece shows a logged-practice block")
+    check("min played" in logged, f"with the measured time ({logged.split('logged practice')[1][:90]!r})")
+    check("0 min played" not in logged, "and it is a measurement, not a zero placeholder")
+
+    click_button(page, "Log")
+    page.wait_for_selector("text=Practice calendar", timeout=20_000)
+    with page.expect_response(lambda r: f"/api/practice/sittings/{seeded}" in r.url):
+        page.click(f'[data-sitting="{seeded}"]')
+    page.wait_for_selector('section.timeline[data-segments="2"]', timeout=20_000)
+
+    # Split: the silence detector's boundary was wrong, so move it by hand.
+    split = page.locator(".split input").first
+    split.fill("10")
+    with page.expect_response(lambda r: r.url.endswith("/split")):
+        page.get_by_role("button", name="Split here", exact=True).first.click()
+    page.wait_for_selector('section.timeline[data-segments="3"]', timeout=20_000)
+    check(True, "a segment can be split at a chosen point")
+
+    with page.expect_response(lambda r: r.url.endswith("/merge")):
+        page.get_by_role("button", name="Merge with previous", exact=True).first.click()
+    page.wait_for_selector('section.timeline[data-segments="2"]', timeout=20_000)
+    check(True, "and merged back with its neighbour")
+
+    # Re-segment discards the hand-edited boundaries *and* the tag, which is why
+    # it is the only destructive path and asks for confirmation when labelled.
+    with page.expect_response(lambda r: r.url.endswith("/resegment")):
+        page.get_by_role("button", name=re.compile("^Re-segment")).first.click()
+    page.wait_for_selector('section.timeline[data-segments="2"]', timeout=20_000)
+    page.wait_for_timeout(400)
+    check(
+        page.evaluate(
+            "() => [...document.querySelectorAll('select[aria-label=\"Piece for this segment\"]')]"
+            ".every((select) => select.value === '')"
+        ),
+        "re-segmenting discarded the labels it warned about",
+    )
+
+    # --- export and restore ---
+    backup_path = DEFAULT_DB.parent / "e2e-backup.json"
+    document = page.evaluate(
+        """async (url) => {
+             const response = await fetch(url);
+             return { status: response.status, body: await response.json() };
+           }""",
+        "/api/backup/export",
+    )
+    check(document["status"] == 200, "the backup downloads from a plain link")
+    check(
+        document["body"]["format"] == "piano-ecosystem-backup",
+        f"and is a document this app can read ({document['body']['format']})",
+    )
+    check(
+        document["body"]["counts"]["sittings"] >= 2,
+        f"it contains the sittings just recorded ({document['body']['counts']['sittings']})",
+    )
+    backup_path.write_text(json.dumps(document["body"]))
+    page.set_input_files('input[aria-label="Backup file"]', str(backup_path))
+    page.wait_for_timeout(300)
+    with page.expect_response(lambda r: r.url.endswith("/api/backup/import")):
+        click_button(page, "Restore backup")
+    page.wait_for_timeout(800)
+    # Nothing was lost, which is the only thing a restore prompt has to promise.
+    check(
+        page.locator(".backup .notice").count() == 0,
+        "merging a backup needs no destructive confirmation",
+    )
+    check(
+        "new rows" in page.inner_text(".backup"),
+        f"the restore reports what it read ({page.inner_text('.backup')[-160:]!r})",
+    )
+    backup_path.unlink(missing_ok=True)
+
+    check(not errors, f"no console errors ({errors})")
+    page.close()
+
+
 def main() -> int:
     SHOTS.mkdir(parents=True, exist_ok=True)
     health = api("/api/health")
@@ -372,6 +1467,11 @@ def main() -> int:
             scenario_perfect(browser)
             scenario_wrong_and_silence(browser)
             scenario_calibration_and_stats(browser)
+            scenario_theming(browser)
+            scenario_long_exercises(browser)
+            scenario_two_hands(browser)
+            scenario_repertoire(browser)
+            scenario_practice_log(browser)
         finally:
             browser.close()
 

@@ -17,10 +17,15 @@ from fastapi.staticfiles import StaticFiles
 from sqlite3 import Connection
 
 from . import services, store
+from .backup import router as backup_router
 from .config import settings
 from .db import init_db
 from .models import ExerciseOut, HealthOut, ProfileOut, ScoreRequest, SkillOut
-from .skills_data import SKILLS, SKILL_SLUGS
+from .practice.api import router as practice_router
+from .repertoire.api import router as repertoire_router
+from .skills_data import SKILLS, SKILL_SLUGS, level_for_key
+from .workout import store as workout_store
+from .workout.api import router as workout_router
 
 USER_ID: int | None = None
 
@@ -48,6 +53,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+app.include_router(repertoire_router)
+app.include_router(practice_router)
+app.include_router(workout_router)
+app.include_router(backup_router)
 
 
 def get_conn() -> Iterator[Connection]:
@@ -136,10 +147,15 @@ def exercise_next(
     conn: Connection = Depends(get_conn),
     skill: str | None = Query(default=None, description="Force a skill dimension"),
     bars: int | None = Query(default=None, ge=1, le=16),
+    key: str | None = Query(default=None, description="Pin the key, e.g. 'B' or 'c#'"),
 ) -> ExerciseOut:
     if skill is not None and skill not in SKILL_SLUGS:
         raise HTTPException(status_code=422, detail=f"unknown skill {skill!r}")
-    payload = services.next_exercise(conn, current_user_id(), skill=skill, bars=bars)
+    if key is not None and level_for_key(key) is None:
+        raise HTTPException(status_code=422, detail=f"unknown key {key!r}")
+    payload = services.next_exercise(
+        conn, current_user_id(), skill=skill, bars=bars, key_name=key
+    )
     return ExerciseOut(**payload)
 
 
@@ -161,6 +177,7 @@ def exercise_by_id(exercise_id: int, conn: Connection = Depends(get_conn)) -> Ex
         source=exercise.get("source", "generated"),
         expected_notes=[note.to_dict() for note in exercise["expected"]],
         measures=exercise.get("measures", []),
+        bass_pattern=exercise.get("bass_pattern"),
     )
 
 
@@ -181,6 +198,7 @@ def calibration_next(conn: Connection = Depends(get_conn)) -> ExerciseOut:
             source=payload["next"]["source"],
             expected_notes=payload["next"]["expected_notes"],
             measures=payload["next"].get("measures", []),
+            bass_pattern=payload["next"].get("bass_pattern"),
             rationale="Calibration complete — this is a normal adaptive exercise.",
             complete=True,
             step=payload["step"],
@@ -203,7 +221,57 @@ def score(payload: ScoreRequest, conn: Connection = Depends(get_conn)) -> JSONRe
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    # Attribution happens here, after scoring, so a workout lookup can never cost
+    # a performance: without a running workout this is a no-op and the attempt is
+    # ordinary sight-reading, which is what it is.
+    result["workout_id"] = workout_store.attach_performance(
+        conn, int(result["performance_id"])
+    )
     return JSONResponse(result)
+
+
+@app.get("/api/practice-suggestions")
+def practice_suggestions(conn: Connection = Depends(get_conn)) -> JSONResponse:
+    """Repertoire the sight-reading side could build exercises around.
+
+    Cross-domain, so it lives here rather than in either domain: the repertoire
+    router has no business knowing about skill levels, and the adaptive engine has
+    no business reading the library.
+    """
+    from .bridge import suggest_for_piece
+    from .repertoire import store as repertoire_store
+
+    active_only = [
+        row
+        for row in repertoire_store.list_pieces(conn)
+        if row["status"] != "completed"
+    ]
+    suggestions = [
+        suggest_for_piece(
+            piece_id=row["id"],
+            title=row["title"],
+            composer_name=row["composer_name"],
+            piece_key=row["key"],
+            difficulty=row["difficulty"],
+            status=row["status"],
+        )
+        for row in active_only
+    ]
+    return JSONResponse(
+        [
+            {
+                "piece_id": item.piece_id,
+                "title": item.title,
+                "composer_name": item.composer_name,
+                "piece_key": item.piece_key,
+                "suggested_key": item.suggested_key,
+                "difficulty": item.difficulty,
+                "suggested_level": item.suggested_level,
+                "notes": item.notes,
+            }
+            for item in suggestions
+        ]
+    )
 
 
 @app.get("/api/stats")

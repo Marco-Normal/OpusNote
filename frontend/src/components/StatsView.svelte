@@ -2,6 +2,7 @@
   import { api } from '../lib/api';
   import { app } from '../lib/state.svelte';
   import type { Stats } from '../lib/types';
+  import { theme } from '../lib/theme.svelte';
   import RadarChart from './RadarChart.svelte';
   import LineChart from './LineChart.svelte';
 
@@ -46,17 +47,17 @@
     return [
       {
         label: 'Overall',
-        color: '#4338ca',
+        color: theme.charts.overall,
         points: stats.history.map((item) => ({ x: at(item), y: item.score })),
       },
       {
         label: 'Pitch',
-        color: '#15803d',
+        color: theme.charts.pitch,
         points: stats.history.map((item) => ({ x: at(item), y: item.pitch_accuracy })),
       },
       {
         label: 'Rhythm',
-        color: '#b45309',
+        color: theme.charts.rhythm,
         points: stats.history.map((item) => ({ x: at(item), y: item.rhythm_accuracy })),
       },
     ];
@@ -67,7 +68,7 @@
     return [
       {
         label: 'Best passing tempo',
-        color: '#4338ca',
+        color: theme.charts.overall,
         points: stats.tempo_progress.map((item) => ({ x: new Date(item.date).getTime(), y: item.tempo_bpm })),
       },
     ];
@@ -296,6 +297,6 @@
   button.danger {
     background: var(--bad);
     border-color: var(--bad);
-    color: #fff;
+    color: var(--accent-ink);
   }
 </style>

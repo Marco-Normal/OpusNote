@@ -5,6 +5,7 @@
   import { Metronome, type BeatInfo } from '../lib/metronome';
   import { ScoreRenderer } from '../lib/score';
   import { app } from '../lib/state.svelte';
+  import { theme } from '../lib/theme.svelte';
   import type { Exercise, NoteStatus, PlayedNote, ScoreResult } from '../lib/types';
   import ResultsPanel from './ResultsPanel.svelte';
   import LatencyCalibrator from './LatencyCalibrator.svelte';
@@ -67,6 +68,16 @@
     renderer?.dispose();
   });
 
+  // OSMD reads its colour options at load time, so a paper change means
+  // re-rendering. Skipped while a run is in progress: redrawing the notation
+  // mid-performance would be worse than a stale theme for a few seconds.
+  $effect(() => {
+    const dark = theme.scoreIsDark;
+    if (!exercise || !renderer) return;
+    if (phase === 'playing' || phase === 'countin' || phase === 'submitting') return;
+    void renderer.setDark(dark).then(() => renderer?.colorByExpectedIndex(liveStatuses));
+  });
+
   async function load(): Promise<void> {
     error = null;
     result = null;
@@ -87,7 +98,9 @@
       total = next.total ?? total;
       await tick();
       renderer = new ScoreRenderer(scoreContainer);
-      await renderer.render(exercise.musicxml, exercise.expected_notes);
+      await renderer.render(exercise.musicxml, exercise.expected_notes, {
+        dark: theme.scoreIsDark,
+      });
       phase = 'ready';
     } catch (cause) {
       error = cause instanceof Error ? cause.message : String(cause);
@@ -111,7 +124,12 @@
     renderer?.resetColors();
 
     const barsBeats = exercise.measures.map((measure) => measure.beats);
-    const secondsPerBeat = 60 / exercise.tempo_bpm;
+    // A tempo marking is quarter notes per minute; a *beat* is whatever the
+    // meter says it is, which is a dotted quarter in 6/8 and a half note in cut
+    // time. Passing seconds-per-quarter as seconds-per-beat made the metronome
+    // and the count-in wrong in every compound meter.
+    const secondsPerQuarter = 60 / exercise.tempo_bpm;
+    const barBeatUnits = exercise.measures.map((measure) => measure.beat_unit_q);
     const countInBeats = barsBeats[0] ?? 4;
 
     phase = 'countin';
@@ -120,9 +138,9 @@
       beatInfo = info;
       if (!info.inCountIn && phase === 'countin') phase = 'playing';
     });
-    metronome.start({ barsBeats, secondsPerBeat, countInBeats });
+    metronome.start({ barsBeats, barBeatUnits, secondsPerQuarter, countInBeats });
     app.midi.startRecording(metronome.downbeatMs);
-    endTimer = setTimeout(() => void finish(), metronome.totalBeats * secondsPerBeat * 1000 + 1500);
+    endTimer = setTimeout(() => void finish(), metronome.durationSeconds * 1000 + 1500);
   }
 
   async function finish(): Promise<void> {
@@ -289,7 +307,7 @@
 
   .track {
     height: 0.45rem;
-    background: #e9e9e4;
+    background: var(--track);
     border-radius: 999px;
     overflow: hidden;
   }

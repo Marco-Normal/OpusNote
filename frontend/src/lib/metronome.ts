@@ -31,10 +31,19 @@ export interface BeatInfo {
 }
 
 export interface MetronomePlan {
-  /** Bar lengths (in beats) for the exercise itself, one entry per bar. */
+  /** Bar lengths (in notated beats) for the exercise itself, one per bar. */
   barsBeats: number[];
-  /** Seconds per beat. */
-  secondsPerBeat: number;
+  /**
+   * The beat unit per bar, in quarter lengths: 1 for a quarter-note beat, 1.5
+   * for the dotted-quarter beat of 6/8, 2 for cut time.
+   *
+   * This is what makes the metronome correct in compound meter. A beat is not
+   * a quarter note, so a single "seconds per beat" derived from the tempo is
+   * only right when the meter's beat happens to be a quarter.
+   */
+  barBeatUnits: number[];
+  /** Seconds per quarter note, which is what a tempo marking actually means. */
+  secondsPerQuarter: number;
   /** How many beats of count-in to play before beat 1. */
   countInBeats: number;
 }
@@ -52,6 +61,11 @@ export class Metronome {
   private startMs = 0;
   private plan: MetronomePlan | null = null;
   private scheduledUntil = 0;
+
+  /** Every click, with its offset in seconds from the first count-in click. */
+  private clicks: { at: number; accent: boolean; bar: number; beat: number; inCountIn: boolean }[] = [];
+  private downbeatSeconds = 0;
+  private scheduledSeconds = 0;
 
   get audioReady(): boolean {
     return Tone.getContext().state === 'running';
@@ -80,10 +94,51 @@ export class Metronome {
   start(plan: MetronomePlan): void {
     this.stop();
     this.plan = plan;
+    this.buildSchedule(plan);
     this.startMs = performance.now();
     this.scheduledUntil = 0;
     this.scheduleAhead();
     this.tick();
+  }
+
+  /**
+   * Lay out every click up front, in seconds from the first count-in click.
+   *
+   * Precomputing removes the previous assumption that all beats last the same
+   * amount of time, which is false for compound and mixed meters.
+   */
+  private buildSchedule(plan: MetronomePlan): void {
+    const beatsInFirstBar = plan.barsBeats[0] ?? 4;
+    const countInUnit = plan.barBeatUnits[0] ?? 1;
+    this.clicks = [];
+    let elapsed = 0;
+
+    for (let index = 0; index < plan.countInBeats; index += 1) {
+      this.clicks.push({
+        at: elapsed,
+        accent: index % beatsInFirstBar === 0,
+        bar: 0,
+        beat: index + 1,
+        inCountIn: true,
+      });
+      elapsed += countInUnit * plan.secondsPerQuarter;
+    }
+    this.downbeatSeconds = elapsed;
+
+    plan.barsBeats.forEach((beats, barIndex) => {
+      const unit = plan.barBeatUnits[barIndex] ?? 1;
+      for (let beat = 0; beat < beats; beat += 1) {
+        this.clicks.push({
+          at: elapsed,
+          accent: beat === 0,
+          bar: barIndex + 1,
+          beat: beat + 1,
+          inCountIn: false,
+        });
+        elapsed += unit * plan.secondsPerQuarter;
+      }
+    });
+    this.scheduledSeconds = elapsed;
   }
 
   stop(): void {
@@ -95,40 +150,12 @@ export class Metronome {
   /** `performance.now()` corresponding to the exercise's beat 1. */
   get downbeatMs(): number {
     if (!this.plan) return 0;
-    return this.startMs + this.plan.countInBeats * this.plan.secondsPerBeat * 1000;
+    return this.startMs + this.downbeatSeconds * 1000;
   }
 
-  /** Total beats including the count-in, for progress display. */
-  get totalBeats(): number {
-    if (!this.plan) return 0;
-    return this.plan.countInBeats + this.plan.barsBeats.reduce((sum, beats) => sum + beats, 0);
-  }
-
-  private beatAt(absoluteBeatIndex: number): { bar: number; beat: number; accent: boolean; inCountIn: boolean } {
-    const plan = this.plan!;
-    if (absoluteBeatIndex < plan.countInBeats) {
-      const beatsInBar = plan.barsBeats[0] ?? 4;
-      return {
-        bar: 0,
-        beat: (absoluteBeatIndex % beatsInBar) + 1,
-        accent: absoluteBeatIndex % beatsInBar === 0,
-        inCountIn: true,
-      };
-    }
-    let remaining = absoluteBeatIndex - plan.countInBeats;
-    for (let barIndex = 0; barIndex < plan.barsBeats.length; barIndex += 1) {
-      const beats = plan.barsBeats[barIndex];
-      if (remaining < beats) {
-        return { bar: barIndex + 1, beat: remaining + 1, accent: remaining === 0, inCountIn: false };
-      }
-      remaining -= beats;
-    }
-    return { bar: plan.barsBeats.length, beat: 1, accent: false, inCountIn: false };
-  }
-
-  /** Offset in seconds from the start of the run to a given absolute beat. */
-  private offsetForBeat(absoluteBeatIndex: number): number {
-    return absoluteBeatIndex * this.plan!.secondsPerBeat;
+  /** Total length of the count-in plus the exercise, in seconds. */
+  get durationSeconds(): number {
+    return this.scheduledSeconds;
   }
 
   /**
@@ -138,17 +165,15 @@ export class Metronome {
    */
   private scheduleAhead(): void {
     if (!this.plan || !this.synth) return;
-    const total = this.totalBeats;
     const elapsed = (performance.now() - this.startMs) / 1000;
     const horizon = elapsed + LOOKAHEAD_S;
 
-    while (this.scheduledUntil < total && this.offsetForBeat(this.scheduledUntil) < horizon) {
-      const offset = this.offsetForBeat(this.scheduledUntil);
-      const info = this.beatAt(this.scheduledUntil);
-      const when = Tone.now() + Math.max(0, offset - elapsed);
-      const frequency = info.accent ? 1760 : 1174.66;
+    while (this.scheduledUntil < this.clicks.length && this.clicks[this.scheduledUntil].at < horizon) {
+      const click = this.clicks[this.scheduledUntil];
+      const when = Tone.now() + Math.max(0, click.at - elapsed);
+      const frequency = click.accent ? 1760 : 1174.66;
       try {
-        this.synth.triggerAttackRelease(frequency, 0.04, when, info.accent ? 0.9 : 0.55);
+        this.synth.triggerAttackRelease(frequency, 0.04, when, click.accent ? 0.9 : 0.55);
       } catch {
         // A dropped click is better than a broken practice session.
       }
@@ -161,25 +186,34 @@ export class Metronome {
     this.scheduleAhead();
 
     const elapsed = (performance.now() - this.startMs) / 1000;
-    const absolute = elapsed / this.plan.secondsPerBeat;
-    const index = Math.floor(absolute);
-    const progress = absolute - index;
-
-    if (index >= 0 && index < this.totalBeats) {
-      const info = this.beatAt(index);
-      const payload: BeatInfo = {
-        beat: info.beat,
-        bar: info.bar,
-        accent: info.accent,
-        absoluteBeat: index + 1,
-        progress: Math.max(0, Math.min(1, progress)),
-        inCountIn: info.inCountIn,
-      };
-      this.listeners.forEach((listener) => listener(payload));
-    } else if (index >= this.totalBeats) {
+    if (elapsed >= this.scheduledSeconds) {
       this.stop();
       return;
     }
+
+    // Find the click currently sounding. The count is small (tens), and beats
+    // are no longer evenly spaced, so a scan is clearer than arithmetic.
+    let index = 0;
+    for (let i = this.clicks.length - 1; i >= 0; i -= 1) {
+      if (this.clicks[i].at <= elapsed) {
+        index = i;
+        break;
+      }
+    }
+    const current = this.clicks[index];
+    const next = this.clicks[index + 1];
+    const span = (next ? next.at : this.scheduledSeconds) - current.at;
+
+    this.listeners.forEach((listener) =>
+      listener({
+        beat: current.beat,
+        bar: current.bar,
+        accent: current.accent,
+        absoluteBeat: index + 1,
+        progress: span > 0 ? Math.max(0, Math.min(1, (elapsed - current.at) / span)) : 0,
+        inCountIn: current.inCountIn,
+      }),
+    );
 
     this.frame = requestAnimationFrame(this.tick);
   };

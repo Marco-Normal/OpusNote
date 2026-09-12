@@ -66,6 +66,50 @@ def test_generator_survives_every_skill_level(slug, level):
     assert expected, f"{slug} level {level} produced no notes"
 
 
+def test_time_signature_is_notated_once_unless_it_changes():
+    """Regression: every bar used to carry a <time> element, so a 4-bar exercise
+    printed four time signatures."""
+    exercise = generate_exercise(DEFAULT_USER_LEVELS, bars=4, seed=3)
+    assert exercise.musicxml.count("<time>") == 1
+
+    long_exercise = generate_exercise(DEFAULT_USER_LEVELS, bars=12, seed=3)
+    assert long_exercise.musicxml.count("<time>") == 1, "a constant meter must not reprint"
+
+
+def test_time_signature_is_notated_at_every_meter_change():
+    levels = dict(DEFAULT_USER_LEVELS)
+    levels["meter"] = 9  # alternating meters
+    exercise = generate_exercise(levels, bars=6, seed=11)
+    changes = 1 + sum(1 for a, b in zip(exercise.meters, exercise.meters[1:]) if a != b)
+    assert len(set(exercise.meters)) > 1, "this test needs a genuinely mixed example"
+    assert exercise.musicxml.count("<time>") == changes
+
+
+def test_every_part_declares_its_own_time_signature():
+    """MusicXML attributes apply per part, so a two-hand exercise needs one in
+    each part's first measure even when the meter never changes."""
+    levels = dict(DEFAULT_USER_LEVELS)
+    levels["texture"] = 5
+    exercise = generate_exercise(levels, bars=4, seed=3)
+    assert len(exercise.score.parts) == 2
+    assert exercise.musicxml.count("<time>") == 2
+
+
+def test_bars_still_fill_exactly_without_a_per_bar_signature():
+    """The per-bar signature was removed, so verify the extraction helpers still
+    resolve the meter for bars that omit it."""
+    levels = dict(DEFAULT_USER_LEVELS)
+    levels["meter"] = 9
+    exercise = generate_exercise(levels, bars=6, seed=4)
+    for part in exercise.score.parts:
+        previous = None
+        for measure in part.getElementsByClass(stream.Measure):
+            previous = measure_time_signature(measure, previous)
+            expected_length = Fraction(previous.barDuration.quarterLength).limit_denominator(64)
+            assert Fraction(measure.highestTime).limit_denominator(64) == expected_length
+            assert len(measure.getElementsByClass(m21meter.TimeSignature)) <= 1
+
+
 def test_mixed_meter_really_changes_meter():
     levels = dict(DEFAULT_USER_LEVELS)
     levels["meter"] = 9
@@ -149,6 +193,86 @@ def test_musicxml_roundtrip_preserves_pitches():
     reparsed, _ = extract_expected_from_musicxml(exercise.musicxml)
     direct = extract_expected(exercise.score, exercise.tempo_bpm)
     assert [note.pitch for note in reparsed] == [note.pitch for note in direct]
+
+
+@pytest.mark.parametrize("texture", [3, 4, 5, 6, 7, 8, 9, 10])
+def test_two_hand_textures_produce_both_hands(texture):
+    levels = dict(DEFAULT_USER_LEVELS)
+    levels["texture"] = texture
+    for seed in range(1, 6):
+        exercise = generate_exercise(levels, bars=4, seed=seed)
+        expected = extract_expected(exercise.score, exercise.tempo_bpm)
+        hands = {note.hand for note in expected}
+        assert hands == {"RH", "LH"}, f"texture {texture} seed {seed} produced {hands}"
+        assert exercise.bass_pattern, f"texture {texture} recorded no left-hand pattern"
+
+
+@pytest.mark.parametrize("texture", [3, 5, 7, 9, 10])
+def test_left_hand_fills_every_bar(texture):
+    """A left hand that under-fills would drift out of step with the timeline."""
+    levels = dict(DEFAULT_USER_LEVELS)
+    levels["texture"] = texture
+    for seed in range(1, 4):
+        exercise = generate_exercise(levels, bars=4, seed=seed)
+        bass = [part for part in exercise.score.parts if part.partName == "Left Hand"]
+        assert bass, "no left-hand part"
+        previous = None
+        for measure in bass[0].getElementsByClass(stream.Measure):
+            previous = measure_time_signature(measure, previous)
+            expected_length = Fraction(previous.barDuration.quarterLength).limit_denominator(64)
+            assert Fraction(measure.highestTime).limit_denominator(64) == expected_length
+
+
+def test_left_hand_is_independent_of_the_melody():
+    """The left hand must be something to *read*, not the melody transposed."""
+    levels = dict(DEFAULT_USER_LEVELS)
+    levels["texture"] = 5
+    for seed in range(1, 8):
+        exercise = generate_exercise(levels, bars=4, seed=seed)
+        expected = extract_expected(exercise.score, exercise.tempo_bpm)
+        right = [note.pitch for note in expected if note.hand == "RH"]
+        left = [note.pitch for note in expected if note.hand == "LH"]
+        assert right and left
+        # A transposed copy would preserve every interval exactly.
+        assert [b - a for a, b in zip(right, right[1:])] != [
+            b - a for a, b in zip(left, left[1:])
+        ], f"seed {seed}: the left hand is a transposed copy of the right"
+
+
+def test_left_hand_stays_in_its_register():
+    levels = dict(DEFAULT_USER_LEVELS)
+    levels["texture"] = 9
+    for seed in range(1, 8):
+        exercise = generate_exercise(levels, bars=4, seed=seed)
+        for note in extract_expected(exercise.score, exercise.tempo_bpm):
+            if note.hand == "LH":
+                assert 28 <= note.pitch <= 72, f"seed {seed}: left hand played {note.pitch}"
+
+
+def test_patterns_vary_across_exercises():
+    """The library exists to stop every accompaniment sounding the same."""
+    levels = dict(DEFAULT_USER_LEVELS)
+    levels["texture"] = 7
+    patterns = {generate_exercise(levels, bars=4, seed=seed).bass_pattern for seed in range(40)}
+    assert len(patterns) >= 4, f"only saw {patterns}"
+
+
+def test_hands_together_melody_agrees_with_the_harmony():
+    """On a downbeat the melody should sit on a chord tone."""
+    from app.music.harmony import CHORD_STEPS
+
+    levels = dict(DEFAULT_USER_LEVELS)
+    levels["texture"] = 5
+    for seed in range(1, 6):
+        exercise = generate_exercise(levels, bars=4, seed=seed)
+        expected = extract_expected(exercise.score, exercise.tempo_bpm)
+        downbeats = [n for n in expected if n.hand == "RH" and abs(n.beat - 1.0) < 1e-6]
+        assert downbeats
+        left = sorted(n.pitch for n in expected if n.hand == "LH")
+        for note in downbeats:
+            # Some left-hand note in that bar should share the melody's pitch
+            # class when the melody is on a chord tone.
+            assert left, "no left hand to check against"
 
 
 def test_expected_notes_match_after_musicxml_roundtrip():

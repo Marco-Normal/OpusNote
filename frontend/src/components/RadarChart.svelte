@@ -6,6 +6,8 @@
    * a dozen labels, and it keeps the bundle small.
    */
 
+  import { theme } from '../lib/theme.svelte';
+
   interface Props {
     axes: { slug: string; name: string; level: number }[];
     max?: number;
@@ -41,7 +43,12 @@
   const rings = [0.25, 0.5, 0.75, 1];
 </script>
 
-<svg viewBox="0 0 {SIZE} {SIZE}" role="img" aria-label="Skill levels radar chart">
+<svg
+  viewBox="0 0 {SIZE} {SIZE}"
+  role="img"
+  aria-label="Skill levels radar chart"
+  style="--radar-fill: {theme.charts.radarFill}; --radar-stroke: {theme.charts.radarStroke};"
+>
   {#each rings as ring (ring)}
     <polygon
       class="ring"
@@ -103,14 +110,14 @@
   }
 
   .area {
-    fill: rgba(67, 56, 202, 0.16);
-    stroke: var(--accent);
+    fill: var(--radar-fill);
+    stroke: var(--radar-stroke);
     stroke-width: 2;
     stroke-linejoin: round;
   }
 
   .dot {
-    fill: var(--accent);
+    fill: var(--radar-stroke);
   }
 
   .label {
