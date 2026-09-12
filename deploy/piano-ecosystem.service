@@ -1,0 +1,26 @@
+[Unit]
+Description=Piano ecosystem (sight-reading trainer + practice log)
+Documentation=file:///opt/piano-ecosystem/docs/DEPLOYMENT.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# The installer rewrites User, Group and every /opt/piano-ecosystem path.
+User=piano
+Group=piano
+WorkingDirectory=/opt/piano-ecosystem/backend
+EnvironmentFile=-/etc/piano-ecosystem.env
+# 0.0.0.0 so the main computer can read the log. MIDI still happens in the browser
+# on this machine, over http://localhost:8000, because Web MIDI needs a secure
+# context and a LAN hostname is not one.
+ExecStart=/opt/piano-ecosystem/backend/.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --log-level warning
+Restart=always
+RestartSec=2
+# WAL plus two writers (capture here, uploads from the LAN) is why this must be
+# asked to stop rather than killed outright on a reboot.
+KillSignal=SIGINT
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target
