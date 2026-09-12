@@ -289,3 +289,48 @@ scenarios including a backup round trip. The e2e caught two real bugs worth
 recording: a duplicate `{#each}` key that aborted the whole Log view (padding cells
 in the calendar shared a key), and a stale-detail bug where an edit reached the API
 but not the screen.
+
+---
+
+## 2026-09-12 — sight-reading agent — ecosystem Phase 8 landed (automatic MIDI device selection)
+
+Scope: this repo only (`frontend/src/lib/{midiDevice,midi,state.svelte}.ts`,
+`frontend/src/components/{DeviceBar,PracticeView}.svelte`,
+`backend/tools/e2e_browser.py`, README, ECOSYSTEM, the Phase 8/9 plan).
+**Nothing under `practice-logger/` was touched.**
+
+Did: the app now opens **every** MIDI input instead of choosing one by position, and
+picks the port that actually carries notes. On Linux that is the difference between
+working and not: ALSA always exposes a virtual `Midi Through Port-0`, a real Web MIDI
+input that never sends a byte, and `devices[0]` is a coin toss against it.
+
+Contract notes the other side may care about, if anything ever consumes this layer:
+
+- `MidiInput.select(id)` and `AppState.selectDevice(id)` are **gone**; the
+  replacements are `pin(id | null)` and `pinDevice(id | null)`, and `activeId` is a
+  read-only answer rather than something a caller sets.
+- `MidiInput` gained `onPorts(handler)` (a `PortSnapshot[]` of every port, with
+  `lastNoteMs`/`notes`/`inUse`/`pinned`) and `hasPin`. `onNote`/`onNoteRelease`/
+  `onSustain`/`onNoteOnMonitor`/`onNoteOffMonitor` are unchanged, so `capture.ts` and
+  `PracticeView` needed no edit.
+- Cross-port echo suppression lives in `NoteGate` and applies to *both* consumers, so
+  a doubled note can neither add an "extra note" to a score nor duplicate a log row.
+- The e2e harness's fake device now has **two** inputs. `window.__fakeMidi.send(bytes)`
+  still means "the piano sent this" (it targets the live port), which is why the
+  earlier eight scenarios run unchanged; `sendToAll`, `plug`/`plugLater`/`unplugAll`
+  and `total` are new.
+- `data-exercise-badge` was added to the exercise skill pill: `.pill.accent` stopped
+  being unique once the device bar reported the live port in the same style.
+
+Verified: 9 unit tests (`npm test`), `svelte-check` clean, frontend built, all **nine**
+browser e2e scenarios pass, 631 backend tests unaffected.
+
+Worth knowing if you ever port this: the e2e caught three things a unit test could
+not, and each is recorded in `docs/PLAN-PHASE8-9.md` as a deviation rather than
+silently fixed — the pre-first-note tie-break announcing the dead port as "in use", a
+pin restored from storage being labelled "Auto" while it was being honoured, and my
+own harness toggling the port list closed before clicking a row inside it.
+
+**Phase 9 is next**: `app/hostinfo.py` (`/api/host`), loopback-only destructive
+routes, `busy_timeout` and an upload cap, a capture heartbeat, and `deploy/` for the
+planted notebook. The plan is `docs/PLAN-PHASE8-9.md`.

@@ -34,6 +34,28 @@ press **Get my first exercise**.
 > Use `localhost`, not `127.0.0.1`, for the dev server — that is where Vite binds
 > by default. Web MIDI requires a secure context, and `localhost` counts as one.
 
+### MIDI devices
+
+The app connects by itself and picks the port that actually carries notes. That
+matters on Linux, where ALSA always exposes a virtual `Midi Through Port-0` beside
+your keyboard: it is a real Web MIDI input that never sends anything, and choosing a
+device by position picks it roughly half the time.
+
+Open **Ports** in the device bar to see every input with what has been heard from it
+— `17 notes · last 4 s ago`, or `no notes yet` for the loopback port — and which one
+is in use (`Auto · CASIO USB-MIDI MIDI 1`).
+
+- **Nothing to click.** The app connects on load and again when the piano is switched
+  on later, so a machine left running picks it up by itself. Press **Connect MIDI**
+  once if the browser has never been granted MIDI access.
+- **Use only this** pins a device when you would rather be certain than inferred; the
+  choice survives a reload. **Back to automatic selection** undoes it.
+- **Echoes are dropped, not ports ignored.** Every port stays attached, and a note
+  reported twice within 30 ms by two different ports is counted once — so a keyboard
+  that splits zones across ports loses nothing.
+- On the piano machine use `http://localhost:8000`: Web MIDI requires a secure
+  context, and a LAN hostname is not one.
+
 ### Two hands and the left-hand library
 
 From texture level 3 up, exercises are written on a grand staff and both hands

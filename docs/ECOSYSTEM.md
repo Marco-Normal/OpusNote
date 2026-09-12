@@ -502,6 +502,22 @@ is picked up by itself. Existing scenarios are unchanged. On the real notebook:
 The browser e2e grows the two-port fake device, which reproduces the user's report
 exactly; no new JS test runner is introduced for it.
 
+**Landed.** The selection rules live in `frontend/src/lib/midiDevice.ts` with unit
+tests (`npm test` — Node's own runner, no new dependency): `NoteGate` drops a note
+reported by a *different* port within 30 ms, `PortActivity` records which port has
+actually carried notes, and `chooseActive` prefers a pin, then a remembered device,
+then the loudest port, then a port that is not `looksSilent`, and only then the first.
+`MidiInput` attaches to every input and publishes a port snapshot; the device bar
+shows which port is live and what has been heard from it; capture and exercises share
+the same gate, so an echo can neither inflate a score nor duplicate a log row.
+
+The browser e2e reproduces the reported device list — a dead `Midi Through Port-0`
+beside a live Casio — in scenario 9, and it earned its keep three times over: it
+caught the tie-break announcing the dead port as "in use" before the first note, a
+restored pin being labelled "Auto" while it was being honoured, and the harness's own
+toggle misuse. Two design corrections and one scenario bug, all recorded in the plan
+rather than quietly fixed.
+
 ### Phase 9 — design
 
 - **`deploy/`** — `install.sh`; `piano-ecosystem.service` (uvicorn on `0.0.0.0:8000`,
