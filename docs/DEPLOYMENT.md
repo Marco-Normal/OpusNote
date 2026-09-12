@@ -38,6 +38,63 @@ Two operational notes:
   retries, so a restart mid-sitting costs nothing; but a page loaded while the API
   is down shows the error banner until you press Retry.
 
+## The planted notebook, as a LAN server
+
+The single-machine setup above is the short version. This one is for the actual
+target: a notebook that lives with the piano, runs as a service, and is read from
+somewhere else.
+
+```
+notebook at the piano (authoritative)        main computer / phone
+┌───────────────────────────────────┐
+│ piano-ecosystem.service           │◀── http://piano.local:8000
+│   uvicorn 0.0.0.0:8000 + SPA      │    viewing, uploads, playback,
+│   ~/.local/share/piano-ecosystem/ │    tagging — no MIDI, so plain HTTP
+│     piano.db (+ -wal/-shm), media/│
+│ piano-kiosk.service               │
+│   chromium --kiosk localhost:8000 │  ← the only thing that touches MIDI
+└───────────────────────────────────┘
+```
+
+`sudo ./deploy/install.sh` sets all of it up; [`../deploy/README.md`](../deploy/README.md)
+is the checklist. The parts worth understanding rather than copying:
+
+| Piece | Why it is there |
+| --- | --- |
+| Kiosk at `http://localhost:8000` | Web MIDI needs a secure context. `piano.local` is not one, so the notebook plays through localhost and the main computer reads through the LAN name |
+| `MidiAllowedForUrls` policy | grants the MIDI permission with no prompt — nobody is sitting there to click Allow |
+| `HighEfficiencyModeEnabled: false` | stops Memory Saver *discarding* the capture tab. Throttled timers are harmless: every note carries its own absolute timestamp, so a late batch still lands in the right sitting |
+| `snd_seq` in `modules-load.d` | Web MIDI enumerates the ALSA sequencer; without it the browser reports **no MIDI devices at all**, which looks exactly like broken hardware. `/api/host` reports `sequencer` so the two are distinguishable |
+| `logind` drop-in | a closed lid must not suspend the machine that is doing the logging |
+| `SRT_MAX_UPLOAD_MB` (512) | enforced while writing, so a mis-drag from another machine cannot fill the notebook's disk |
+
+### What the LAN may do
+
+No accounts, but the irreversible actions are refused off the piano machine
+(ECOSYSTEM.md D8). The rule is *would this discard data*:
+
+| Refused away from the notebook | Still fine over the LAN |
+| --- | --- |
+| deleting a piece, composer, journal entry or recording; resetting the profile; restoring a backup with `mode="replace"`; re-segmenting with `confirm=true` | viewing statistics, listening to recordings, uploading recordings, editing pieces and composers, tagging segments, splitting and merging, merge-imports, unlabelled re-segmenting |
+
+A refusal is a 403 whose message names `http://localhost:8000`, and the same controls
+are disabled in the interface with the reason in their tooltip, so the rule is
+visible before it is hit. Note the check is on the *socket peer*
+(`request.client.host` via `ipaddress`): if a reverse proxy is ever put in front, that
+address becomes the proxy's and the check must move to a trusted header.
+
+### Is the notebook actually logging?
+
+Two independent signals, both visible from any machine in the Log tab:
+
+- **Capture** — the origin that last checked in and how long ago the last note
+  arrived. The heartbeat is ephemeral (in memory, 15 s cadence, treated as gone after
+  60 s) and carries only liveness; the note timestamp comes from the database, so it
+  is a fact rather than a client's claim.
+- `curl -s localhost:8000/api/host` — `sequencer: true` plus `CASIO` in `clients`
+  means the server can see the piano through ALSA. Only `System` and `Midi Through`
+  means it cannot: either the piano is off, or `snd_seq` is missing.
+
 ## Where the data lives
 
 | Path | What |

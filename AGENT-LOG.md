@@ -334,3 +334,48 @@ own harness toggling the port list closed before clicking a row inside it.
 **Phase 9 is next**: `app/hostinfo.py` (`/api/host`), loopback-only destructive
 routes, `busy_timeout` and an upload cap, a capture heartbeat, and `deploy/` for the
 planted notebook. The plan is `docs/PLAN-PHASE8-9.md`.
+
+---
+
+## 2026-09-12 — sight-reading agent — ecosystem Phase 9 landed (the notebook as a LAN server)
+
+Scope: this repo only (`backend/app/hostinfo.py`, `backend/app/practice/capture_status.py`,
+route wiring in `main.py`/`repertoire/api.py`/`backup.py`/`practice/api.py`,
+`backend/app/{db,config}.py`, `frontend/src/**`, `deploy/**`, `docs/**`, the e2e).
+**Nothing under `practice-logger/` was touched.**
+
+Did: the app can now be the thing running on a notebook planted at the piano, read
+from a main computer over the LAN, with the irreversible actions refused away from
+the piano machine.
+
+Contract notes for the other side:
+
+- **New routes.** `GET /api/host` (client address, `loopback`, `sequencer`, ALSA
+  `clients`), and `POST /api/practice/capture-status` (a 15 s heartbeat).
+  `GET /api/practice/status` and `/api/practice/analytics/summary` gained
+  `last_note_ms` and `capture` — **additive**, no existing field changed.
+- **New refusals.** Four repertoire DELETEs, `POST /api/profile/reset`,
+  `POST /api/backup/import` with `mode="replace"`, and
+  `POST /api/practice/sittings/{id}/resegment` with `confirm=true` return **403**
+  unless the socket peer is loopback. If you add a destructive route, it needs
+  `dependencies=[Depends(require_loopback)]` or a `require_loopback(request)` call —
+  and if you ever put a reverse proxy in front, the check must move to a trusted
+  header, because `request.client.host` becomes the proxy's address.
+- **Two writers on one file.** `PRAGMA busy_timeout = 5000`, and uploads are capped
+  by `SRT_MAX_UPLOAD_MB` (512) *while writing*, not against the declared size.
+- The `TestClient` fixture now declares the suite local, because TestClient's client
+  address is the literal "testclient" and the loopback check would otherwise 403
+  every delete in the suite. Both directions are tested in
+  `tests/test_server_hardening.py`.
+
+One diagnosis worth carrying forward, because it was wrong in the design docs first:
+**`Midi Through Port-0` is a real ALSA sequencer client that never carries a note**,
+and it is the "0" in the reported device list. Procfs confirms it:
+`Client 14 : "Midi Through" Port 0 : "Midi Through Port-0"`. Phase 8 attaches to every
+port and de-duplicates echoes rather than trying to pick the right one; Phase 9's
+`/api/host` reports the sequencer and the visible clients, so "the piano is not
+plugged in" and "the kernel module is missing" can be told apart.
+
+Verified: 646 backend tests, 9 unit tests, `svelte-check` clean, frontend built, all
+**ten** browser e2e scenarios pass, `bash -n`/JSON/`systemd-analyze` on the deploy
+files.

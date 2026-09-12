@@ -3127,6 +3127,23 @@ result in the log entry either way):
 
 ---
 
+## Execution record
+
+All fifteen tasks landed. What the implementation changed about this plan:
+
+| Task | Divergence | Why |
+| --- | --- | --- |
+| P8-T1 | `fingerprint` compares **token sets**, not stripped strings | the regex draft failed the Windows spelling of the same keyboard (the whole name is the parenthetical) |
+| P8-T1 | `chooseActive` prefers a port that is not `looksSilent` before falling back to position | the e2e caught the device bar announcing the dead port as "in use" before the first note |
+| P8-T3 | a restored pin is labelled `Pinned`, via `hasPin` | the pin was honoured while reading `Auto`, which made it look broken |
+| P9-T1 | `sequencer_available()` accepts `/dev/snd/seq` **or** the procfs client list | the plan claimed the sequencer was absent; it was loaded, and `/dev/snd` was missing because of the sandbox |
+| P9-T4 | one `CaptureReport` model instead of two identical ones | duplicated shapes drift; the heartbeat\'s wire shape lives with its owner |
+| P9-T2..T4 | one commit, not three | they share one test file, and a commit whose tests fail is worse than a coarser commit |
+
+Commits: `0238f5a` (P8-T1), `8740863` (P8-T2..T4), `b8ce3b8` (P8-T5/T6), `378bc75`
+(P8-T7), `c0f6041` (P9-T1..T4), `5e3f45b` (P9-T5), `b4ea55d` (P9-T6), `6a3468c`
+(P9-T7), and the docs commit for T8.
+
 ## Verification sweep (whole change)
 
 | Check | Command | Expected |

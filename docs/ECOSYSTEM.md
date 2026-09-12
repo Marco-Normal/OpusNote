@@ -5,7 +5,7 @@ Rust app" premise of
 [`INTEGRATION-practice-logger.md`](./INTEGRATION-practice-logger.md), which
 remains accurate about *what exists today* but is no longer the destination.
 
-Status: **decided; Phases 1-7 are landed.** See §9 for what each one delivered.
+Status: **decided; Phases 1-9 are landed.** See §9 and §10 for what each one delivered.
 
 ---
 
@@ -568,6 +568,30 @@ the Delete control is disabled there, and the same delete succeeds on the notebo
 a merge-import and an unlabelled re-segment still work from the main computer.
 `deploy/install.sh` on a clean machine yields a service that survives a reboot, with
 the kiosk returning and MIDI reconnecting when the piano is switched on.
+
+**Landed.** `app/hostinfo.py` answers "where did this request come from" and "can
+this machine see the piano at all": `/api/host` reports the client address, loopback,
+`sequencer` (accepting `/dev/snd/seq` *or* the procfs client list, because containers
+have one without the other) and the ALSA clients, which is how a headless notebook
+can be diagnosed from another room. The irreversible routes — four DELETEs, profile
+reset, `mode="replace"` restores and `confirm=true` re-segments — are refused from
+anywhere but the piano machine, with an error that names the address to use; the
+interface disables the same controls and explains why. `PRAGMA busy_timeout` and an
+upload cap enforced *while writing* cover the two new failure modes of two writers on
+one file. A capture heartbeat plus `last_note_ms` (read from the database, not
+claimed by the client) make "is the notebook still logging?" a reading rather than a
+guess, in the Log tab from any machine.
+
+`deploy/` contains the service, the kiosk unit, the Chromium policy that grants MIDI
+without a prompt and stops Memory Saver discarding the tab, `snd_seq` in
+`modules-load.d`, the lid-switch drop-in and an idempotent installer.
+
+One correction to this plan, kept because the mistake is instructive: it first
+claimed the sequencer was not loaded, on the strength of `aconnect` failing to open
+`/dev/snd/seq`. The module was loaded — the sandbox simply has no `/dev/snd` — and
+procfs named the phantom input the user reported: `Client 14 : "Midi Through" Port 0
+: "Midi Through Port-0"`. The probe now accepts either signal, and the diagnosis is
+recorded as confirmed rather than inferred.
 
 ### Risks, stated plainly
 

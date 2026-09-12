@@ -132,7 +132,10 @@ it. Restoring defaults to *add what is missing*, which never deletes local work;
 *replace everything* empties every table first and takes two clicks.
 
 See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for running it on the piano machine,
-WAL-aware backup, and a machine move.
+WAL-aware backup, and a machine move — and [`deploy/README.md`](deploy/README.md) for
+the planted-notebook setup: a systemd service, a Chromium kiosk at `localhost` (Web
+MIDI needs a secure context), the policy that grants MIDI with no prompt, and the
+loopback boundary that keeps deletions on the piano machine.
 
 ### Repertoire
 
@@ -435,4 +438,5 @@ Environment variables, all optional:
 | `SRT_SEGMENT_GAP_S` | `20` | Silence that splits a sitting into segments |
 | `SRT_RESTART_GAP_MS` | `3000` | Mid-segment silence counted as a restart |
 | `SRT_ATTACK_WINDOW_MS` | `50` | Notes closer than this are one attack, for tempo |
+| `SRT_MAX_UPLOAD_MB` | `512` | Largest recording accepted by the upload endpoint |
 | `SRT_API_TARGET` | `http://127.0.0.1:8000` | Proxy target for the dev server |
