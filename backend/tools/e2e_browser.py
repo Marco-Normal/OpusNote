@@ -1570,6 +1570,100 @@ def scenario_midi_autodetect(browser) -> None:
     page.close()
 
 
+def scenario_lan_viewer(browser) -> None:
+    print("\n[10] Viewing from another machine: what this page says it cannot do")
+
+    # The suite runs on loopback, so the server's own view is stubbed to what a main
+    # computer would get. The rule itself is tested against the real helper in the
+    # backend suite; this scenario is about the interface telling the truth.
+    remote_host = {
+        "host": "192.168.1.50",
+        "loopback": False,
+        "sequencer": True,
+        "clients": ["Midi Through", "CASIO USB-MIDI"],
+    }
+    page, errors = new_page(browser)
+    page.route(
+        "**/api/host",
+        lambda route: route.fulfill(
+            status=200, content_type="application/json", body=json.dumps(remote_host)
+        ),
+    )
+    page.goto(BASE_URL, wait_until="domcontentloaded")
+    page.wait_for_selector("text=Sight-Reading Trainer")
+    ensure_midi(page)
+
+    banner = page.locator('[data-host-warning="remote"]')
+    page.wait_for_selector('[data-host-warning="remote"]', timeout=15_000)
+    text = banner.inner_text()
+    check("another machine" in text, f"the banner names the situation ({text[:70]!r})")
+    check("192.168.1.50" in text, "and the address it is being viewed from")
+
+    # The heartbeat makes the notebook's capture state visible from here.
+    click_button(page, "Log")
+    page.wait_for_selector("text=Practice calendar", timeout=20_000)
+    check(
+        page.locator('[data-capture-stat="reporting"]').count() == 1,
+        "the Log view reports that a client is capturing",
+    )
+    check(
+        "not reporting" not in page.inner_text('[data-capture-stat="reporting"]'),
+        "and does not claim the notebook is silent",
+    )
+    page.screenshot(path=str(SHOTS / "15-lan-viewer.png"), full_page=True)
+
+    # Deleting is refused here, and the control says so rather than failing later.
+    click_button(page, "Repertoire")
+    page.wait_for_selector(".row-piece", timeout=20_000)
+    page.locator(".row-piece").first.click()
+    page.wait_for_selector(".detail-title", timeout=10_000)
+    delete_button = page.get_by_role("button", name="Delete", exact=True).first
+    check(
+        delete_button.is_disabled(),
+        "Delete is disabled on a machine that is not the piano machine",
+    )
+    check(
+        "piano machine" in (delete_button.get_attribute("title") or ""),
+        "and explains where it can be done",
+    )
+    check(not errors, f"no console errors ({errors})")
+    page.close()
+
+    # The sequencer warning is the diagnostic for "the piano is plugged in but the app
+    # sees nothing", which is a missing kernel module rather than broken hardware.
+    page, errors = new_page(browser)
+    page.route(
+        "**/api/host",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps({**remote_host, "loopback": True, "sequencer": False, "clients": []}),
+        ),
+    )
+    page.goto(BASE_URL, wait_until="domcontentloaded")
+    page.wait_for_selector('[data-host-warning="sequencer"]', timeout=15_000)
+    check(True, "a missing ALSA sequencer is reported instead of looking like broken hardware")
+    check(
+        page.locator('[data-host-warning="remote"]').count() == 0,
+        "and the piano machine is not told it is remote",
+    )
+    check(not errors, f"no console errors ({errors})")
+    page.close()
+
+    # And on the piano machine itself, with the server's real answer, neither appears.
+    page, errors = new_page(browser)
+    page.goto(BASE_URL, wait_until="domcontentloaded")
+    page.wait_for_selector("text=Sight-Reading Trainer")
+    ensure_midi(page)
+    page.wait_for_timeout(600)
+    check(
+        page.locator("[data-host-warning]").count() == 0,
+        "the piano machine sees no deployment warnings at all",
+    )
+    check(not errors, f"no console errors ({errors})")
+    page.close()
+
+
 def main() -> int:
     SHOTS.mkdir(parents=True, exist_ok=True)
     health = api("/api/health")
@@ -1599,6 +1693,7 @@ def main() -> int:
             scenario_repertoire(browser)
             scenario_practice_log(browser)
             scenario_midi_autodetect(browser)
+            scenario_lan_viewer(browser)
         finally:
             browser.close()
 
