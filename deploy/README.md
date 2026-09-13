@@ -42,7 +42,12 @@ Then:
    `"sequencer": true` and `CASIO` in `"clients"` means the piano is visible to the
    server. If `clients` only lists `System` and `Midi Through`, the piano is not
    attached (or is switched off).
-3. From the main computer, open `http://<notebook>.local:8000`.
+3. From the main computer, open one of the addresses `sudo ./deploy/install.sh
+   --check` printed: `http://<notebook-ip>:8000` always works,
+   `http://<hostname>.local:8000` if avahi is running. Give the notebook a DHCP
+   reservation so the IP stops moving. See
+   [`../docs/DEPLOYMENT.md`](../docs/DEPLOYMENT.md) § *Reaching it from another
+   machine*.
 
 ## What runs where, and why
 

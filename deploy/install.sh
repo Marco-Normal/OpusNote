@@ -14,6 +14,45 @@ SERVICE_GROUP="$(id -gn "$SERVICE_USER")"
 CHECK_ONLY=0
 [ "${1:-}" = "--check" ] && CHECK_ONLY=1
 
+# Every address another machine on the network can use.
+#
+# The old closing line printed `http://$(hostname).local:$PORT` unconditionally, which
+# is only true when avahi is running *and* the other machine resolves mDNS. Reporting
+# an address that does not work is worse than reporting none, so both the IPs and the
+# .local name are checked and labelled.
+lan_urls() {
+  local port="$1" ip name out=""
+  if command -v ip >/dev/null 2>&1; then
+    # Interface names, so container and VM bridges are skipped: on a machine running
+    # docker, `hostname -I` lists six unreachable addresses and hides the one that
+    # matters.
+    while read -r name ip; do
+      case "$name" in
+        docker*|br-*|virbr*|veth*|tun*|tap*|zt*|tailscale*|wg*) continue ;;
+      esac
+      case "$ip" in
+        *:*) continue ;;
+      esac
+      out="$out http://$ip:$port"
+    done <<EOF
+$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $2, $4}' | cut -d/ -f1)
+EOF
+  fi
+  if [ -z "$out" ] && command -v hostname >/dev/null 2>&1; then
+    for ip in $(hostname -I 2>/dev/null); do
+      case "$ip" in *:*) continue ;; esac
+      out="$out http://$ip:$port"
+    done
+  fi
+  printf '%s' "${out# }"
+}
+
+mdns_name() {
+  if systemctl is-active --quiet avahi-daemon 2>/dev/null; then
+    printf 'http://%s.local:%s' "$(hostname)" "$1"
+  fi
+}
+
 # shellcheck source=deploy/browser.sh
 . "$APP_DIR/deploy/browser.sh"
 
@@ -33,6 +72,12 @@ if [ "$CHECK_ONLY" = 1 ]; then
   echo "python3        : $(command -v python3 || echo MISSING)"
   echo "node           : $(command -v node || echo MISSING)"
   echo "curl           : $(command -v curl || echo MISSING)"
+  echo "reachable from : $(lan_urls "$PORT")"
+  if [ -n "$(mdns_name "$PORT")" ]; then
+    echo "mDNS name      : $(mdns_name "$PORT")"
+  else
+    echo "mDNS name      : none (avahi-daemon not running; use the IP above)"
+  fi
   [ -z "$BROWSER" ] && echo "note           : no Chromium-family browser; the kiosk will not start"
   exit 0
 fi
@@ -139,8 +184,14 @@ else
 fi
 
 echo
-echo "Done. On this machine open http://localhost:8000 (MIDI needs localhost)."
-echo "From another machine on the LAN: http://$(hostname).local:$PORT"
+echo "Done. On this machine open http://localhost:$PORT (MIDI needs localhost)."
+echo "From another machine on the LAN:"
+for url in $(lan_urls "$PORT"); do echo "    $url"; done
+if [ -n "$(mdns_name "$PORT")" ]; then
+  echo "    $(mdns_name "$PORT")   (needs mDNS support on the other machine)"
+else
+  echo "    no .local name: install and start avahi-daemon to avoid typing an IP"
+fi
 echo
 echo "Two things this script cannot do for you:"
 echo "  1. Enable automatic login (Login Window / Users settings). The kiosk needs a"

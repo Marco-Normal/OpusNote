@@ -418,3 +418,20 @@ For anyone whose install stopped at the kiosk step: remove the stray, disabled u
 `sudo ./deploy/install.sh`, and log out and back in. Automatic login is required —
 the kiosk needs a graphical session — and the kiosk log is
 `~/.local/state/piano-kiosk.log`.
+
+## 2026-09-12 — sight-reading agent — the installer no longer guesses the LAN URL
+
+`install.sh` printed `http://$(hostname).local:$PORT` unconditionally, which is only
+true when avahi is running *and* the client resolves mDNS. It now enumerates the
+global IPv4 addresses (skipping `docker*`, `br-*`, `virbr*`, `veth*`, `tun*`, `tap*`,
+`zt*`, `tailscale*`, `wg*`, because a machine running containers otherwise lists six
+unreachable addresses and hides the real one), reports the `.local` name only when
+`avahi-daemon` is active, and says so when it is not. `--check` prints both, so the
+"what URL do I type" question is answered before anything is installed.
+
+`docs/DEPLOYMENT.md` gains a *Reaching it from another machine* section: IP versus
+`.local` versus a router DNS name versus a `hosts` entry, the advice to give the
+notebook a DHCP reservation so the IP stops moving, and the two traps — MIDI only
+works on the notebook over `http://localhost:8000` (an IP is not a secure context, so
+Chrome refuses MIDI and the app correctly reports itself as remote), and Mint ships
+`ufw` installed but inactive, so port 8000 may need opening.

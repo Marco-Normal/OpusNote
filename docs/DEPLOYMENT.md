@@ -70,6 +70,36 @@ is the checklist. The parts worth understanding rather than copying:
 | `logind` drop-in | a closed lid must not suspend the machine that is doing the logging |
 | `SRT_MAX_UPLOAD_MB` (512) | enforced while writing, so a mis-drag from another machine cannot fill the notebook's disk |
 
+### Reaching it from another machine
+
+The notebook serves plain HTTP on port 8000, so anything that resolves to it works.
+In order of how little you have to remember:
+
+| URL | Works when | Cost |
+| --- | --- | --- |
+| `http://<ip>:8000` | always | the IP changes unless the router reserves it |
+| `http://<hostname>.local:8000` | `avahi-daemon` runs on the notebook, and the *client* resolves mDNS | zero configuration; macOS and Linux do; Windows 10+ usually does, not always |
+| `http://<shortname>:8000` | your router registers DHCP hostnames in local DNS | depends on the router |
+| `http://piano:8000` | you add `192.168.1.x piano` to the client's `hosts` file, or a DNS entry on the router | one file per client, survives IP changes |
+
+**The IP is the one that always works**, so make it stop moving: give the notebook a
+**DHCP reservation** (a "static lease") in the router, keyed on its MAC address. That
+is one setting, it survives reinstallations, and it makes every other option optional.
+`sudo ./deploy/install.sh --check` prints the addresses this machine actually has —
+and deliberately prints nothing for `.local` when avahi is not running, because an
+address that does not work is worse than no address.
+
+Two things that catch people out:
+
+- **On the notebook itself, always use `http://localhost:8000`, never its IP.** Web
+  MIDI requires a secure context, and `http://192.168.1.x` is not one — Chrome will
+  refuse MIDI even on the machine the piano is plugged into. The app will also show
+  the "viewing from another machine" banner and disable the destructive controls,
+  because as far as the server is concerned the request did not come from loopback.
+- **Opening the port.** Mint ships `ufw` installed but inactive. If the main computer
+  cannot connect at all, check `sudo ufw status` on the notebook and allow 8000 from
+  your network; the installer does this when a firewall is present.
+
 ### What the LAN may do
 
 No accounts, but the irreversible actions are refused off the piano machine
