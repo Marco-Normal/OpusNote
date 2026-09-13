@@ -8,10 +8,12 @@
 
 import type {
   AnalyticsSummary,
+  AutotagReport,
   CaptureStatus,
   Composer,
   Exercise,
   HostInfo,
+  IdentificationQuality,
   ImportReport,
   PieceDetail,
   PiecePracticeDetail,
@@ -342,6 +344,22 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ other_id: otherId }),
       }),
+
+    /**
+     * Answer the question a match asks. Taking a *suggested* piece is an ordinary
+     * assignment (`assignSegment`) — it was never written, so there is nothing to
+     * overrule. These three are about a guess the matcher already made or offered.
+     */
+    identify: (segmentId: number, action: 'accept' | 'reject' | 'dismiss') =>
+      request<SegmentSummary[]>(`/practice/segments/${segmentId}/identification`, {
+        method: 'POST',
+        body: JSON.stringify({ action }),
+      }),
+
+    /** Look for matches among the segments that are still unlabelled. */
+    autotag: () => request<AutotagReport>('/practice/autotag', { method: 'POST' }),
+
+    identificationQuality: () => request<IdentificationQuality>('/practice/autotag/quality'),
 
     summary: (days = 30) => request<AnalyticsSummary>(`/practice/analytics/summary?days=${days}`),
 

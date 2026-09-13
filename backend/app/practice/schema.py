@@ -69,6 +69,30 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_pedals_dedupe
     ON pedal_events(sitting_id, onset_ms, value);
 CREATE INDEX IF NOT EXISTS idx_pedals_sitting ON pedal_events(sitting_id, onset_ms);
 
+-- Every machine guess that was acted on. Without it, "how often is the matcher
+-- right?" is answerable only from memory, and the accept/reject buttons would be
+-- advice the app forgets the moment it is taken.
+--
+-- `action` is what happened to the guess:
+--   confirmed — the inferred label was left alone and taken ownership of
+--   changed   — the inferred label was overwritten with a different piece
+--   rejected  — the inferred label was cleared
+--   dismissed — an offered match was declined, so nothing was ever written
+-- The live accuracy is confirmed / (confirmed + changed + rejected): only guesses
+-- that were actually written can be wrong in the log. Dismissals are recorded so
+-- the app stops asking, not so they count as errors.
+CREATE TABLE IF NOT EXISTS identification_outcomes (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    segment_id         INTEGER NOT NULL REFERENCES segments(id) ON DELETE CASCADE,
+    guessed_piece_id   INTEGER,
+    resolved_piece_id  INTEGER,
+    action             TEXT NOT NULL,
+    accepted           INTEGER NOT NULL,
+    score              REAL,
+    resolved_at        TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_outcomes_segment ON identification_outcomes(segment_id);
+
 -- A contiguous chunk of a sitting believed to be one piece or one workout.
 CREATE TABLE IF NOT EXISTS segments (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,

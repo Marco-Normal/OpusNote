@@ -5,9 +5,11 @@ from __future__ import annotations
 import sqlite3
 import time
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from ..config import settings
 from ..hostinfo import require_loopback
@@ -19,7 +21,9 @@ from .legacy import LegacyDatabaseMissing, import_legacy_practice
 from .models import (
     AnalyticsSummary,
     AssignRequest,
+    AutotagReport,
     EventBatch,
+    IdentificationQuality,
     IngestResult,
     MergeRequest,
     CaptureReportIn,
@@ -165,6 +169,44 @@ def split(segment_id: int, body: SplitRequest) -> list[SegmentSummary]:
 @router.post("/segments/{segment_id}/merge", response_model=list[SegmentSummary])
 def merge(segment_id: int, body: MergeRequest) -> list[SegmentSummary]:
     return _handle(store.merge_segments, segment_id, body.other_id)
+
+
+# --- identifying a segment from your own labelled practice -----------------
+
+
+class IdentifyRequest(BaseModel):
+    """What to do with a match.
+
+    ``accept`` takes the inferred label as your own, ``reject`` clears it, and
+    ``dismiss`` declines an *offered* match that was never written. Replacing a
+    label with a different piece is not here: that is `PATCH /segments/{id}`, which
+    records the overruled guess just the same.
+    """
+
+    action: Literal["accept", "reject", "dismiss"]
+
+
+@router.post("/segments/{segment_id}/identification", response_model=list[SegmentSummary])
+def resolve_identification(segment_id: int, body: IdentifyRequest) -> list[SegmentSummary]:
+    return _handle(store.resolve_identification, segment_id, body.action)
+
+
+@router.post("/autotag", response_model=AutotagReport)
+def run_autotag() -> AutotagReport:
+    """Look for matches among the segments that are still unlabelled.
+
+    The backfill path, for practice that was logged before the matcher existed. It
+    writes only the confident band, exactly like the pass that runs when a sitting
+    is segmented, so running it can never invent a label the automatic path would
+    not have written.
+    """
+    return _handle(store.autotag_unlabelled)
+
+
+@router.get("/autotag/quality", response_model=IdentificationQuality)
+def identification_quality() -> IdentificationQuality:
+    """How well the matcher does on this library, by hiding one label at a time."""
+    return _handle(store.identification_quality)
 
 
 # --- analytics -------------------------------------------------------------

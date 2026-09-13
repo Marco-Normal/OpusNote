@@ -10,7 +10,12 @@
   import { api } from '../lib/api';
   import { PianoPlayer } from '../lib/pianoPlayer';
   import { loggedEvents, sounding, sustained, within, type SynthNote } from '../lib/playback';
-  import { formatClock, type PieceSummary, type SittingDetail } from '../lib/types';
+  import {
+    formatClock,
+    type PieceSummary,
+    type SegmentSummary,
+    type SittingDetail,
+  } from '../lib/types';
 
   interface Props {
     detail: SittingDetail;
@@ -20,9 +25,26 @@
     onsplit: (segmentId: number, atMs: number) => void;
     onmerge: (segmentId: number, otherId: number) => void;
     onresegment: (confirm: boolean) => void;
+    /** Answer the matcher: it was right, it was wrong, or stop asking. */
+    onidentify: (segmentId: number, action: 'accept' | 'reject' | 'dismiss') => void;
   }
 
-  let { detail, pieces, busy, onassign, onsplit, onmerge, onresegment }: Props = $props();
+  let { detail, pieces, busy, onassign, onsplit, onmerge, onresegment, onidentify }: Props =
+    $props();
+
+  /** A segment the matcher wrote, rather than one you did. */
+  const inferred = (segment: SegmentSummary): boolean => segment.identified_by === 'similarity';
+
+  /**
+   * A suggestion is only worth showing when the matcher is actually putting a
+   * name forward. A "none" band means it looked and found nothing close, and
+   * listing the least-bad three anyway would be inviting a guess it has just
+   * declined to make.
+   */
+  const suggested = (segment: SegmentSummary): boolean =>
+    segment.piece_id === null && segment.candidates.length > 0 && segment.candidates[0].band === 'suggest';
+
+  const percent = (value: number): string => `${Math.round(value * 100)}%`;
 
   /** Split points, in seconds from the sitting start, keyed by segment. */
   let splitAt = $state<Record<number, string>>({});
@@ -206,6 +228,51 @@
               </span>
             {/if}
           </div>
+
+          {#if inferred(segment)}
+            <div class="row wrap inferred" data-inferred={segment.id}>
+              <span
+                class="pill accent"
+                title="Written by the matcher from your own tagged practice — not by you"
+              >
+                guessed{segment.confidence !== null ? ` · ${percent(segment.confidence)}` : ''}
+              </span>
+              <button class="ghost tiny" disabled={busy} onclick={() => onidentify(segment.id, 'accept')}>
+                It's right
+              </button>
+              <button class="ghost tiny" disabled={busy} onclick={() => onidentify(segment.id, 'reject')}>
+                Not this
+              </button>
+              <span class="muted small">
+                or correct it below — either way the answer improves the next guess
+              </span>
+            </div>
+          {:else if suggested(segment)}
+            <div class="row wrap suggest" data-suggest={segment.id}>
+              <span class="muted small">Maybe</span>
+              {#each segment.candidates as candidate (candidate.piece_id)}
+                <button
+                  class="ghost tiny"
+                  disabled={busy}
+                  data-candidate={candidate.piece_id}
+                  title="notes {percent(candidate.pitch_class)} · tempo {percent(
+                    candidate.tempo,
+                  )} · register {percent(candidate.register_overlap)}"
+                  onclick={() => onassign(segment.id, candidate.piece_id)}
+                >
+                  {candidate.title}{candidate.from_context ? ' · this sitting' : ''} · {percent(
+                    candidate.score,
+                  )}
+                </button>
+              {/each}
+              <button class="ghost tiny" disabled={busy} onclick={() => onidentify(segment.id, 'dismiss')}>
+                Neither
+              </button>
+              {#if segment.candidates[0].reason}
+                <span class="muted small">{segment.candidates[0].reason}</span>
+              {/if}
+            </div>
+          {/if}
 
           <div class="row wrap controls">
             <select

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 from .capture_status import CaptureReport
 
@@ -112,6 +112,119 @@ class SegmentSummary(BaseModel):
     identified_by: str | None = None
     note_count: int
     metrics: SegmentMetricsOut | None = None
+    #: What this segment might be, best first. Present only while it is undecided:
+    #: an inferred label and a declined suggestion both mean the question is closed,
+    #: and asking again on every reload is how a suggestion becomes a nuisance.
+    candidates: list["SegmentCandidate"] = Field(default_factory=list)
+
+
+class SegmentCandidate(BaseModel):
+    """One piece's claim on a segment, with the arithmetic that produced it.
+
+    The sub-scores travel with the total so a surprise can be understood rather
+    than merely disbelieved: "0.83 because the notes match and the register does"
+    is checkable by the person looking at it.
+    """
+
+    piece_id: int
+    title: str
+    composer_name: str | None = None
+    score: float
+    pitch_class: float
+    tempo: float
+    #: Named with the suffix because a bare `register` shadows a BaseModel method.
+    register_overlap: float
+    support: int
+    margin: float
+    #: The band the *top* candidate fell in — 'auto', 'suggest' or 'none'. Rows
+    #: below the first are 'listed': offered as alternatives, claiming nothing.
+    band: str
+    reason: str | None = None
+    #: True when this is the piece the sitting is already about.
+    from_context: bool = False
+
+
+class AutotagReport(BaseModel):
+    """What a pass of the matcher did."""
+
+    considered: int = 0
+    assigned: int = 0
+    offered: int = 0
+    unresolved: int = 0
+    notes: list[str] = Field(default_factory=list)
+
+
+class IdentificationQuality(BaseModel):
+    """How the matcher does on this library, measured by hiding each label.
+
+    Every rate is ``None`` when it has no denominator rather than 0.0: "no
+    decisions yet" and "every decision wrong" are different facts, and a report
+    that renders them the same way invites exactly the wrong conclusion.
+    """
+
+    #: Segments a person has labelled: the training set.
+    labelled: int
+    #: How many of them were actually tested, and how many were left out to keep
+    #: the report quick (the work is quadratic in the number of labels).
+    evaluated: int = 0
+    skipped: int = 0
+    correct_top: int = 0
+    correct_top3: int = 0
+    auto_attempted: int = 0
+    auto_correct: int = 0
+    offered_attempted: int = 0
+    offered_correct: int = 0
+    unresolved: int = 0
+    #: Segments currently carrying a machine-written label, and what has become of
+    #: the ones that were acted on since.
+    inferred: int = 0
+    confirmed: int = 0
+    changed: int = 0
+    rejected: int = 0
+    dismissed: int = 0
+    notes: list[str] = Field(default_factory=list)
+
+    @computed_field
+    @property
+    def accuracy(self) -> float | None:
+        return self.correct_top / self.evaluated if self.evaluated else None
+
+    @computed_field
+    @property
+    def top3_accuracy(self) -> float | None:
+        return self.correct_top3 / self.evaluated if self.evaluated else None
+
+    @computed_field
+    @property
+    def auto_coverage(self) -> float | None:
+        return self.auto_attempted / self.evaluated if self.evaluated else None
+
+    @computed_field
+    @property
+    def auto_precision(self) -> float | None:
+        return self.auto_correct / self.auto_attempted if self.auto_attempted else None
+
+    @computed_field
+    @property
+    def offered_coverage(self) -> float | None:
+        return self.offered_attempted / self.evaluated if self.evaluated else None
+
+    @computed_field
+    @property
+    def offered_precision(self) -> float | None:
+        return self.offered_correct / self.offered_attempted if self.offered_attempted else None
+
+    @computed_field
+    @property
+    def settled(self) -> int:
+        """Machine labels that have since been confirmed, changed or rejected."""
+        return self.confirmed + self.changed + self.rejected
+
+    @computed_field
+    @property
+    def live_precision(self) -> float | None:
+        """Of the inferred labels acted on, the share left alone."""
+        return self.confirmed / self.settled if self.settled else None
 
 
 class LoggedNote(BaseModel):

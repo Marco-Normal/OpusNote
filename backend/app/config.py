@@ -107,6 +107,34 @@ class Settings:
     #: as an infinitely fast tempo.
     attack_window_ms: int = _env_int("SRT_ATTACK_WINDOW_MS", 50)
 
+    # --- recognising a segment from your own labelled practice --------------
+    #: How many of your closest labelled segments count as evidence.
+    autotag_neighbours: int = _env_int("SRT_AUTOTAG_NEIGHBOURS", 6)
+    #: At or above this, a match is written as an inferred label. The default is
+    #: measured, not inherited — see `backend/tools/measure_autotag.py` and the
+    #: numbers in `docs/ECOSYSTEM.md` §10.
+    autotag_score_auto: float = _env_float("SRT_AUTOTAG_SCORE_AUTO", 0.85)
+    #: At or above this, the match is offered in the timeline and written only if
+    #: you accept it. Below it, nothing is claimed.
+    autotag_score_prompt: float = _env_float("SRT_AUTOTAG_SCORE_PROMPT", 0.55)
+    #: How far ahead of the runner-up a match must be before it is written without
+    #: asking. Measured on drill-shaped material: 0.10 was 13/13 correct; 0.05
+    #: roughly doubles the coverage at about a 3% error rate.
+    autotag_min_margin: float = _env_float("SRT_AUTOTAG_MIN_MARGIN", 0.10)
+    #: Below this many notes a segment is not recognised at all. A handful of notes
+    #: has no profile worth matching, and guessing from one would be noise wearing
+    #: a percentage.
+    autotag_min_notes: int = _env_int("SRT_AUTOTAG_MIN_NOTES", 8)
+    #: How many of your most recent labelled segments the matcher compares against.
+    #: Every read of a sitting derives a fingerprint per reference, so an uncapped
+    #: set would make the log slower every month for the rest of the library's life.
+    #: The newest ones are also the most representative of what you are playing now.
+    autotag_training_limit: int = _env_int("SRT_AUTOTAG_TRAINING_LIMIT", 600)
+    #: How many labelled segments the accuracy report evaluates. Leave-one-out is
+    #: quadratic in this number, so past the cap it takes the newest and says so in
+    #: the report rather than quietly sampling.
+    autotag_quality_limit: int = _env_int("SRT_AUTOTAG_QUALITY_LIMIT", 400)
+
     # --- serving over the LAN ---------------------------------------------
     #: Largest recording accepted by the upload endpoint, in megabytes. A cap that
     #: only trusts the client's declared size is not a cap, so it is enforced while

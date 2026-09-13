@@ -83,6 +83,7 @@ def test_an_export_covers_every_table(client) -> None:
         "note_events",
         "pedal_events",
         "segments",
+        "identification_outcomes",
         "workouts",
         "exercises",
         "performances",

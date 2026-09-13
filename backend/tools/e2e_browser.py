@@ -282,8 +282,13 @@ def check(condition: bool, message: str) -> None:
     print(f"  ok  {message}")
 
 
-def api(path: str, method: str = "GET") -> Any:
-    request = urllib.request.Request(f"{BASE_URL}{path}", method=method)
+def api(path: str, method: str = "GET", body: dict | None = None) -> Any:
+    """A JSON call against the running API, for arranging a scenario."""
+    data = None if body is None else json.dumps(body).encode()
+    request = urllib.request.Request(
+        f"{BASE_URL}{path}", data=data, method=method,
+        headers={"Content-Type": "application/json"} if data else {},
+    )
     with urllib.request.urlopen(request, timeout=30) as response:
         return json.load(response)
 
@@ -1625,7 +1630,13 @@ def clear_practice() -> None:
     """
     conn = sqlite3.connect(os.environ.get("SRT_DB_PATH", str(DEFAULT_DB)), timeout=15)
     try:
+        # `identification_outcomes` is listed even though its foreign key would
+        # cascade from `segments`: this connection does not set
+        # `PRAGMA foreign_keys = ON` (the app's own connections do), so relying on
+        # the cascade here would leave yesterday's outcome rows in place and make
+        # the accuracy counters depend on how many times the suite has been run.
         for table in (
+            "identification_outcomes",
             "pedal_events",
             "segment_metrics",
             "segments",
@@ -1664,14 +1675,7 @@ def seed_closed_sitting(*, minutes_ago: int = 60) -> int:
             for pitch, offset in zip((60, 64, 67, 72), (0, 500, 20_000, 60_000))
         ],
     }
-    request = urllib.request.Request(
-        f"{BASE_URL}/api/practice/events",
-        data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(request, timeout=30) as response:
-        return json.load(response)["sitting_id"]
+    return api("/api/practice/events", "POST", payload)["sitting_id"]
 
 
 def scenario_practice_log(browser) -> None:
@@ -1995,6 +1999,255 @@ def scenario_midi_autodetect(browser) -> None:
     page.close()
 
 
+#: Drills for the matcher scenario. Two pieces one note apart, which is the case
+#: the matcher must not be confident about, and one that sounds nothing like them.
+DRILL_A = [60, 62, 64, 65, 67, 69, 71, 72]
+DRILL_B = [60, 62, 64, 65, 67, 69, 71, 73]
+DRILL_C = [45, 48, 52, 55, 57, 60, 48, 52]
+
+
+def drill(minutes_ago: int, pitches: list[int], *, spacing_ms: int = 250) -> int:
+    """Log one drill as if it had been played, and return its sitting.
+
+    Simulated at the API rather than performed through the page: this scenario is
+    about what happens to a sitting once it is segmented, and playing eight notes
+    through Web MIDI per drill would add a minute of waiting for nothing.
+    """
+    import time
+
+    base = int(time.time() * 1000) - minutes_ago * 60_000
+    payload = {
+        "tz_offset_minutes": -180,
+        "source": "web_midi",
+        "events": [
+            {
+                "epoch_ms": base + index * spacing_ms,
+                "pitch": pitch,
+                "velocity": 70,
+                "duration_ms": 200,
+                "channel": 0,
+            }
+            for index, pitch in enumerate(pitches)
+        ],
+    }
+    return api("/api/practice/events", "POST", payload)["sitting_id"]
+
+
+def label(sitting_id: int, piece_id: int) -> int:
+    """Tag a sitting's single segment by hand, and return the segment's id."""
+    detail = api(f"/api/practice/sittings/{sitting_id}")
+    segment_id = detail["segments"][0]["id"]
+    api(f"/api/practice/segments/{segment_id}", "PATCH", {"piece_id": piece_id})
+    return segment_id
+
+
+def scenario_autotag(browser) -> None:
+    print("\n[11] Recognising what you played: measured, offered, and correctable")
+    clear_practice()
+    pieces = api("/api/repertoire/pieces")
+    check(len(pieces) >= 3, f"the library has pieces to tag with ({len(pieces)})")
+    first, second, third = pieces[0], pieces[1], pieces[2]
+
+    # --- the reference: drills a person has tagged ---
+    # Two pieces that sound nothing like each other, so a confident match is
+    # possible at all. One drill per sitting, twelve minutes apart, so each is
+    # closed and segmented before the next arrives.
+    label(drill(180, DRILL_A), first["id"])
+    label(drill(168, DRILL_A), first["id"])
+    label(drill(156, DRILL_C), second["id"])
+    label(drill(144, DRILL_C), second["id"])
+
+    # The same music as the first piece, never played before: this is what drilling
+    # a piece already in the library looks like, and it is the case the matcher is
+    # allowed to answer on its own.
+    matching = drill(132, DRILL_A)
+    matching_segment = api(f"/api/practice/sittings/{matching}")["segments"][0]
+    check(
+        matching_segment["piece_id"] == first["id"],
+        f"a confident match is written automatically ({matching_segment['piece_id']})",
+    )
+    check(
+        matching_segment["identified_by"] == "similarity",
+        f"and is marked as the matcher's guess ({matching_segment['identified_by']})",
+    )
+    check(not matching_segment["candidates"], "a decided segment is not asked about")
+
+    # --- and now the twin: a third piece one note away from the first ---
+    # With nothing similar yet in the library, the matcher is confident — and wrong.
+    # This is the cold-start mistake the margin rule cannot prevent, and correcting
+    # it is what teaches the library that two pieces sound alike.
+    mistaken = drill(120, DRILL_B)
+    mistaken_segment = api(f"/api/practice/sittings/{mistaken}")["segments"][0]
+    check(
+        mistaken_segment["identified_by"] == "similarity",
+        "a new piece that resembles one already tagged is guessed at first",
+    )
+    check(
+        mistaken_segment["piece_id"] == first["id"],
+        f"and the first guess is the piece it resembles ({mistaken_segment['piece_id']})",
+    )
+    label(mistaken, third["id"])
+
+    # The correction is on the record, and it is what makes the next one careful.
+    corrected = api("/api/practice/autotag/quality")
+    check(
+        corrected["changed"] >= 1,
+        f"correcting a written guess is recorded as the matcher being wrong ({corrected['changed']})",
+    )
+
+    # From here the two similar pieces are both known, so the matcher stops
+    # answering and starts asking.
+    twin = drill(108, DRILL_B)
+    twin_segment = api(f"/api/practice/sittings/{twin}")["segments"][0]
+    check(twin_segment["piece_id"] is None, "so the next one is not guessed at")
+    check(
+        twin_segment["candidates"] and twin_segment["candidates"][0]["band"] == "suggest",
+        f"it is offered instead ({twin_segment['candidates'][:1]})",
+    )
+    check(
+        "close" in (twin_segment["candidates"][0]["reason"] or ""),
+        f"with the reason said plainly ({twin_segment['candidates'][0]['reason']!r})",
+    )
+
+    # --- what the interface does with all that ---
+    page, errors = new_page(browser)
+    page.goto(BASE_URL, wait_until="domcontentloaded")
+    page.wait_for_selector("text=Sight-Reading Trainer")
+    ensure_midi(page)
+    click_button(page, "Log")
+    page.wait_for_selector("text=Practice calendar", timeout=20_000)
+    page.wait_for_selector("[data-identification]", timeout=20_000)
+
+    # The measurement first: it is the claim the rest of this rests on.
+    panel = page.inner_text("[data-identification]")
+    check("Right first time" in panel, "the panel reports the measured accuracy")
+    check("Written without asking" in panel, "and how often a label is written unasked")
+    quality = api("/api/practice/autotag/quality")
+    check(
+        quality["evaluated"] == quality["labelled"] >= 4,
+        f"measured by hiding each of the {quality['labelled']} hand-tagged segments",
+    )
+    check(
+        quality["accuracy"] is not None and quality["accuracy"] >= 0.75,
+        f"and it gets the obvious ones right ({quality['accuracy']})",
+    )
+    # The *quality* bar lives in tools/measure_autotag.py, which has a corpus big
+    # enough to say something; here the question is whether the number on screen is
+    # the one the counts produce, because a panel that invents its own percentage is
+    # worse than no panel.
+    check(
+        quality["auto_attempted"] == 0
+        or abs(quality["auto_precision"] - quality["auto_correct"] / quality["auto_attempted"]) < 1e-9,
+        "the reported precision is the counts it came from "
+        f"({quality['auto_correct']}/{quality['auto_attempted']})",
+    )
+    check(
+        quality["unresolved"] >= 0 and quality["offered_attempted"] >= 0,
+        f"and it says how much it could not judge ({quality['unresolved']})",
+    )
+
+    # The inferred label, in the timeline, with the two answers next to it.
+    # `endswith`, not `in`: a sitting id is a prefix of a longer one, so
+    # `sittings/5` matches a response for `sittings/57` and the wait passes on the
+    # wrong request.
+    with page.expect_response(
+        lambda r: r.url.endswith(f"/api/practice/sittings/{matching}")
+    ):
+        page.click(f'[data-sitting="{matching}"]')
+    page.wait_for_selector(f"[data-inferred]", timeout=20_000)
+    check(True, "a written guess is shown as a guess, not as a fact")
+    check(
+        page.evaluate(
+            """() => document.querySelector('select[aria-label="Piece for this segment"]').value"""
+        )
+        == str(first["id"]),
+        "with the piece it guessed already selected",
+    )
+    page.screenshot(path=str(SHOTS / "23-identified.png"), full_page=True)
+
+    # "It's right" takes ownership: the label stays, the guess marking goes.
+    with page.expect_response(
+        lambda r: r.url.endswith("/identification") and r.request.method == "POST"
+    ):
+        click_button(page, "It's right")
+    page.wait_for_timeout(600)
+    check(page.locator("[data-inferred]").count() == 0, "accepting retires the question")
+    check(
+        page.evaluate(
+            """() => document.querySelector('select[aria-label="Piece for this segment"]').value"""
+        )
+        == str(first["id"]),
+        "and the label is still there",
+    )
+    after = api("/api/practice/autotag/quality")
+    check(
+        after["confirmed"] >= 1 and after["settled"] >= 1,
+        f"the acceptance is recorded as the matcher being right ({after['confirmed']})",
+    )
+    precision_before = after["live_precision"]
+
+    # The offered match, and saying no to it.
+    with page.expect_response(lambda r: r.url.endswith(f"/api/practice/sittings/{twin}")):
+        page.click(f'[data-sitting="{twin}"]')
+    page.wait_for_selector("[data-suggest]", timeout=20_000)
+    buttons = page.evaluate(
+        "() => [...document.querySelectorAll('[data-suggest] [data-candidate]')].map((b) => b.innerText)"
+    )
+    check(len(buttons) >= 2, f"the alternatives are offered with their scores ({buttons})")
+    check(
+        any("·" in label_text for label_text in buttons),
+        "each one carries the percentage behind it",
+    )
+    page.screenshot(path=str(SHOTS / "24-suggested.png"), full_page=True)
+
+    before_dismissal = api("/api/practice/autotag/quality")["dismissed"]
+    with page.expect_response(
+        lambda r: r.url.endswith("/identification") and r.request.method == "POST"
+    ):
+        click_button(page, "Neither")
+    page.wait_for_timeout(600)
+    check(page.locator("[data-suggest]").count() == 0, "declining clears the question")
+    # ...and it stays cleared, which is the part a reload would expose.
+    with page.expect_response(
+        lambda r: r.url.endswith(f"/api/practice/sittings/{matching}")
+    ):
+        page.click(f'[data-sitting="{matching}"]')
+    with page.expect_response(lambda r: r.url.endswith(f"/api/practice/sittings/{twin}")):
+        page.click(f'[data-sitting="{twin}"]')
+    page.wait_for_timeout(600)
+    check(
+        page.locator("[data-suggest]").count() == 0,
+        "and does not come back on the next look",
+    )
+    dismissed = api("/api/practice/autotag/quality")
+    check(
+        dismissed["dismissed"] == before_dismissal + 1,
+        f"the refusal is recorded so it is not asked again ({dismissed['dismissed']})",
+    )
+    # Compared rather than asserted to a number: what matters is that declining a
+    # *suggestion* changes nothing about how often the matcher's written guesses
+    # turned out to be right.
+    check(
+        dismissed["live_precision"] == precision_before,
+        "and a declined suggestion is not counted as the matcher being wrong "
+        f"({precision_before} -> {dismissed['live_precision']})",
+    )
+
+    # --- the backfill: practice that predates the matcher ---
+    report = api("/api/practice/autotag", "POST")
+    check(
+        report["considered"] >= 0 and "assigned" in report,
+        f"the backfill reports what it did ({report})",
+    )
+    check(
+        page.locator("[data-identification]").count() == 1,
+        "and the panel survives a re-read",
+    )
+
+    check(not errors, f"no console errors ({errors})")
+    page.close()
+
+
 def scenario_lan_viewer(browser) -> None:
     print("\n[10] Viewing from another machine: what this page says it cannot do")
 
@@ -2119,6 +2372,7 @@ def main() -> int:
                 scenario_repertoire,
                 scenario_practice_log,
                 scenario_midi_autodetect,
+                scenario_autotag,
                 scenario_lan_viewer,
             ):
                 # An optional filter, so a fix to one scenario can be checked in

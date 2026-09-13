@@ -23,22 +23,36 @@ import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Iterable, Sequence
 
 from .. import db
 from ..config import settings
 from . import capture_status
 from . import schema as practice_schema
 from .metrics import SegmentMetrics, segment_metrics
+from .similarity import (
+    DEFAULT_WEIGHTS,
+    Candidate,
+    Example,
+    Fingerprint,
+    Identification,
+    Weights,
+    fingerprint,
+    identify,
+)
 from .models import (
     AnalyticsSummary,
+    AutotagReport,
     CalendarDay,
     EventBatch,
+    IdentificationQuality,
     IngestResult,
     LoggedNote,
     LoggedPedal,
     NeglectedPiece,
     PiecePractice,
     PiecePracticeDetail,
+    SegmentCandidate,
     SegmentMetricsOut,
     SegmentSummary,
     SittingDetail,
@@ -440,6 +454,12 @@ def ensure_segments(
             )
         _tag_from_workouts(conn, sitting_id, started_ms)
         _refresh_metrics(conn, sitting_id)
+        # Identify before returning, so a sitting arrives already tagged rather than
+        # waiting for someone to press a button. Only the unambiguous band is
+        # written; the rest comes back as candidates on the detail read. This is a
+        # read path that writes labels, which is deliberate — and is exactly why the
+        # label is marked as inferred and is one click from being rejected.
+        autotag_sitting(conn, sitting_id)
         return _segment_rows(conn, sitting_id)
 
 
@@ -460,6 +480,13 @@ def sitting_detail(
         note_count = conn.execute(
             "SELECT COUNT(*) FROM note_events WHERE sitting_id = ?", (sitting_id,)
         ).fetchone()[0]
+        # What the undecided segments might be. Computed here rather than inside
+        # `_segment_rows`, which every edit path calls: a suggestion is a read-time
+        # question, and re-running the matcher after every split would put it in the
+        # way of the editing it exists to help with.
+        candidates = candidates_for_sitting(conn, sitting_id)
+        for segment in segments:
+            segment.candidates = candidates.get(segment.id, [])
         return SittingDetail(
             id=int(row["id"]),
             started_at=row["started_at"],
@@ -529,6 +556,52 @@ def _segment_or_raise(conn: sqlite3.Connection, segment_id: int) -> sqlite3.Row:
     return row
 
 
+def _settle_label(
+    conn: sqlite3.Connection, row: sqlite3.Row, piece_id: int | None
+) -> None:
+    """Write a person's decision about a segment, and record what became of the guess.
+
+    The single owner of "someone has decided": whether the decision arrives from the
+    piece dropdown, from accepting a match or from refusing one, the label is written
+    here and the outcome is recorded here. Two call sites writing labels is how one
+    of them ends up forgetting to record a rejection, and a live accuracy figure
+    that only counts some of the mistakes is worse than none.
+    """
+    previous = row["piece_id"]
+    inferred = row["identified_by"] == "similarity"
+
+    conn.execute(
+        "UPDATE segments SET piece_id = ?1, confidence = ?2, identified_by = ?3,"
+        " source = ?4 WHERE id = ?5",
+        (
+            piece_id,
+            None if piece_id is None else 1.0,
+            None if piece_id is None else "manual",
+            None if piece_id is None else "repertoire",
+            int(row["id"]),
+        ),
+    )
+
+    if not inferred:
+        return  # there was no guess, so there is nothing to be right or wrong about
+    same = piece_id is not None and previous is not None and int(previous) == int(piece_id)
+    if piece_id is None:
+        action, accepted = "rejected", False
+    elif same:
+        action, accepted = "confirmed", True
+    else:
+        action, accepted = "changed", False
+    _record_outcome(
+        conn,
+        segment_id=int(row["id"]),
+        guessed_piece_id=int(previous) if previous is not None else None,
+        resolved_piece_id=piece_id,
+        action=action,
+        accepted=accepted,
+        score=row["confidence"],
+    )
+
+
 def assign_piece(
     segment_id: int, piece_id: int | None, db_path: Path | None = None
 ) -> list[SegmentSummary]:
@@ -539,18 +612,7 @@ def assign_piece(
             known = conn.execute("SELECT 1 FROM pieces WHERE id = ?", (piece_id,)).fetchone()
             if known is None:
                 raise InvalidRequest(f"no piece {piece_id} in the library")
-
-        conn.execute(
-            "UPDATE segments SET piece_id = ?1, confidence = ?2, identified_by = ?3,"
-            " source = ?4 WHERE id = ?5",
-            (
-                piece_id,
-                None if piece_id is None else 1.0,
-                None if piece_id is None else "manual",
-                None if piece_id is None else "repertoire",
-                segment_id,
-            ),
-        )
+        _settle_label(conn, row, piece_id)
         return _segment_rows(conn, int(row["sitting_id"]))
 
 
@@ -994,3 +1056,535 @@ def list_sittings_conn(conn: sqlite3.Connection, limit: int) -> list[SittingSumm
 #: owns the DDL text.
 SCHEMA = practice_schema.PRACTICE_SCHEMA
 migrate = practice_schema.migrate
+
+
+# --------------------------------------------------------------------------
+# Identifying a segment from your own labelled practice
+#
+# The matcher itself lives in `similarity.py` and knows nothing about the
+# database. This section is the part that does: which labelled segments are the
+# training set, how a segment's notes are fetched, and what happens to a match
+# once it has been made.
+# --------------------------------------------------------------------------
+
+
+def _notes_for_segments(
+    conn: sqlite3.Connection, rows: list[sqlite3.Row]
+) -> dict[int, list[Note]]:
+    """Notes per segment, fetched sitting by sitting.
+
+    One query per sitting rather than per segment: a sitting holds a few hundred
+    notes, and asking for them once is the difference between a handful of queries
+    and one per segment on every page load.
+    """
+    by_sitting: dict[int, list[sqlite3.Row]] = {}
+    for row in rows:
+        by_sitting.setdefault(int(row["sitting_id"]), []).append(row)
+
+    out: dict[int, list[Note]] = {int(row["id"]): [] for row in rows}
+    for sitting_id, group in by_sitting.items():
+        notes = conn.execute(
+            "SELECT onset_ms, duration_ms, pitch, velocity, channel FROM note_events"
+            " WHERE sitting_id = ? ORDER BY onset_ms, pitch",
+            (sitting_id,),
+        ).fetchall()
+        for row in group:
+            start = int(row["start_ms"])
+            end = int(row["end_ms"])
+            out[int(row["id"])] = [
+                Note(
+                    epoch_ms=int(note["onset_ms"]),
+                    pitch=int(note["pitch"]),
+                    velocity=int(note["velocity"]),
+                    duration_ms=int(note["duration_ms"]),
+                    channel=note["channel"],
+                )
+                for note in notes
+                if start <= int(note["onset_ms"]) <= end
+            ]
+    return out
+
+
+#: The columns every identification query needs.
+_SEGMENT_COLUMNS = "g.id, g.sitting_id, g.start_ms, g.end_ms, g.piece_id, g.identified_by"
+
+
+def _labelled_rows(
+    conn: sqlite3.Connection,
+    *,
+    exclude_segment_id: int | None = None,
+    limit: int | None = None,
+) -> list[sqlite3.Row]:
+    """The training set: segments a *person* put a piece on, oldest first.
+
+    Machine guesses are excluded, deliberately. Training on your own guesses
+    compounds whatever the matcher got wrong the first time — a mislabelled
+    segment would become evidence for the same mistake — and the design's promise
+    is that every segment *you* tag becomes the reference.
+
+    ``limit`` keeps the newest that many, which is what every live path uses: a
+    fingerprint is derived per reference on every read, so an uncapped set would
+    make the log slower every month. Oldest-first is preserved after the cut, so
+    callers that walk the rows (the sitting context) still see them in order.
+    """
+    sql = (
+        f"SELECT {_SEGMENT_COLUMNS} FROM segments g"
+        " WHERE g.piece_id IS NOT NULL"
+        "   AND (g.identified_by IS NULL OR g.identified_by <> 'similarity')"
+    )
+    params: list = []
+    if exclude_segment_id is not None:
+        sql += " AND g.id <> ?"
+        params.append(exclude_segment_id)
+    if limit is None:
+        sql += " ORDER BY g.sitting_id, g.start_ms"
+        return conn.execute(sql, params).fetchall()
+
+    sql += " ORDER BY g.sitting_id DESC, g.start_ms DESC LIMIT ?"
+    params.append(limit)
+    return list(reversed(conn.execute(sql, params).fetchall()))
+
+
+def labelled_count(conn: sqlite3.Connection) -> int:
+    """How many segments a person has labelled, ignoring the matcher's cap."""
+    return int(
+        conn.execute(
+            "SELECT COUNT(*) FROM segments"
+            " WHERE piece_id IS NOT NULL"
+            "   AND (identified_by IS NULL OR identified_by <> 'similarity')"
+        ).fetchone()[0]
+    )
+
+
+def _fingerprints(
+    conn: sqlite3.Connection, rows: list[sqlite3.Row]
+) -> dict[int, Fingerprint]:
+    notes = _notes_for_segments(conn, rows)
+    return {
+        int(row["id"]): fingerprint(
+            notes.get(int(row["id"]), []), attack_window_ms=settings.attack_window_ms
+        )
+        for row in rows
+    }
+
+
+def examples_from(conn: sqlite3.Connection, rows: list[sqlite3.Row]) -> list[Example]:
+    """Turn labelled segment rows into training examples."""
+    prints = _fingerprints(conn, rows)
+    return [
+        Example(
+            segment_id=int(row["id"]),
+            piece_id=int(row["piece_id"]),
+            fingerprint=prints[int(row["id"])],
+        )
+        for row in rows
+    ]
+
+
+def segment_identification(
+    conn: sqlite3.Connection,
+    segment_id: int,
+    *,
+    examples: list[Example] | None = None,
+    context_piece_id: int | None = None,
+    weights: Weights = DEFAULT_WEIGHTS,
+) -> Identification:
+    """Match one segment against your labelled practice.
+
+    ``examples`` is passed in by callers that identify several segments at once —
+    the training set is the same for all of them, and rebuilding it per segment
+    would re-derive every fingerprint for every row.
+    """
+    row = conn.execute(
+        f"SELECT {_SEGMENT_COLUMNS} FROM segments g WHERE g.id = ?", (segment_id,)
+    ).fetchone()
+    if row is None:
+        raise NotFound(f"no segment {segment_id}")
+    if examples is None:
+        examples = examples_from(conn, _labelled_rows(conn, exclude_segment_id=segment_id))
+
+    segment_print = _fingerprints(conn, [row])[segment_id]
+    return identify(
+        segment_print,
+        examples,
+        neighbours=settings.autotag_neighbours,
+        score_auto=settings.autotag_score_auto,
+        score_prompt=settings.autotag_score_prompt,
+        min_margin=settings.autotag_min_margin,
+        min_notes=settings.autotag_min_notes,
+        weights=weights,
+        context_piece_id=context_piece_id,
+    )
+
+
+def _piece_labels(conn: sqlite3.Connection, piece_ids: Iterable[int]) -> dict[int, dict]:
+    ids = sorted({int(piece) for piece in piece_ids})
+    if not ids:
+        return {}
+    placeholders = ", ".join("?" for _ in ids)
+    rows = conn.execute(
+        f"""
+        SELECT p.id, p.title, c.name AS composer_name
+        FROM pieces p LEFT JOIN composers c ON c.id = p.composer_id
+        WHERE p.id IN ({placeholders})
+        """,
+        ids,
+    ).fetchall()
+    return {int(row["id"]): dict(row) for row in rows}
+
+
+def _candidate_out(
+    conn: sqlite3.Connection,
+    candidates: Sequence[Candidate],
+    *,
+    reason: str,
+    band: str,
+    context_piece_id: int | None,
+    limit: int = 3,
+) -> list[SegmentCandidate]:
+    labels = _piece_labels(conn, [candidate.piece_id for candidate in candidates[:limit]])
+    out: list[SegmentCandidate] = []
+    for position, candidate in enumerate(candidates[:limit]):
+        label = labels.get(candidate.piece_id, {})
+        out.append(
+            SegmentCandidate(
+                piece_id=candidate.piece_id,
+                title=label.get("title") or f"piece {candidate.piece_id}",
+                composer_name=label.get("composer_name"),
+                score=round(candidate.score, 4),
+                pitch_class=round(candidate.pitch_class, 4),
+                tempo=round(candidate.tempo, 4),
+                register_overlap=round(candidate.register, 4),
+                support=candidate.support,
+                margin=round(candidate.margin, 4),
+                band=band if position == 0 else "listed",
+                reason=reason if position == 0 else None,
+                from_context=context_piece_id is not None
+                and candidate.piece_id == context_piece_id,
+            )
+        )
+    return out
+
+
+def candidates_for_sitting(conn: sqlite3.Connection, sitting_id: int) -> dict[int, list[SegmentCandidate]]:
+    """What each unlabelled segment of a sitting might be.
+
+    Computed on read rather than stored, because a suggestion is a statement about
+    the labels you have *now*: tagging today's segment can change what yesterday's
+    unlabelled one should be, and a stored suggestion would not know that.
+
+    Segments that have already been resolved — accepted, rejected or dismissed —
+    are skipped, so a declined suggestion does not come back on every reload.
+    """
+    rows = conn.execute(
+        f"SELECT {_SEGMENT_COLUMNS}, g.workout_id FROM segments g"
+        " WHERE g.sitting_id = ? ORDER BY g.start_ms",
+        (sitting_id,),
+    ).fetchall()
+
+    undecided = [
+        int(row["id"])
+        for row in rows
+        if row["piece_id"] is None
+        # A workout segment is sight-reading by declaration, and an inferred label
+        # is a question already answered; only a blank, unquestioned segment is
+        # worth offering a piece for.
+        and row["identified_by"] not in _SETTLED
+        and row["identified_by"] != "similarity"
+        and int(row["workout_id"] or 0) == 0
+        and not _has_outcome(conn, int(row["id"]))
+    ]
+    if not undecided:
+        return {}
+    labelled = _labelled_rows(conn, limit=settings.autotag_training_limit)
+    if not labelled:
+        return {}
+    examples = examples_from(conn, labelled)
+
+    out: dict[int, list[SegmentCandidate]] = {}
+    context: int | None = None
+    # In order, carrying the last resolved piece forward: a sitting is normally one
+    # piece at a time, and the segment being identified may itself be the evidence
+    # for the next one.
+    for row in rows:
+        segment_id = int(row["id"])
+        if row["piece_id"] is not None:
+            context = int(row["piece_id"])
+        if segment_id not in undecided:
+            continue
+        identification = segment_identification(
+            conn, segment_id, examples=examples, context_piece_id=context
+        )
+        if identification.candidates:
+            out[segment_id] = _candidate_out(
+                conn,
+                list(identification.candidates),
+                reason=identification.reason,
+                band=identification.band,
+                context_piece_id=context,
+            )
+    return out
+
+
+#: Identification states that need no further question: a person has decided.
+_SETTLED = ("manual", "workout")
+
+
+def _has_outcome(conn: sqlite3.Connection, segment_id: int) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM identification_outcomes WHERE segment_id = ? LIMIT 1", (segment_id,)
+    ).fetchone()
+    return row is not None
+
+
+def _record_outcome(
+    conn: sqlite3.Connection,
+    *,
+    segment_id: int,
+    guessed_piece_id: int | None,
+    resolved_piece_id: int | None,
+    action: str,
+    accepted: bool,
+    score: float | None,
+) -> None:
+    conn.execute(
+        "INSERT INTO identification_outcomes"
+        " (segment_id, guessed_piece_id, resolved_piece_id, action, accepted, score)"
+        " VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        (segment_id, guessed_piece_id, resolved_piece_id, action, 1 if accepted else 0, score),
+    )
+
+
+def _autotag_rows(conn: sqlite3.Connection, rows: list[sqlite3.Row]) -> AutotagReport:
+    """Identify a run of segments, carrying each segment's context forward.
+
+    The context is the piece of the last segment already decided *in this same
+    pass*, which is what makes a sitting behave like one piece: the first segment
+    may need a real match or your help, and the rest of the sitting then leans the
+    way the sitting is already going.
+    """
+    report = AutotagReport(considered=len(rows))
+    references = _labelled_rows(conn, limit=settings.autotag_training_limit)
+    examples = examples_from(conn, references)
+    if not examples:
+        report.notes.append(
+            "No labelled segments yet, so there is nothing to compare with. Tag a few "
+            "segments by hand and the matcher has a reference."
+        )
+        report.unresolved = len(rows)
+        return report
+
+    # Context starts from whatever this sitting already has, so re-running over an
+    # old sitting does not lose what the earlier segments say.
+    context: int | None = None
+    for row in rows:
+        if row["piece_id"] is not None:
+            context = int(row["piece_id"])
+            continue
+        identification = segment_identification(
+            conn, int(row["id"]), examples=examples, context_piece_id=context
+        )
+        if identification.band == "auto" and identification.best is not None:
+            best = identification.best
+            conn.execute(
+                "UPDATE segments SET piece_id = ?1, confidence = ?2, identified_by = 'similarity'"
+                " WHERE id = ?3",
+                (best.piece_id, round(best.score, 4), int(row["id"])),
+            )
+            context = best.piece_id
+            report.assigned += 1
+        elif identification.band == "suggest":
+            report.offered += 1
+        else:
+            report.unresolved += 1
+    return report
+
+
+def autotag_sitting(conn: sqlite3.Connection, sitting_id: int) -> AutotagReport:
+    """Write the matches that are unambiguous for one sitting's unlabelled segments.
+
+    Called where segments are materialised, so a sitting arrives already
+    identified rather than waiting for someone to press a button. It writes only
+    the confident band and leaves everything else for the timeline to offer.
+    """
+    rows = conn.execute(
+        f"SELECT {_SEGMENT_COLUMNS} FROM segments g"
+        " WHERE g.sitting_id = ? AND g.piece_id IS NULL"
+        "   AND (g.identified_by IS NULL OR g.identified_by <> 'similarity')"
+        " ORDER BY g.start_ms",
+        (sitting_id,),
+    ).fetchall()
+    if not rows:
+        return AutotagReport(considered=0)
+    return _autotag_rows(conn, rows)
+
+
+def autotag_unlabelled(db_path: Path | None = None) -> AutotagReport:
+    """Look at every unlabelled segment in the library, newest sittings last.
+
+    The backfill path, for a library that was already full of segments before the
+    matcher existed. It writes the confident band only, exactly like the automatic
+    pass, so re-running it can never invent a label it would not have written.
+    """
+    with db.transaction(db_path) as conn:
+        rows = conn.execute(
+            f"SELECT {_SEGMENT_COLUMNS} FROM segments g"
+            " WHERE g.piece_id IS NULL"
+            "   AND (g.identified_by IS NULL OR g.identified_by <> 'similarity')"
+            " ORDER BY g.sitting_id, g.start_ms"
+        ).fetchall()
+        if not rows:
+            return AutotagReport(considered=0)
+        return _autotag_rows(conn, rows)
+
+
+def identification_quality(db_path: Path | None = None) -> IdentificationQuality:
+    """How good the matcher is on *your* library, measured by hiding each label.
+
+    Leave-one-out: every labelled segment is matched against all the others, and
+    scored on whether the piece you actually tagged it with came back. It is the
+    only accuracy claim worth making, because it is computed from the material the
+    matcher will really be asked about — including the pieces that sound like each
+    other.
+
+    The work is quadratic in the number of labels, so the newest
+    ``autotag_quality_limit`` are evaluated and the report says how many were left
+    out rather than quietly sampling.
+    """
+    conn = db.connect(db_path)
+    try:
+        # The *count* is of everything you have tagged; the *work* is bounded by the
+        # cap, and the report says so rather than presenting a sample as the whole.
+        total_labelled = labelled_count(conn)
+        labelled = _labelled_rows(conn, limit=settings.autotag_training_limit)
+        inferred = int(
+            conn.execute(
+                "SELECT COUNT(*) FROM segments WHERE identified_by = 'similarity'"
+            ).fetchone()[0]
+        )
+        quality = IdentificationQuality(
+            labelled=total_labelled,
+            inferred=inferred,
+            **_outcome_counts(conn),
+        )
+        if len(labelled) < total_labelled:
+            quality.notes.append(
+                f"compared against your newest {len(labelled)} labelled segments; "
+                f"the older {total_labelled - len(labelled)} are beyond the matcher's "
+                "reference window (SRT_AUTOTAG_TRAINING_LIMIT)"
+            )
+        if len(labelled) < 2:
+            quality.notes.append(
+                "Two labelled segments are the minimum: with one there is nothing to "
+                "compare it against."
+            )
+            return quality
+
+        considered = labelled[-settings.autotag_quality_limit :]
+        quality.evaluated = len(considered)
+        quality.skipped = len(labelled) - len(considered)
+        examples = examples_from(conn, labelled)
+        by_id = {example.segment_id: example for example in examples}
+        prints = {example.segment_id: example.fingerprint for example in examples}
+
+        if quality.skipped:
+            quality.notes.append(
+                f"evaluated the newest {quality.evaluated} labelled segments; "
+                f"{quality.skipped} older ones were left out to keep the report quick"
+            )
+
+        context: int | None = None
+        previous_sitting: int | None = None
+        for row in considered:
+            segment_id = int(row["id"])
+            sitting_id = int(row["sitting_id"])
+            if sitting_id != previous_sitting:
+                context = None
+                previous_sitting = sitting_id
+            identification = identify(
+                prints[segment_id],
+                [example for example in examples if example.segment_id != segment_id],
+                neighbours=settings.autotag_neighbours,
+                score_auto=settings.autotag_score_auto,
+                score_prompt=settings.autotag_score_prompt,
+                min_margin=settings.autotag_min_margin,
+                min_notes=settings.autotag_min_notes,
+                context_piece_id=context,
+            )
+            truth = int(row["piece_id"])
+            top = identification.best.piece_id if identification.best else None
+            quality.correct_top += int(top == truth)
+            quality.correct_top3 += int(
+                truth in [candidate.piece_id for candidate in identification.candidates[:3]]
+            )
+            if identification.band == "auto":
+                quality.auto_attempted += 1
+                quality.auto_correct += int(top == truth)
+            elif identification.band == "suggest":
+                quality.offered_attempted += 1
+                quality.offered_correct += int(top == truth)
+            else:
+                quality.unresolved += 1
+            # The next segment in this sitting gets to know what this one is, exactly
+            # as the live pass does.
+            context = truth
+        return quality
+    finally:
+        conn.close()
+
+
+def _outcome_counts(conn: sqlite3.Connection) -> dict[str, int]:
+    rows = conn.execute(
+        "SELECT action, COUNT(*) AS total FROM identification_outcomes GROUP BY action"
+    ).fetchall()
+    counts = {row["action"]: int(row["total"]) for row in rows}
+    return {
+        "confirmed": counts.get("confirmed", 0),
+        "changed": counts.get("changed", 0),
+        "rejected": counts.get("rejected", 0),
+        "dismissed": counts.get("dismissed", 0),
+    }
+
+
+def resolve_identification(
+    segment_id: int, action: str, db_path: Path | None = None
+) -> list[SegmentSummary]:
+    """Answer the question a match asks: it is right, it is wrong, or not now.
+
+    Only the decisions that are *about a guess* live here. Replacing a label with a
+    different piece is an ordinary assignment and goes through ``assign_piece`` —
+    which also records what became of the guess, so there is exactly one way to
+    change a label and exactly one place that notices a guess was overruled.
+    ``dismiss`` writes no label at all, because the match was never written either.
+    """
+    if action not in {"accept", "reject", "dismiss"}:
+        raise InvalidRequest(f"{action!r} is not an identification outcome")
+
+    with db.transaction(db_path) as conn:
+        row = _segment_or_raise(conn, segment_id)
+        inferred = row["identified_by"] == "similarity"
+
+        if action == "dismiss":
+            if inferred:
+                raise InvalidRequest("that label was written by the matcher; reject it instead")
+            # Recorded so the app stops asking. A declined suggestion is not an error
+            # by the matcher, so it is deliberately not part of the accuracy figure.
+            _record_outcome(
+                conn,
+                segment_id=segment_id,
+                guessed_piece_id=None,
+                resolved_piece_id=None,
+                # The stored vocabulary is the past participle throughout, matching
+                # the four counters the quality report reads: a request says
+                # "dismiss", the row records that it *was* dismissed.
+                action="dismissed",
+                accepted=False,
+                score=None,
+            )
+            return _segment_rows(conn, int(row["sitting_id"]))
+
+        if not inferred:
+            raise InvalidRequest(f"there is no inferred label to {action}")
+
+        _settle_label(conn, row, row["piece_id"] if action == "accept" else None)
+        return _segment_rows(conn, int(row["sitting_id"]))

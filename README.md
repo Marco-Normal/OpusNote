@@ -142,6 +142,16 @@ moved.
   than mistaken for ordinary practice, and a finished workout links to the sitting
   it happened inside. The Progress/Log views then separate "how long did I play"
   from "how much deliberate sight-reading did I do".
+- **The app learns which piece you are drilling.** Tag a segment by hand and it becomes
+  a reference; the next time you play something similar the timeline offers the piece it
+  thinks it was, with the percentage and the arithmetic behind it. A match it is sure of
+  is filled in on its own, marked *guessed*, with "It's right" and "Not this" beside it —
+  and the piece dropdown corrects it either way. Nothing is ever applied without a way to
+  disagree, and correcting a guess is what teaches it that two of your pieces sound
+  alike. The **Recognising what you played** panel reports how often it is right *on your
+  own library*, measured by hiding each of your tagged segments in turn, and how often
+  the labels it wrote unasked survived you looking at them. One-hand drilling is the
+  case it finds hardest, and the panel says so rather than hiding it.
 - Per-piece, the Repertoire detail shows measured minutes from MIDI beside the
   minutes written in the journal — deliberately not summed, because a session can
   be both measured and written down, and adding them would count it twice.
@@ -278,6 +288,10 @@ cd backend && .venv/bin/pip install -r requirements-dev.txt
 
 # Full browser end-to-end against the running server (see tools/e2e_browser.py)
 .venv/bin/python tools/e2e_browser.py
+
+# How well the matcher recognises a drilled section, on generated material
+# (see tools/measure_autotag.py — this is where the shipped weights come from)
+.venv/bin/python tools/measure_autotag.py
 ```
 
 The end-to-end script injects a **simulated Web MIDI device** before any page
@@ -285,10 +299,13 @@ script runs, so the real MIDI input path — status-byte decoding, input
 selection, onset measurement against the count-in anchor — is exercised rather
 than stubbed. It plays a perfect performance (expecting 100/100), an all-wrong
 performance, a silent one, and walks a calibration rung, asserting on the
-rendered notation, the results panel, and the progress view. Eight scenarios in
-all: the last two drive the Repertoire library (import, edit, upload, stream,
-playback) and the practice log (passive capture, a workout, tagging, splitting,
-merging, re-segmenting, and a backup round trip).
+rendered notation, the results panel, and the progress view. Eleven scenarios in
+all: they cover the sight-reading loop, the Repertoire library (import, edit,
+scores, upload, stream, playback, the waveform and its A/B loop), the practice log
+(passive capture, the pedal, a workout, tagging, splitting, merging,
+re-segmenting, a backup round trip), MIDI auto-detection, the LAN viewer — and
+recognising a drilled passage, including the case where the matcher is sure and
+wrong, which is the one that matters.
 
 ---
 
@@ -428,8 +445,9 @@ backend/
     adaptive/
       elo.py         Rating maths
       selector.py    Which skill, how hard
-  tests/             173 unit + integration tests
-  tools/e2e_browser.py  Real-browser end-to-end verification
+  tests/             unit + integration tests
+  tools/e2e_browser.py     Real-browser end-to-end verification
+  tools/measure_autotag.py How well the matcher does on drill-shaped practice
 frontend/
   src/
     lib/             api, midi, metronome, score rendering, live matching, state
@@ -514,6 +532,12 @@ Environment variables, all optional:
 | `SRT_SEGMENT_GAP_S` | `20` | Silence that splits a sitting into segments |
 | `SRT_RESTART_GAP_MS` | `3000` | Mid-segment silence counted as a restart |
 | `SRT_ATTACK_WINDOW_MS` | `50` | Notes closer than this are one attack, for tempo |
+| `SRT_AUTOTAG_SCORE_AUTO` | `0.85` | Score at or above which a match is written without asking |
+| `SRT_AUTOTAG_MIN_MARGIN` | `0.10` | How far ahead of the runner-up it must be to be written. `0.05` roughly doubles the labels written, at about a 3% measured error rate |
+| `SRT_AUTOTAG_SCORE_PROMPT` | `0.55` | Score at or above which a match is offered |
+| `SRT_AUTOTAG_MIN_NOTES` | `8` | Below this many notes a segment is not recognised at all |
+| `SRT_AUTOTAG_NEIGHBOURS` | `6` | How many of your closest tagged segments count as evidence |
+| `SRT_AUTOTAG_TRAINING_LIMIT` | `600` | How many of your most recent tagged segments the matcher compares against |
 | `SRT_MAX_UPLOAD_MB` | `512` | Largest recording accepted by the upload endpoint |
 | `SRT_BACKUP_DIR` | `<data dir>/backups` | Where the nightly JSON exports are written |
 | `SRT_BACKUP_KEEP` | `14` | How many daily backups to keep |

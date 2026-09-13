@@ -684,3 +684,65 @@ Impact on the other side: none. `practice-logger/` and `piano-progress/` are
 untouched. The shared database gains one table (`pedal_events`) that only this app
 writes, and the JSON backup picks it up automatically because the table list is read
 from `sqlite_master`.
+
+## 2026-09-13 — sight-reading agent — Phase 13b: recognising what you played
+
+Scope: `backend/app/practice/similarity.py` (new), `{schema,models,store,api}.py`,
+`backend/app/config.py`, `backend/tests/{test_similarity,test_autotag,test_backup}.py`,
+`backend/tools/measure_autotag.py` (new),
+`frontend/src/components/{SegmentTimeline,PracticeLogView}.svelte`,
+`frontend/src/lib/{api,types}.ts`, `backend/tools/e2e_browser.py`, and the docs.
+
+Did:
+
+- **The matcher, built from `practice-logger/docs/DESIGN.md` §5.** A pitch-class
+  profile, tempo proximity and register overlap per segment; k-nearest over your own
+  labelled segments; bands. Fingerprints are derived from `note_events` on every use and
+  never stored, and an inferred label is never training data, so a wrong guess cannot
+  become evidence for itself.
+- **The write policy the user chose.** Only the confident band is written
+  (`identified_by='similarity'`, marked *guessed* in the timeline with "It's right" and
+  "Not this"); between the two thresholds a match is *offered* with its ranked
+  alternatives and the arithmetic behind each one, and written only if accepted.
+  Declining records a dismissal so it is not asked again, and is deliberately not
+  counted as the matcher being wrong.
+- **A high score is not enough.** A match is written only when it also leads the
+  runner-up by a margin, because two pieces that sound alike both score high. Plus a
+  sitting-context tie-break: a near-tie goes to the piece the sitting is already about,
+  which is measured to be worth 84.7% → 91.7% top-1.
+- **One owner for a decision.** Accept/reject/correct all write through `_settle_label`,
+  including the piece dropdown, so every overruled guess is recorded. `change` was built
+  as an API action and then removed when it turned out to duplicate `PATCH /segments/{id}`
+  exactly.
+- **Accuracy, measured two ways.** Leave-one-out over your own labels (hiding each in
+  turn) reports coverage and precision per band with their counts, `null` rather than 0%
+  where there is no denominator; `identification_outcomes` gives the live figure — the
+  share of written guesses left alone — so the measurement can be checked against real
+  use. The Log tab has a panel for both.
+- **The weights are measured, not inherited.** `tools/measure_autotag.py` generates
+  drill-shaped practice from the app's own generator (sections, half speed, one hand,
+  staccato, repeated passages, wrong and dropped notes) and scores weight schemes
+  leave-one-out: the design's 0.60/0.25/0.15 got 79.2%, the shipped 0.75/0.10/0.15 gets
+  84.7%. Tempo is the weakest term, exactly as a player who drills slowly would expect.
+  Per-kind breakdown: repeats 16/16, at tempo 18/19, staccato 12/13, **right hand only
+  9/13, left hand only 6/11** — the honest cost of drilling one hand, and the reason the
+  context prior and the "offered rather than written" band exist.
+- 54 new backend tests (28 on the pure matcher, 26 integration); the browser suite gained
+  an eleventh scenario that walks the whole story, including the cold-start mistake the
+  margin rule cannot prevent (a new piece resembling one already tagged is guessed at,
+  corrected, and the library then stops answering and starts asking).
+
+Two harness findings worth keeping:
+
+- The e2e's `clear_practice` relied on `identification_outcomes` cascading from
+  `segments`, but that raw connection does not set `PRAGMA foreign_keys = ON`. The table
+  is now listed explicitly, so the accuracy counters do not depend on how many times the
+  suite has been run.
+- Two `expect_response` waits matched URLs by substring, and a sitting id is a prefix of
+  a longer one — `sittings/5` matched a response for `sittings/57`. Both are `endswith`
+  now.
+
+Impact on the other side: none. `practice-logger/` and `piano-progress/` are untouched.
+One new table (`identification_outcomes`) that only this app writes, picked up
+automatically by the JSON backup; and the `segments.candidates` field is additive on the
+wire, so an older client ignores it.

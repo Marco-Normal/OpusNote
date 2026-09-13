@@ -13,6 +13,7 @@
     formatClock,
     formatMinutes,
     type AnalyticsSummary,
+    type IdentificationQuality,
     type RatingHistory,
     type SystemStatus,
     type PieceSummary,
@@ -29,6 +30,9 @@
   let summary = $state<AnalyticsSummary | null>(null);
   let week = $state<RatingHistory | null>(null);
   let system = $state<SystemStatus | null>(null);
+  let quality = $state<IdentificationQuality | null>(null);
+  let matching = $state(false);
+  let matchNote = $state<string | null>(null);
   let sittings = $state<SittingSummary[]>([]);
   let detail = $state<SittingDetail | null>(null);
   let pieces = $state<PieceSummary[]>([]);
@@ -52,6 +56,30 @@
     return `${Math.round(hours / 24)} days ago`;
   }
 
+  /** A rate with its counts, and an em dash when there is nothing to divide. */
+  function rate(label: string, value: number | null, correct: number, attempts: number): string {
+    return value === null ? `${label} —` : `${label} ${Math.round(value * 100)}% (${correct}/${attempts})`;
+  }
+
+  async function lookForMatches(): Promise<void> {
+    matching = true;
+    matchNote = null;
+    error = null;
+    try {
+      const report = await api.practice.autotag();
+      matchNote =
+        report.considered === 0
+          ? 'Every segment already has a piece.'
+          : `${report.assigned} of ${report.considered} segments were matched confidently; ` +
+            `${report.offered} are waiting for you in the timeline.`;
+      await load();
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : String(cause);
+    } finally {
+      matching = false;
+    }
+  }
+
   function lastNoteLabel(data: AnalyticsSummary): string {
     if (data.last_note_ms === null) return 'no notes recorded yet';
     const seconds = Math.max(0, Math.round((Date.now() - data.last_note_ms) / 1000));
@@ -70,6 +98,9 @@
       // it needs both domains; failures here must not stop the log rendering.
       week = await api.progressRatings(7).catch(() => null);
       system = await api.systemStatus().catch(() => null);
+      // The matcher's measured accuracy is a read like any other; it is allowed to
+      // fail without taking the log down with it.
+      quality = await api.practice.identificationQuality().catch(() => null);
       summary = nextSummary;
       sittings = nextSittings;
       // Always re-read the open sitting. `load` runs after every edit, and the
@@ -295,6 +326,8 @@
       onmerge={(segmentId, otherId) =>
         void edit(() => api.practice.mergeSegments(segmentId, otherId))}
       onresegment={(confirm) => void edit(() => api.practice.resegment(detail!.id, confirm))}
+      onidentify={(segmentId, action) =>
+        void edit(() => api.practice.identify(segmentId, action))}
     />
   {:else}
     <section class="card empty">
@@ -409,6 +442,97 @@
   </section>
 {/if}
 
+{#if quality}
+  <section class="card identify" data-identification>
+    <div class="row wrap spread">
+      <h3>Recognising what you played</h3>
+      <button class="ghost tiny" disabled={matching} onclick={() => void lookForMatches()}>
+        {matching ? 'Looking…' : 'Look for matches'}
+      </button>
+    </div>
+
+    {#if quality.evaluated === 0}
+      <p class="muted small">
+        Nothing to measure yet. The matcher learns from the segments you have tagged
+        by hand: {quality.labelled}
+        {quality.labelled === 1 ? 'segment is' : 'segments are'} labelled, and
+        {quality.labelled < 2
+          ? 'two are the minimum, because the first one has nothing to be compared against.'
+          : 'a measurement needs at least two.'}
+      </p>
+    {:else}
+      <div class="health-grid">
+        <div>
+          <span class="muted small">Right first time</span>
+          <strong>{quality.accuracy === null ? '—' : `${Math.round(quality.accuracy * 100)}%`}</strong>
+          <span class="muted small">
+            {quality.correct_top}/{quality.evaluated} labels, each hidden and guessed back
+          </span>
+        </div>
+        <div>
+          <span class="muted small">In the top three</span>
+          <strong>{quality.top3_accuracy === null ? '—' : `${Math.round(quality.top3_accuracy * 100)}%`}</strong>
+          <span class="muted small">{quality.correct_top3}/{quality.evaluated}</span>
+        </div>
+        <div>
+          <span class="muted small">Written without asking</span>
+          <strong>{rate('', quality.auto_precision, quality.auto_correct, quality.auto_attempted).trim() || '—'}</strong>
+          <span class="muted small">
+            {quality.auto_attempted} of {quality.evaluated} segments
+            ({quality.auto_coverage === null ? '—' : `${Math.round(quality.auto_coverage * 100)}%`})
+          </span>
+        </div>
+        <div>
+          <span class="muted small">Offered and right</span>
+          <strong>{rate('', quality.offered_precision, quality.offered_correct, quality.offered_attempted).trim() || '—'}</strong>
+          <span class="muted small">
+            {quality.offered_attempted} offered, {quality.unresolved} it could not judge
+          </span>
+        </div>
+      </div>
+
+      <p class="muted small">
+        Measured by hiding each of your {quality.labelled} hand-tagged segments in turn and
+        seeing whether the matcher names the right piece without it. On your own library,
+        including the pieces that sound like each other.
+        {#if quality.skipped}
+          {quality.skipped} older labels were left out to keep this quick.
+        {/if}
+      </p>
+    {/if}
+
+    {#if quality.inferred > 0}
+      <p class="muted small" data-inferred-count>
+        {quality.inferred}
+        {quality.inferred === 1 ? 'segment carries' : 'segments carry'} a label the matcher
+        wrote. {#if quality.settled > 0}
+          Of the {quality.settled} you have since judged,
+          {quality.confirmed} were right, {quality.changed} you corrected and
+          {quality.rejected} you threw out
+          {#if quality.live_precision !== null}
+            — {Math.round(quality.live_precision * 100)}% left alone.
+          {/if}
+        {:else}
+          None judged yet: each one is marked <em>guessed</em> in the timeline until you
+          accept or correct it.
+        {/if}
+        {#if quality.dismissed > 0}
+          You have also declined {quality.dismissed}
+          {quality.dismissed === 1 ? 'suggestion' : 'suggestions'}, which is not counted
+          against the matcher.
+        {/if}
+      </p>
+    {/if}
+
+    {#each quality.notes as note}
+      <p class="muted small">{note}</p>
+    {/each}
+    {#if matchNote}
+      <div class="notice">{matchNote}</div>
+    {/if}
+  </section>
+{/if}
+
 <BackupPanel onrestored={() => void load()} />
 
 <section class="card totals">
@@ -431,6 +555,16 @@
     display: flex;
     flex-direction: column;
     gap: 0.45rem;
+  }
+
+  .identify {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+
+  .identify h3 {
+    margin: 0;
   }
 
   .health {

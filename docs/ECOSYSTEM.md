@@ -5,7 +5,7 @@ Rust app" premise of
 [`INTEGRATION-practice-logger.md`](./INTEGRATION-practice-logger.md), which
 remains accurate about *what exists today* but is no longer the destination.
 
-Status: **decided; Phases 1-12 and 13a are landed.** See §9 and §10 for what each one
+Status: **decided; Phases 1-12 and 13 are landed.** See §9 and §10 for what each one
 delivered.
 
 ---
@@ -194,7 +194,7 @@ sessionizer and segmentation move across as-is with their tests.
 | 8 | **MIDI that sets itself up** | Auto-connect and auto-select on a piano that is switched on later, across a device list that includes ALSA's dead *Midi Through* port. | low |
 | 11 | **Progress you can see** | Rating history per skill, click-and-hear a past attempt, sub-score trends, week in review. | low |
 | 12 | **Ops polish** | Nightly rotating backups, a health panel, latency suggested from your own timing bias. | low |
-| 13 | **Library depth** | Attach and render scores (PDF and MusicXML), waveform with A/B loop, sustain pedal captured, self-similarity auto-tagging. **Scores, waveform and pedal landed (13a); the matcher is 13b.** | medium |
+| 13 | **Library depth** | Attach and render scores (PDF and MusicXML), waveform with A/B loop, sustain pedal captured, self-similarity auto-tagging. **Landed in full (13a and 13b).** | medium |
 | 14 | **More musical content** | Unusual meters, clef reading, dynamics and articulation depth. | medium |
 | 10 | **Playback** | Hear a scored attempt back (either hand, or the exercise as written) and hear a logged sitting or segment from the practice log, with a playhead. | low |
 | 9 | **LAN server** | A planted notebook serving the whole app on the local network: `deploy/`, kiosk autostart, capture heartbeat, upload cap, concurrent-write hardening. | medium |
@@ -430,7 +430,7 @@ wipe every table, restore, and compare row counts and sample rows.
 | --- | --- |
 | Retiring `practice-logger/` | Its code is ported and its history is importable; deleting the directory is the user's call, not mine |
 | Courtesy clef/time-signature at system breaks | OSMD has no rule for it; recorded as an open decision, unchanged |
-| Self-similarity identification | Not ported; columns and confidence bands exist if it is ever wanted |
+| Self-similarity identification | **Ported as Phase 13b** — see §10; the original design's `identification_corrections` became `identification_outcomes` so acceptances are recorded too |
 | `SRT_*` env prefix on non-sight-reading settings | Cosmetic debt, noted and deferred |
 
 ---
@@ -728,12 +728,84 @@ buried in a large change.
   rather than invented into one, and a pedal-only batch is accepted so a client's queued
   flush cannot block the notes behind it.
 
-### Phase 13b — next (self-similarity auto-tagging)
+### Phase 13b — landed (recognising what you played)
 
-As specified but never built: a pitch-class profile, tempo proximity and register overlap
-per segment, k-nearest over your own labelled segments, confidence bands from two
-thresholds, and the "was this right?" prompt. Corrections are already recorded, so the
-matcher has training data from the day it first runs.
+The design in `practice-logger/docs/DESIGN.md` §5, built at last: a pitch-class profile,
+tempo proximity and register overlap per segment, k-nearest over your own labelled
+segments, confidence bands, and the "was this right?" prompt. The reference is *you* —
+there is still no symbolic score to match against, and every segment you tag becomes an
+example.
+
+- **A GET that writes labels, deliberately.** When a sitting is segmented it is also
+  identified, so it arrives already tagged rather than waiting for a button. Only the
+  unambiguous band is written; it is marked `identified_by='similarity'` with the score
+  it came from, and the timeline shows it as *guessed* with "It's right" and "Not this"
+  beside it. `POST /api/practice/autotag` is the same pass as a backfill, for practice
+  logged before the matcher existed.
+- **The confident band is conservative, and the margin is what makes it so.** A high
+  score is not enough on its own: two pieces that sound alike both score high, so a
+  match is written only when it also leads the runner-up by `SRT_AUTOTAG_MIN_MARGIN`.
+  Between the two thresholds the match is *offered* — ranked, with the notes/tempo/
+  register arithmetic behind each candidate visible on hover — and written only if you
+  accept it. Nothing is applied silently, which is the same rule the latency suggestion
+  follows. Declining a suggestion records a dismissal so it is not asked again, and a
+  dismissal is deliberately not counted as the matcher being wrong.
+- **What the sitting is already about.** A sitting is usually one piece at a time, so a
+  near-tie is broken towards the piece the earlier segments of the same sitting are. The
+  candidate moved is the candidate, not its score: the number on screen still means what
+  it says.
+- **One owner for a decision.** Accepting, rejecting and correcting all write through
+  `_settle_label`, including the piece dropdown, so every overruled guess is recorded
+  rather than only the ones made through the buttons. An inferred label is never training
+  data — training on your own guesses compounds the first mistake — and it is never
+  overwritten by a later pass.
+- **A bounded reference window.** Every read derives a fingerprint per reference, so the
+  matcher compares against your newest `SRT_AUTOTAG_TRAINING_LIMIT` (600) labelled
+  segments rather than all of them — otherwise the log would get slower every month for
+  the rest of the library's life. The count in the accuracy panel is still of everything
+  you have tagged, and the report says when the window is doing the cutting.
+- **The accuracy claim, measured two ways.** `GET /api/practice/autotag/quality`
+  hides each hand-tagged segment in turn and asks whether the matcher names the right
+  piece without it (leave-one-out), reporting coverage *and* precision at each band with
+  their counts, and `null` rather than `0%` where there is no denominator. The live
+  figure is the share of written guesses left alone, so the two can be compared: a
+  measurement that does not survive contact with real use is the thing worth knowing. The
+  Log tab's *Recognising what you played* panel shows both.
+- **`identification_outcomes`** holds one row per guess that was acted on —
+  confirmed/changed/rejected/dismissed — because "how often is it right?" has to come
+  from the database rather than from memory. This is the original design's
+  `identification_corrections` table with one deliberate change: it records the
+  *acceptances* too. A corrections table that only holds mistakes cannot tell you the
+  error *rate*, which is the number that decides whether to trust the band.
+
+**Weights: measured, not inherited.** The design's 0.60/0.25/0.15 assumed whole-piece
+run-throughs at performance tempo, and that is not what practice is. `tools/measure_autotag.py`
+builds a corpus from the app's own generator — eight pieces, nine drills each, under the
+transformations that actually happen: sections, half speed, one hand, staccato, repeats
+of an earlier passage, plus wrong and dropped notes — and scores the schemes
+leave-one-out. At 0.60/0.25/0.15 it got 79.2% right; at the shipped **0.75/0.10/0.15**,
+84.7%. The tempo term is the least trustworthy of the three, exactly as a player who
+drills slowly would expect.
+
+The same measurement, honestly reported, with the numbers that shaped the defaults:
+
+| | top-1 | written unasked | offered |
+| --- | --- | --- | --- |
+| all drills (72) | 91.7% | 18.1% coverage @ 100% (13/13) | 80.6% @ 89.7% |
+| repeat of an earlier passage | 16/16 | | |
+| at tempo | 18/19 | | |
+| slow, staccato | 12/13 | | |
+| **right hand only** | **9/13** | | |
+| **left hand only** | **6/11** | | |
+| cold start, 1 drill per piece | 71.9% | | top-3 90.6% |
+| cold start, 4 drills per piece | 82.5% | | top-3 97.5% |
+
+The single-hand rows are the honest finding: half the notes of a passage is often not
+enough to tell two pieces apart, and one-hand drilling is exactly what this player does.
+What rescues it is the sitting context above — 84.7% → 91.7% overall — and, where that
+does not apply, being asked rather than told. Loosening `SRT_AUTOTAG_MIN_MARGIN` to 0.05
+roughly doubles the coverage at about a 3% measured error rate; it is a setting rather
+than a constant because that trade is the player's to make.
 
 ### Originally planned as Phase 13 (library depth)
 

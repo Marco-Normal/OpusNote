@@ -423,6 +423,24 @@ export interface SegmentMetrics {
   restarts: number | null;
 }
 
+/** One piece's claim on a segment, with the arithmetic that produced it. */
+export interface SegmentCandidate {
+  piece_id: number;
+  title: string;
+  composer_name: string | null;
+  score: number;
+  pitch_class: number;
+  tempo: number;
+  register_overlap: number;
+  support: number;
+  margin: number;
+  /** 'auto' | 'suggest' | 'none' for the top row; 'listed' for the alternatives. */
+  band: string;
+  reason: string | null;
+  /** True when this is the piece the sitting is already about. */
+  from_context: boolean;
+}
+
 export interface SegmentSummary {
   id: number;
   sitting_id: number;
@@ -437,6 +455,45 @@ export interface SegmentSummary {
   identified_by: string | null;
   note_count: number;
   metrics: SegmentMetrics | null;
+  /** Empty once the segment is decided, or once you have declined a suggestion. */
+  candidates: SegmentCandidate[];
+}
+
+/** How the matcher does on this library, measured by hiding one label at a time. */
+export interface IdentificationQuality {
+  labelled: number;
+  evaluated: number;
+  skipped: number;
+  correct_top: number;
+  correct_top3: number;
+  auto_attempted: number;
+  auto_correct: number;
+  offered_attempted: number;
+  offered_correct: number;
+  unresolved: number;
+  inferred: number;
+  confirmed: number;
+  changed: number;
+  rejected: number;
+  dismissed: number;
+  /** Null rather than zero when there is no denominator: "no data" is not "0%". */
+  accuracy: number | null;
+  top3_accuracy: number | null;
+  auto_coverage: number | null;
+  auto_precision: number | null;
+  offered_coverage: number | null;
+  offered_precision: number | null;
+  settled: number;
+  live_precision: number | null;
+  notes: string[];
+}
+
+export interface AutotagReport {
+  considered: number;
+  assigned: number;
+  offered: number;
+  unresolved: number;
+  notes: string[];
 }
 
 /** One note as it was played, relative to the sitting's start. */
