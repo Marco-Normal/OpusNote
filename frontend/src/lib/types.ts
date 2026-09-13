@@ -278,6 +278,12 @@ export interface Recording {
   codec: string | null;
   taken_on: string | null;
   /**
+   * The A/B practice loop, in seconds into the stored file. Either marker may be
+   * set alone, so `null` means "not marked" rather than zero.
+   */
+  loop_start_s: number | null;
+  loop_end_s: number | null;
+  /**
    * present  — copied into the ecosystem media directory
    * pending  — not copied yet, but playable from the legacy library
    * missing  — in neither place

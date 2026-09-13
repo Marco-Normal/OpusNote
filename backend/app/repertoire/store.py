@@ -143,7 +143,8 @@ def get_piece(conn: sqlite3.Connection, piece_id: int) -> dict[str, Any] | None:
 def list_media(conn: sqlite3.Connection, *, piece_id: int | None = None) -> list[dict[str, Any]]:
     sql = """
         SELECT id, piece_id, kind, file_name, original_name, title,
-               duration_secs, size_bytes, codec, taken_on
+               duration_secs, size_bytes, codec, taken_on,
+               loop_start_s, loop_end_s
         FROM media
     """
     params: Sequence[Any] = ()
@@ -195,7 +196,8 @@ def get_media(conn: sqlite3.Connection, media_id: int) -> dict[str, Any] | None:
     row = conn.execute(
         """
         SELECT id, piece_id, kind, file_name, original_name, title,
-               duration_secs, size_bytes, codec, taken_on
+               duration_secs, size_bytes, codec, taken_on,
+               loop_start_s, loop_end_s
         FROM media WHERE id = ?
         """,
         (media_id,),
@@ -474,7 +476,14 @@ def create_media(
 
 
 def update_media(conn: sqlite3.Connection, media_id: int, changes: dict[str, Any]) -> int:
-    updates = {key: value for key, value in changes.items() if key in ("title", "piece_id")}
+    # An allowlist, not `changes` wholesale: the request body is a client's, and a
+    # column it does not own (a file name, say) must not be writable through a
+    # generic PATCH. The loop markers are writable and are validated by the route.
+    updates = {
+        key: value
+        for key, value in changes.items()
+        if key in ("title", "piece_id", "loop_start_s", "loop_end_s")
+    }
     if not updates:
         return conn.execute("SELECT COUNT(*) FROM media WHERE id = ?", (media_id,)).fetchone()[0]
     assignments = ", ".join(f"{column} = :{column}" for column in updates)

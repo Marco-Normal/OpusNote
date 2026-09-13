@@ -723,6 +723,11 @@ def test_migration_adds_legacy_id_to_an_existing_database(fresh_db):
     try:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(pieces)")}
         assert "legacy_id" in columns, "the column was added"
+        media_columns = {row[1] for row in conn.execute("PRAGMA table_info(media)")}
+        assert {"legacy_id", "loop_start_s", "loop_end_s"} <= media_columns, (
+            "every additive column reaches an existing library, not only the one "
+            "this test was written for"
+        )
         kept = conn.execute("SELECT title, composer_id FROM pieces WHERE id = 1").fetchone()
         assert kept["title"] == "Kept piece", "existing data survived the migration"
         assert kept["composer_id"] == 1
@@ -908,3 +913,101 @@ def test_deleting_a_missing_recording_is_404(client):
 
 def test_deleting_an_empty_body_recording_is_404(client):
     assert client.delete("/api/repertoire/media").status_code in (404, 405)
+
+
+# --------------------------------------------------------------------------
+# The A/B practice loop
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def recording(client, tone_wav) -> dict:
+    """A real imported recording, so `duration_secs` is known and non-zero."""
+    piece = client.post("/api/repertoire/pieces", json={"title": "Looping"}).json()
+    return client.post(
+        f"/api/repertoire/pieces/{piece['id']}/media",
+        files={"file": ("take.wav", tone_wav.open("rb"), "audio/wav")},
+        data={"title": "loop me"},
+    ).json()
+
+
+def test_a_loop_is_stored_and_read_back(client, recording):
+    response = client.patch(
+        f"/api/repertoire/media/{recording['id']}",
+        json={"loop_start_s": 0.4, "loop_end_s": 1.2},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["loop_start_s"] == 0.4
+    assert response.json()["loop_end_s"] == 1.2
+
+    # The markers travel with the row, so the other machine sees the same passage.
+    detail = client.get(f"/api/repertoire/pieces/{recording['piece_id']}").json()
+    stored = next(row for row in detail["media"] if row["id"] == recording["id"])
+    assert (stored["loop_start_s"], stored["loop_end_s"]) == (0.4, 1.2)
+
+
+def test_the_markers_may_be_set_one_at_a_time(client, recording):
+    """Setting A and then B is how the player uses this, and the first PATCH has
+    nothing to compare against."""
+    first = client.patch(f"/api/repertoire/media/{recording['id']}", json={"loop_start_s": 0.5})
+    assert first.status_code == 200
+    assert first.json()["loop_end_s"] is None
+
+    second = client.patch(f"/api/repertoire/media/{recording['id']}", json={"loop_end_s": 1.5})
+    assert second.status_code == 200
+    assert (second.json()["loop_start_s"], second.json()["loop_end_s"]) == (0.5, 1.5)
+
+
+def test_a_loop_that_ends_before_it_starts_is_refused(client, recording):
+    response = client.patch(
+        f"/api/repertoire/media/{recording['id']}",
+        json={"loop_start_s": 1.5, "loop_end_s": 0.5},
+    )
+    assert response.status_code == 422
+    assert "at least" in response.json()["detail"]
+
+
+def test_the_second_marker_is_checked_against_the_stored_first_one(client, recording):
+    """A PATCH carrying one number still has to satisfy the pair, which is why
+    validation merges the request with the row rather than reading the body."""
+    client.patch(f"/api/repertoire/media/{recording['id']}", json={"loop_end_s": 0.5})
+    response = client.patch(f"/api/repertoire/media/{recording['id']}", json={"loop_start_s": 1.0})
+    assert response.status_code == 422, "the two stored markers still have to make sense"
+
+
+def test_a_loop_past_the_end_of_the_recording_is_refused(client, recording):
+    """A marker nobody can reach is a broken control, so it never reaches the row."""
+    limit = recording["duration_secs"]
+    response = client.patch(
+        f"/api/repertoire/media/{recording['id']}",
+        json={"loop_start_s": 0.5, "loop_end_s": limit + 30},
+    )
+    assert response.status_code == 422
+    assert "long" in response.json()["detail"]
+
+
+def test_a_loop_can_be_cleared(client, recording):
+    client.patch(
+        f"/api/repertoire/media/{recording['id']}",
+        json={"loop_start_s": 0.4, "loop_end_s": 1.2},
+    )
+    cleared = client.patch(
+        f"/api/repertoire/media/{recording['id']}",
+        json={"loop_start_s": None, "loop_end_s": None},
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["loop_start_s"] is None
+    assert cleared.json()["loop_end_s"] is None
+
+
+def test_a_score_has_nothing_to_loop(client):
+    piece = client.post("/api/repertoire/pieces", json={"title": "Paper"}).json()
+    score = client.post(
+        f"/api/repertoire/pieces/{piece['id']}/scores",
+        files={"file": ("sonata.musicxml", "<score-partwise/>", "application/xml")},
+    ).json()
+    response = client.patch(
+        f"/api/repertoire/media/{score['id']}", json={"loop_start_s": 1.0, "loop_end_s": 2.0}
+    )
+    assert response.status_code == 422
+    assert "score" in response.json()["detail"]

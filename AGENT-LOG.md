@@ -606,3 +606,44 @@ Did:
 Impact on the other side: none — `practice-logger/` and `piano-progress/` are
 untouched, and no shared table changed. `media.kind` gains one more value
 (`'score'`), which only this app writes.
+
+## 2026-09-13 — sight-reading agent — Phase 13a, part 2: waveform and an A/B loop
+
+Scope: `backend/app/repertoire/{schema,store,models,api}.py`,
+`backend/tests/test_repertoire.py`, `frontend/src/lib/waveform.ts` (+ tests),
+`frontend/src/components/{Waveform,RecordingPlayer}.svelte`,
+`frontend/src/components/RepertoireView.svelte`, `backend/tools/e2e_browser.py`.
+
+Did:
+
+- **The loop is in the database.** `media.loop_start_s` / `media.loop_end_s`
+  (additive migration, so an existing library upgrades in place) and two more
+  fields on `PATCH /api/repertoire/media/{id}`. Either marker may be set alone —
+  the player marks A and then B — so the route validates the *merged* pair, not
+  the body: the second marker is checked against the stored first one. A score is
+  refused a loop outright; a marker past the recording's end is refused with the
+  duration in the message.
+- **`lib/waveform.ts`** — peaks, marker placement and the loop decision as pure
+  functions with 24 unit tests. `peaksFrom` pools channels (a note in one channel
+  must not be averaged into near-silence) and allocates columns by ratio, so the
+  final sample is always pictured.
+- **`Waveform.svelte`** draws two stacked canvases (the picture changes rarely,
+  the playhead sixty times a second), dims the audio *outside* the loop, and
+  reports a click as a seek. **`RecordingPlayer.svelte`** owns the media element,
+  decodes with an `OfflineAudioContext` (no output device, no user gesture) and
+  refuses to decode beyond 64 MB rather than push a practice machine into swap.
+- 12 new backend tests; the browser scenario decodes a real recording, asserts
+  the tone is drawn at its real height, sets A and B by clicking the picture,
+  reads the markers back from the API, and clears them.
+
+Two things the e2e caught that are worth keeping:
+
+- **The picture moved under the cursor.** Revealing "Clear" after the first marker
+  reflowed the toolbar and pushed the waveform down, so the next click landed on
+  a button. Both buttons are now always in the layout and merely disabled, and the
+  scenario measures the box before and after to keep it that way.
+- **The fixture tone was −18 dB**, which made "the waveform drew something" a test
+  that a flat line would also pass. `make_tone_wav` now normalises it.
+
+Impact on the other side: none. `practice-logger/` and `piano-progress/` are
+untouched; `media` gained two nullable columns that only this app writes.

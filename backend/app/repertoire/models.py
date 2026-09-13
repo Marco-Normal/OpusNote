@@ -8,6 +8,12 @@ from pydantic import BaseModel, Field
 
 PieceStatus = Literal["active", "completed", "paused"]
 
+#: Upper bound for an A/B loop marker. Nothing here is longer than a couple of
+#: hours, and a bound is what stops a nonsense value (a wrong unit, a stray
+#: multiplication) from being stored as a place in the recording that does not
+#: exist.
+MAX_LOOP_SECONDS = 24 * 60 * 60.0
+
 
 class ComposerOut(BaseModel):
     id: int
@@ -36,6 +42,11 @@ class MediaOut(BaseModel):
     size_bytes: int | None = None
     codec: str | None = None
     taken_on: str | None = None
+    #: The A/B practice loop, in seconds into the stored file. Either marker may
+    #: be set alone — the player sets A, then B — so `None` means "not marked"
+    #: rather than "the beginning" or "the end".
+    loop_start_s: float | None = None
+    loop_end_s: float | None = None
     #: present  — copied into our media directory
     #: pending  — not copied yet, but readable from the legacy library
     #: missing  — in neither place
@@ -181,7 +192,20 @@ class DeleteResult(BaseModel):
 
 
 class MediaUpdate(BaseModel):
-    """Re-title a recording, or move it to another piece."""
+    """Re-title a media row, move it to another piece, or set its A/B loop.
+
+    Unset fields are left alone and an explicit `null` clears the column, which is
+    how both loop markers are removed (send `{"loop_start_s": null, "loop_end_s":
+    null}`). The pair is validated together against the row's current values in
+    the route, because "start is before end" is a property of the two, not of
+    either one.
+    """
 
     title: str | None = Field(default=None, max_length=200)
     piece_id: int | None = None
+    loop_start_s: float | None = Field(
+        default=None, ge=0, le=MAX_LOOP_SECONDS, description="Seconds into the file"
+    )
+    loop_end_s: float | None = Field(
+        default=None, ge=0, le=MAX_LOOP_SECONDS, description="Seconds into the file"
+    )

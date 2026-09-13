@@ -237,7 +237,15 @@ export const api = {
       return requestForm<Recording>(`/repertoire/pieces/${pieceId}/media`, form);
     },
 
-    updateRecording: (mediaId: number, body: { title?: string | null; piece_id?: number | null }) =>
+    updateRecording: (
+      mediaId: number,
+      body: {
+        title?: string | null;
+        piece_id?: number | null;
+        loop_start_s?: number | null;
+        loop_end_s?: number | null;
+      },
+    ) =>
       request<Recording>(`/repertoire/media/${mediaId}`, {
         method: 'PATCH',
         body: JSON.stringify(body),

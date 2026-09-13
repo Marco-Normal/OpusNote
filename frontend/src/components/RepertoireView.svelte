@@ -15,6 +15,8 @@
   import type { PiecePracticeDetail } from '../lib/types';
   import LineChart from './LineChart.svelte';
   import ScoreViewer from './ScoreViewer.svelte';
+  import RecordingPlayer from './RecordingPlayer.svelte';
+  import type { Loop } from '../lib/waveform';
 
   type Grouping = 'none' | 'composer' | 'difficulty';
 
@@ -240,6 +242,27 @@
     try {
       await api.repertoire.deleteRecording(scoreId);
       if (openScoreId === scoreId) openScoreId = null;
+      await afterWrite(detail.id);
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : String(cause);
+    }
+  }
+
+  /**
+   * Save the A/B loop for one recording.
+   *
+   * The row's markers are the truth — the player draws whatever comes back — so a
+   * refused pair (a loop shorter than the server's minimum, an end past the file)
+   * shows up in the error banner with the server's own explanation rather than as
+   * a marker that quietly did not stick.
+   */
+  async function saveLoop(mediaId: number, loop: Loop): Promise<void> {
+    if (!detail) return;
+    try {
+      await api.repertoire.updateRecording(mediaId, {
+        loop_start_s: loop.start,
+        loop_end_s: loop.end,
+      });
       await afterWrite(detail.id);
     } catch (cause) {
       error = cause instanceof Error ? cause.message : String(cause);
@@ -781,20 +804,11 @@
                       The file is in neither the media directory nor the legacy
                       library, so it cannot be played.
                     </p>
-                  {:else if recording.kind === 'video'}
-                    <!-- svelte-ignore a11y_media_has_caption — these are the
-                         player's own recordings; no caption track exists. -->
-                    <video
-                      controls
-                      preload="none"
-                      src="/api/repertoire/media/{recording.id}/file"
-                    ></video>
                   {:else}
-                    <audio
-                      controls
-                      preload="none"
-                      src="/api/repertoire/media/{recording.id}/file"
-                    ></audio>
+                    <RecordingPlayer
+                      {recording}
+                      onLoop={(next) => void saveLoop(recording.id, next)}
+                    />
                   {/if}
 
                   <p class="muted small mono">
@@ -1101,18 +1115,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  .recordings audio {
-    width: 100%;
-    height: 2.1rem;
-  }
-
-  .recordings video {
-    width: 100%;
-    max-height: 14rem;
-    background: #000;
-    border-radius: 6px;
   }
 
   .upload {

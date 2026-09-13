@@ -469,6 +469,52 @@ def upload_score(
     return MediaOut(**row)
 
 
+#: A loop this short is a mis-click, not a passage: the browser's own seek
+#: granularity is coarser than this, so it would not loop the same audio twice.
+MIN_LOOP_S = 0.2
+
+#: How far past the stored duration an end marker may sit. ffprobe's duration is
+#: a container estimate, and an Ogg/Opus stream's declared length can be a
+#: fraction of a second short.
+LOOP_DURATION_SLACK_S = 0.5
+
+
+def _check_loop(conn: sqlite3.Connection, media_id: int, changes: dict) -> None:
+    """Validate an A/B loop against the row's *resulting* state.
+
+    A loop is a property of two numbers, and a PATCH may carry either one alone —
+    the player sets A and then B — so the check has to merge the request with what
+    is already stored rather than look at the payload on its own.
+    """
+    record = store.get_media(conn, media_id)
+    if record is None:
+        return  # the update itself reports the 404
+
+    if record["kind"] == "score":
+        raise HTTPException(status_code=422, detail="a score has no recording to loop")
+
+    start = changes.get("loop_start_s", record["loop_start_s"])
+    end = changes.get("loop_end_s", record["loop_end_s"])
+    start = float(start) if start is not None else None
+    end = float(end) if end is not None else None
+
+    if start is not None and end is not None:
+        if end - start < MIN_LOOP_S:
+            raise HTTPException(
+                status_code=422,
+                detail=f"a loop must be at least {MIN_LOOP_S:g}s long (got {end - start:g}s)",
+            )
+        duration = record["duration_secs"]
+        if duration is not None and end > float(duration) + LOOP_DURATION_SLACK_S:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"the recording is {float(duration):.1f}s long, so a loop cannot end "
+                    f"at {end:.1f}s"
+                ),
+            )
+
+
 @router.patch("/media/{media_id}", response_model=MediaOut)
 def update_recording(media_id: int, body: MediaUpdate) -> MediaOut:
     changes = body.model_dump(exclude_unset=True)
@@ -478,6 +524,8 @@ def update_recording(media_id: int, body: MediaUpdate) -> MediaOut:
         if "piece_id" in changes and changes["piece_id"] is not None:
             if not store.piece_exists(conn, int(changes["piece_id"])):
                 raise HTTPException(status_code=422, detail=f"no piece {changes['piece_id']}")
+        if "loop_start_s" in changes or "loop_end_s" in changes:
+            _check_loop(conn, media_id, changes)
         if store.update_media(conn, media_id, changes) == 0:
             raise HTTPException(status_code=404, detail=f"no recording {media_id}")
         row = store.get_media(conn, media_id)

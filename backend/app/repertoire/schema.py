@@ -70,6 +70,11 @@ CREATE TABLE IF NOT EXISTS media (
     codec          TEXT,
     taken_on       TEXT,
     legacy_id      INTEGER,
+    -- The A/B practice loop, in seconds into the *stored* file. Kept in the
+    -- database rather than in the browser so the same passage is found again
+    -- from the other machine, and so it survives a reload.
+    loop_start_s   REAL,
+    loop_end_s     REAL,
     created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_media_legacy
@@ -87,6 +92,8 @@ ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("pieces", "legacy_id", "INTEGER"),
     ("piece_journal", "legacy_id", "INTEGER"),
     ("media", "legacy_id", "INTEGER"),
+    ("media", "loop_start_s", "REAL"),
+    ("media", "loop_end_s", "REAL"),
 )
 
 
