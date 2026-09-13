@@ -2142,6 +2142,30 @@ def scenario_playback(browser) -> None:
         "and the synthesiser is always offered",
     )
 
+    # --- the sampled piano actually loads ---
+    # The browser is the only place this can be checked: it is Tone's own note-name
+    # parser that has to accept every URL key, and it rejects the `Ds4` spelling the
+    # files use. Nothing here asserts *sound* — that is not observable from a test —
+    # but "the 30 samples decoded" is, and it is the step that was silently failing.
+    installed = api("/api/audio/piano")
+    if installed["available"]:
+        page.select_option("#instrument", "piano")
+        try:
+            page.wait_for_selector('[data-sample-state="ready"]', timeout=20_000)
+            loaded = True
+        except PlaywrightTimeout:
+            loaded = False
+        check(loaded, f"the sampled piano loads every sample ({installed['present']} present)")
+        check(
+            page.locator("[data-sample-error]").count() == 0,
+            "and reports no sample error",
+        )
+        page.select_option("#instrument", "midi")
+    else:
+        # Without the samples installed this scenario cannot check the instrument, and
+        # pretending otherwise would be a green tick over nothing.
+        print("      skipped: the sampled piano is not installed on this server")
+
     # --- playing, through the piano ---
     # Selecting a sitting reads its detail; the notes are fetched on the first play,
     # because a long sitting is thousands of them and every edit re-reads the detail.

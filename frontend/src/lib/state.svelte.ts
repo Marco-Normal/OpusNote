@@ -140,6 +140,10 @@ class AppState {
   /** Whether the one-time sample download has been done, and its licence. */
   piano = $state<PianoStatus | null>(null);
   downloadingPiano = $state(false);
+  /** Why the sampled piano is not playing, when it is not. */
+  pianoError = $state<string | null>(null);
+  /** 'unused' | 'loading' | 'ready' | 'failed' | 'absent' — the *player's* answer. */
+  sampleState = $state<'unused' | 'loading' | 'ready' | 'failed' | 'absent'>('unused');
 
   readonly capture = new CaptureClient(
     this.midi,
@@ -158,6 +162,11 @@ class AppState {
    */
   constructor() {
     this.player.setInstrument(this.instrument);
+    this.player.onSample = (state, error) => {
+      this.sampleState = state;
+      this.pianoError = error;
+    };
+    void this.refreshPiano();
   }
 
   async refreshPiano(): Promise<void> {
@@ -179,15 +188,27 @@ class AppState {
     try {
       await api.audio.downloadPiano();
       await this.refreshPiano();
-      if (this.piano?.available) this.setInstrument('piano');
+      if (this.piano?.available) await this.setInstrument('piano');
     } finally {
       this.downloadingPiano = false;
     }
   }
 
-  setInstrument(instrument: Instrument): void {
+  async setInstrument(instrument: Instrument): Promise<void> {
     this.instrument = instrument;
     this.player.setInstrument(instrument);
+    if (instrument !== 'piano') {
+      this.sampleState = 'unused';
+      return;
+    }
+    if (this.piano !== null && !this.piano.available) {
+      this.sampleState = 'absent';
+      return;
+    }
+    // Loaded on the choice rather than on the first play, so a set that cannot be
+    // decoded says so while the player is looking at the control. The state comes
+    // from the player's own answer, never from "the files are there".
+    await this.player.loadPiano();
   }
 
   captureEnabled = $state(readCapture());

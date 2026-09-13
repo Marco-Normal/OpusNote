@@ -28,6 +28,7 @@
 import * as Tone from 'tone';
 
 import { fromTime, type SynthNote } from './playback';
+import { sampleUrls } from './pianoSamples';
 
 export type Instrument = 'midi' | 'piano' | 'synth';
 
@@ -86,6 +87,16 @@ export class PianoPlayer {
 
   private instrument: Instrument = 'synth';
   private pianoReady = false;
+  /** Why the sampled piano is not available, or null. Shown, not swallowed. */
+  sampleError: string | null = null;
+  /**
+   * Told when the sample set changes state, so the interface can mirror it.
+   *
+   * The player owns this because the player is what loads: a caller inferring
+   * "ready" from "the files are on disk" is what let a sample set that Tone could
+   * not decode look installed right up until it failed.
+   */
+  onSample: ((state: 'loading' | 'ready' | 'failed', error: string | null) => void) | null = null;
   /**
    * Pitch to the moment its note-off is due, in `performance.now()` terms.
    *
@@ -140,26 +151,35 @@ export class PianoPlayer {
    * list of them rather than a copy here that drifts from the one on disk.
    */
   async loadPiano(baseUrl = '/piano/'): Promise<boolean> {
-    if (this.pianoReady) return true;
+    if (this.pianoReady) {
+      this.onSample?.('ready', null);
+      return true;
+    }
+    this.onSample?.('loading', null);
     try {
       const response = await fetch('/api/audio/piano');
       if (!response.ok) throw new Error(`status ${response.status}`);
       const status = (await response.json()) as { available: boolean; notes?: string[] };
       if (!status.available) throw new Error('the samples are not installed');
-      const urls: Record<string, string> = {};
-      for (const note of status.notes ?? []) urls[note] = `${note}.mp3`;
+      const urls = sampleUrls(status.notes ?? []);
       if (Object.keys(urls).length === 0) throw new Error('no samples listed');
       const sampler = new Tone.Sampler({ urls, baseUrl, release: 1.2 }).toDestination();
       sampler.volume.value = -6;
       await Tone.loaded();
       this.piano = sampler;
       this.pianoReady = true;
+      this.sampleError = null;
+      this.onSample?.('ready', null);
       return true;
-    } catch {
-      // A missing or half-installed sample set must not take playback down: the
-      // synthesiser is still there, and the interface offers the download.
+    } catch (cause) {
+      // A missing or half-installed sample set must not take playback down — the
+      // synthesiser is still there, and the interface offers the download. But the
+      // reason is kept: silently falling back made "the sampled piano does not work"
+      // look identical to "you chose the synthesiser", which cost a round trip.
       this.piano = null;
       this.pianoReady = false;
+      this.sampleError = cause instanceof Error ? cause.message : String(cause);
+      this.onSample?.('failed', this.sampleError);
       return false;
     }
   }

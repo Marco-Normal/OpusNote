@@ -859,6 +859,18 @@ about a field nobody could identify.
   segment in two. `parseClock` accepts `5412`, `1:30:12` or `m:ss`, and a half-typed
   value is refused rather than read as something plausible.
 
+**The sampled piano did not play at all**, and the reason is worth writing down: the
+files are spelled with an `s` (`Ds4.mp3`) because a `#` in a URL starts a fragment, while
+a note name needs the `#` (`D#4`) because that is what a music library parses — Tone's own
+pattern accepts `#`, `b` and `x`, and not `s`. The sampler's `urls` map was keyed on the
+file stems, so **every sharp sample failed to parse** and the instrument fell back to the
+synthesiser in silence. `pianoSamples.ts` now owns that translation, with a test that
+checks every stem against Tone's own pattern, and the bypassed check was verified by
+putting the bug back: the browser scenario fails without it and passes with it. The
+failure is no longer swallowed either — the device bar says *samples failed to load —
+using the synthesiser*, because falling back silently made a broken sample set look like
+a wrong setting.
+
 One real bug came out of writing the browser scenario: the sitting's notes were cached
 per *component* rather than per sitting, so choosing a second sitting played the first
 one's notes. The cache is keyed on the sitting id now, and the scenario uses pitches no

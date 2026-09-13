@@ -204,6 +204,12 @@ from this machine from then on: install it from the device bar (*Install (2 MB, 
 and nothing at play time touches the network. Salamander Grand Piano V3 by Alexander
 Holm, [CC BY 3.0](https://archive.org/details/SalamanderGrandPianoV3).
 
+Two naming schemes meet at the sampler and are not interchangeable: the files use `Ds4`
+(a `#` in a URL starts a fragment, so `D#4.mp3` would fetch `D`), while a note name needs
+`D#4`. Getting that wrong leaves the sampled piano silent and quietly falls back to the
+synthesiser, so the device bar reports when the samples fail to load rather than leaving
+you to guess.
+
 **Falling notes.** Tick *Falling notes* in the sitting transport for a piano-roll view —
 a keyboard along the bottom, the notes you played falling onto it, held notes drawn as
 long as they sound. It follows the playhead, so it is also a way to *see* a hesitation

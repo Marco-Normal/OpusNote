@@ -98,7 +98,12 @@
       Latency {app.latencyMs} ms
     </button>
 
-    <span class="row sound" data-sound data-instrument={app.instrument}>
+    <span
+  class="row sound"
+  data-sound
+  data-instrument={app.instrument}
+  data-sample-state={app.sampleState}
+>
       <label class="muted small" for="instrument">Playback</label>
       <!-- Explicit value and onchange rather than `bind:`, so the choice goes through
            the store: the store also tells the shared player and remembers it. -->
@@ -108,7 +113,7 @@
         onchange={(event) => {
           const value = (event.currentTarget as HTMLSelectElement).value;
           if (value === 'midi' || value === 'piano' || value === 'synth') {
-            app.setInstrument(value);
+            void app.setInstrument(value);
           }
         }}
       >
@@ -133,6 +138,16 @@
       {#if app.instrument === 'piano' && app.piano && !app.piano.available && app.piano.present > 0}
         <span class="muted small">
           {app.piano.present}/{app.piano.total} samples — try again
+        </span>
+      {/if}
+      {#if app.sampleState === 'loading'}
+        <span class="muted small" data-sample-loading>loading samples…</span>
+      {/if}
+      {#if app.instrument === 'piano' && app.pianoError}
+        <!-- Falling back to the synthesiser is right; doing it silently is not, and
+             made a sample set that would not decode look like a wrong setting. -->
+        <span class="pill bad" data-sample-error={app.pianoError} title={app.pianoError}>
+          samples failed to load — using the synthesiser
         </span>
       {/if}
     </span>
