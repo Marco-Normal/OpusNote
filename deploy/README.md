@@ -77,7 +77,25 @@ of them race.
 
 ## Day two
 
-- **Upgrade:** `git pull && sudo ./deploy/install.sh`.
+- **Upgrade:** `git pull && sudo ./deploy/install.sh`. That reinstalls the venv,
+  rebuilds the client, writes the units and **restarts the service**, which is the part
+  that makes it an upgrade rather than a no-op — `systemctl enable --now` alone leaves
+  the old process serving the old code. The database migrates itself on first start
+  (the new tables and columns are additive), and the installer writes a backup before
+  the new code ever runs. A browser tab that was already open keeps the old client
+  bundle in memory, so reload the kiosk afterwards:
+  ```bash
+  pkill -f 'user-data-dir=.*piano-ecosystem-kiosk'   # the wrapper restarts it
+  ```
+- **First upgrade that includes the piano sound:** fetch the samples once, on the
+  notebook. Either the device bar's *Install (2 MB, once)*, or from a shell, which is
+  easier on a machine with no keyboard:
+  ```bash
+  curl -s -X POST localhost:8000/api/audio/piano | head -c 200
+  curl -s localhost:8000/api/audio/piano | grep -o '"available":[a-z]*'
+  ```
+  They land in `$DATA_DIR/piano`, are served at `/piano/…`, and are not in the JSON
+  backup — they are two seconds to fetch again.
 - **Is it logging?** On any machine, open the Log tab: the **Capture** tile shows the
   origin that last checked in and how long ago the last note arrived. Or
   `curl -s localhost:8000/api/practice/status`.

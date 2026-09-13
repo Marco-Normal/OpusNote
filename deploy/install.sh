@@ -116,6 +116,7 @@ echo "==> Environment file"
 cat > /etc/piano-ecosystem.env <<ENV
 SRT_DB_PATH=$DATA_DIR/piano.db
 SRT_MEDIA_DIR=$DATA_DIR/media
+SRT_PIANO_DIR=$DATA_DIR/piano
 SRT_LEGACY_DB=/home/$SERVICE_USER/.local/share/piano-progress/piano.db
 SRT_BACKUP_DIR=$DATA_DIR/backups
 SRT_BACKUP_KEEP=14
@@ -145,6 +146,14 @@ sed -e "s|^User=.*|User=$SERVICE_USER|" \
     "$APP_DIR/deploy/piano-ecosystem.service" > /etc/systemd/system/piano-ecosystem.service
 systemctl daemon-reload
 systemctl enable --now piano-ecosystem.service
+# `enable --now` starts a stopped service and does nothing to a running one, so an
+# upgrade would leave the *old* process serving the old code — silently, until the
+# next reboot. This is the line that makes "git pull && sudo ./deploy/install.sh"
+# actually deploy anything.
+if systemctl is-active --quiet piano-ecosystem.service; then
+  systemctl restart piano-ecosystem.service
+  echo "    restarted, so the running process is the code just installed"
+fi
 
 echo "==> ALSA sequencer at boot"
 install -m 644 "$APP_DIR/deploy/modules-load.d/piano-midi.conf" /etc/modules-load.d/piano-midi.conf
