@@ -2935,6 +2935,33 @@ Then:
   the heartbeat goes quiet when it cannot.
 ```
 
+**Divergences found by a real install on Linux Mint.** The first version of this task
+put the kiosk in a systemd *user* unit and enabled it with
+`sudo -u "$SERVICE_USER" systemctl --user`. On the notebook that failed with
+`Failed to connect to bus: No medium found`: sudo drops
+`XDG_RUNTIME_DIR`/`DBUS_SESSION_BUS_ADDRESS`, and a machine may have no user session
+at all, so there is no bus to talk to. Three corrections followed, and the unit file
+is gone rather than kept as a second mechanism that would race with the first:
+
+1. **XDG autostart**, which needs no bus and is honoured by Cinnamon, MATE and XFCE.
+   A wrapper script (`kiosk-run.sh`) waits for the API, launches the browser in kiosk
+   mode and restarts it if it dies, logging to `~/.local/state/piano-kiosk.log`. A
+   sentinel file (`~/.config/piano-kiosk.disabled`) turns it off without a session.
+2. **Browser detection.** Mint ships no `chromium` package — Mint dropped it when
+   Ubuntu's became a snap stub — so `ExecStart=/usr/bin/chromium` was a unit that
+   could never start. `deploy/browser.sh` now resolves Chromium, Chrome, Brave,
+   Vivaldi, Edge or flatpak Chromium, and the profile directory follows (a flatpak
+   browser gets `~/.var/app/...`). Ten cases in `deploy/browser.test.sh`.
+3. **The policy directory depends on the package.** Chromium's own default is
+   `/etc/chromium/policies`, but Debian and Ubuntu packages read
+   `/etc/chromium-browser/policies`, and Chrome reads `/etc/opt/chrome/policies`. The
+   installer picks by detected browser, and for a flatpak browser — which cannot read
+   `/etc` — it attempts a filesystem override and then says plainly that the MIDI
+   prompt may need one click, which the kiosk profile remembers.
+
+`install.sh --check` was added so this can be verified without root or writes, which
+is also how the detection logic is exercised on a machine that is not Mint.
+
 **6.8 Config verification** (replacing a test cycle, per the TDD Route note):
 
 ```bash

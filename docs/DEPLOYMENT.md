@@ -62,6 +62,8 @@ is the checklist. The parts worth understanding rather than copying:
 | Piece | Why it is there |
 | --- | --- |
 | Kiosk at `http://localhost:8000` | Web MIDI needs a secure context. `piano.local` is not one, so the notebook plays through localhost and the main computer reads through the LAN name |
+| Kiosk started by **XDG autostart** | not a systemd user unit. `sudo -u user systemctl --user` fails with `Failed to connect to bus: No medium found`, because sudo drops `XDG_RUNTIME_DIR`/`DBUS_SESSION_BUS_ADDRESS` and a machine may have no user session at all. Autostart needs no bus and works on Cinnamon, MATE and XFCE |
+| A Chromium-family browser, which Mint does not ship | Firefox has no Web MIDI. On Mint, Chromium is a flatpak (`org.chromium.Chromium`); Chrome, Brave, Vivaldi and Edge also work. `/etc/chromium/policies` is Chromium's own path — **Ubuntu and Mint packages read `/etc/chromium-browser/policies`** — so the installer picks by detected browser |
 | `MidiAllowedForUrls` policy | grants the MIDI permission with no prompt — nobody is sitting there to click Allow |
 | `HighEfficiencyModeEnabled: false` | stops Memory Saver *discarding* the capture tab. Throttled timers are harmless: every note carries its own absolute timestamp, so a late batch still lands in the right sitting |
 | `snd_seq` in `modules-load.d` | Web MIDI enumerates the ALSA sequencer; without it the browser reports **no MIDI devices at all**, which looks exactly like broken hardware. `/api/host` reports `sequencer` so the two are distinguishable |
@@ -82,6 +84,15 @@ are disabled in the interface with the reason in their tooltip, so the rule is
 visible before it is hit. Note the check is on the *socket peer*
 (`request.client.host` via `ipaddress`): if a reverse proxy is ever put in front, that
 address becomes the proxy's and the check must move to a trusted header.
+
+### Kiosk troubleshooting
+
+| Symptom | Cause |
+| --- | --- |
+| `Failed to connect to bus: No medium found` | something ran `systemctl --user` under sudo. The installer no longer does; if you hit it by hand, use the autostart file instead |
+| The kiosk never appears after login | no browser installed (`bash deploy/install.sh --check`), or automatic login is off. Check `~/.local/state/piano-kiosk.log` |
+| MIDI permission dialog appears once | the browser is a flatpak and cannot read `/etc/chromium`, or a policy file landed in the wrong directory for the package. Click Allow once: the kiosk has its own profile and remembers it |
+| The page loads but no notes are logged | `/api/host` → `sequencer: false` means `snd_seq` is not loaded; kill the live view and check the clients list too |
 
 ### Is the notebook actually logging?
 

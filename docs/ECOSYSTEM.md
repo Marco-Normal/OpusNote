@@ -569,6 +569,20 @@ a merge-import and an unlabelled re-segment still work from the main computer.
 `deploy/install.sh` on a clean machine yields a service that survives a reboot, with
 the kiosk returning and MIDI reconnecting when the piano is switched on.
 
+**Corrected after a real install on Linux Mint.** The first `deploy/install.sh` put
+the kiosk in a systemd *user* unit and enabled it with `sudo -u … systemctl --user`,
+which fails with `Failed to connect to bus: No medium found` because sudo drops the
+session environment and the machine may have no user session. The kiosk is now an
+**XDG autostart** entry (no bus, and honoured by Cinnamon, MATE and XFCE), started
+through a wrapper that waits for the API and restarts the browser if it dies. Two
+further Mint facts came out of the same install: Mint ships **no chromium package**
+(flatpak is the route, and Firefox has no Web MIDI), and the policy directory depends
+on the package — Ubuntu's chromium reads `/etc/chromium-browser/policies`, not
+Chromium's own `/etc/chromium/policies`, while Chrome reads
+`/etc/opt/chrome/policies`. Both are now detected rather than assumed, with ten cases
+in `deploy/browser.test.sh` and an `install.sh --check` that reports what it found
+without writing anything.
+
 **Landed.** `app/hostinfo.py` answers "where did this request come from" and "can
 this machine see the piano at all": `/api/host` reports the client address, loopback,
 `sequencer` (accepting `/dev/snd/seq` *or* the procfs client list, because containers

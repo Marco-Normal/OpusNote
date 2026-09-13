@@ -11,9 +11,35 @@ SERVICE_USER="${SERVICE_USER:-${SUDO_USER:-$(id -un)}}"
 PORT="${PORT:-8000}"
 DATA_DIR="${DATA_DIR:-/home/$SERVICE_USER/.local/share/piano-ecosystem}"
 SERVICE_GROUP="$(id -gn "$SERVICE_USER")"
+CHECK_ONLY=0
+[ "${1:-}" = "--check" ] && CHECK_ONLY=1
+
+# shellcheck source=deploy/browser.sh
+. "$APP_DIR/deploy/browser.sh"
+
+BROWSER="$(browser_command || true)"
+POLICY_DIR="$(browser_policy_dir "$BROWSER" || true)"
+
+if [ "$CHECK_ONLY" = 1 ]; then
+  echo "app dir        : $APP_DIR"
+  echo "service user   : $SERVICE_USER ($SERVICE_GROUP)"
+  echo "port           : $PORT"
+  echo "data directory : $DATA_DIR"
+  echo "browser        : $(browser_label "$BROWSER")"
+  echo "  command      : ${BROWSER:-<none>}"
+  echo "  policy dir   : ${POLICY_DIR:-<not applicable>}"
+  echo "  profile dir  : $(browser_user_data_dir "$BROWSER")"
+  echo "autostart file : /home/$SERVICE_USER/.config/autostart/piano-kiosk.desktop"
+  echo "python3        : $(command -v python3 || echo MISSING)"
+  echo "node           : $(command -v node || echo MISSING)"
+  echo "curl           : $(command -v curl || echo MISSING)"
+  [ -z "$BROWSER" ] && echo "note           : no Chromium-family browser; the kiosk will not start"
+  exit 0
+fi
 
 if [[ $EUID -ne 0 ]]; then
-  echo "Run with sudo: it installs systemd units and a browser policy." >&2
+  echo "Run with sudo: it installs a systemd unit, a browser policy and an autostart entry." >&2
+  echo "Use --check first to see what it would do, without writing anything." >&2
   exit 1
 fi
 
@@ -21,7 +47,14 @@ echo "==> Installing from $APP_DIR for user $SERVICE_USER"
 
 command -v python3 >/dev/null || { echo "python3 is required" >&2; exit 1; }
 command -v node >/dev/null || { echo "node is required to build the client" >&2; exit 1; }
-command -v chromium >/dev/null || echo "warning: chromium not found; the kiosk unit will fail" >&2
+
+if [ -z "$BROWSER" ]; then
+  echo "warning: no Chromium-family browser found, so the kiosk cannot start." >&2
+  echo "         Linux Mint ships no chromium package; install one of:" >&2
+  echo "           flatpak install -y flathub org.chromium.Chromium" >&2
+  echo "           # or Google Chrome / Brave from their .deb" >&2
+  echo "         Re-run this script afterwards; nothing else depends on it." >&2
+fi
 
 echo "==> Backend virtualenv"
 sudo -u "$SERVICE_USER" python3 -m venv "$APP_DIR/backend/.venv"
@@ -59,19 +92,42 @@ install -d /etc/systemd/logind.conf.d
 install -m 644 "$APP_DIR/deploy/logind/50-piano.conf" /etc/systemd/logind.conf.d/50-piano.conf
 systemctl restart systemd-logind || true
 
-echo "==> Chromium policy (MIDI auto-grant, Memory Saver off)"
-POLICY_DIR=/etc/chromium/policies/managed
-install -d "$POLICY_DIR"
-install -m 644 "$APP_DIR/deploy/chromium-policy.json" "$POLICY_DIR/piano-ecosystem.json"
+echo "==> Browser policy (MIDI auto-grant, Memory Saver off)"
+if [ -n "$POLICY_DIR" ]; then
+  install -d "$POLICY_DIR"
+  install -m 644 "$APP_DIR/deploy/chromium-policy.json" "$POLICY_DIR/piano-ecosystem.json"
+  chmod -w "$POLICY_DIR"
+  echo "    written to $POLICY_DIR"
+elif [ -n "$BROWSER" ]; then
+  # Flatpak: the sandbox cannot see /etc/chromium unless it is exposed, and path
+  # exposure is not guaranteed to be honoured by every build.
+  install -d /etc/chromium/policies/managed
+  install -m 644 "$APP_DIR/deploy/chromium-policy.json" /etc/chromium/policies/managed/piano-ecosystem.json
+  echo "    flatpak browser: attempting to expose the policy directory"
+  sudo -u "$SERVICE_USER" flatpak override --user --filesystem=/etc/chromium:ro org.chromium.Chromium || true
+  echo "    if the MIDI prompt still appears, click Allow once — the kiosk profile"
+  echo "    remembers it, and the app shows a Connect button when it needs that."
+fi
 
 echo "==> Kiosk autostart for $SERVICE_USER"
-USER_UNIT_DIR="/home/$SERVICE_USER/.config/systemd/user"
-install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" "$USER_UNIT_DIR"
+# XDG autostart rather than a systemd user unit. `sudo -u user systemctl --user`
+# cannot reach a user bus when no session owns one — that is the "Failed to connect
+# to bus: No medium found" people hit on Mint — and autostart is honoured by
+# Cinnamon, MATE and XFCE alike, so it also covers every Mint edition.
+USER_HOME="/home/$SERVICE_USER"
+BIN_DIR="$USER_HOME/.local/bin"
+AUTOSTART_DIR="$USER_HOME/.config/autostart"
+install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" "$BIN_DIR" "$AUTOSTART_DIR"
+install -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 755 \
+    "$APP_DIR/deploy/kiosk-run.sh" "$BIN_DIR/piano-kiosk.sh"
+install -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 755 \
+    "$APP_DIR/deploy/browser.sh" "$BIN_DIR/browser.sh"
 install -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 644 \
-    "$APP_DIR/deploy/piano-kiosk.service" "$USER_UNIT_DIR/piano-kiosk.service"
-sudo -u "$SERVICE_USER" systemctl --user daemon-reload
-sudo -u "$SERVICE_USER" systemctl --user enable piano-kiosk.service
-loginctl enable-linger "$SERVICE_USER" || true
+    "$APP_DIR/deploy/piano-kiosk.desktop" "$AUTOSTART_DIR/piano-kiosk.desktop"
+echo "    autostart: $AUTOSTART_DIR/piano-kiosk.desktop"
+echo "    log:       $USER_HOME/.local/state/piano-kiosk.log"
+echo "    disable:   touch $USER_HOME/.config/piano-kiosk.disabled"
+[ -n "$BROWSER" ] || echo "    (no browser yet: autostart is in place and will work once one is installed)"
 
 echo "==> Firewall"
 if command -v ufw >/dev/null; then
@@ -85,3 +141,12 @@ fi
 echo
 echo "Done. On this machine open http://localhost:8000 (MIDI needs localhost)."
 echo "From another machine on the LAN: http://$(hostname).local:$PORT"
+echo
+echo "Two things this script cannot do for you:"
+echo "  1. Enable automatic login (Login Window / Users settings). The kiosk needs a"
+echo "     graphical session, and capture stops after a reboot without one."
+echo "  2. Log out and back in for the kiosk autostart to take effect."
+echo
+echo "Check it with:  curl -s localhost:8000/api/host"
+echo "  \"sequencer\": true and CASIO in \"clients\" means the piano is visible."
+echo "Kiosk log:      ~/.local/state/piano-kiosk.log"

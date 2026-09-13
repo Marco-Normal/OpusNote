@@ -379,3 +379,42 @@ plugged in" and "the kernel module is missing" can be told apart.
 Verified: 646 backend tests, 9 unit tests, `svelte-check` clean, frontend built, all
 **ten** browser e2e scenarios pass, `bash -n`/JSON/`systemd-analyze` on the deploy
 files.
+
+---
+
+## 2026-09-12 — sight-reading agent — the installer worked on Mint only after three fixes
+
+Triggered by a real install on the user's Linux Mint notebook, which stopped at the
+kiosk step with `Failed to connect to bus: No medium found`. Nothing was corrupted —
+the server unit was already installed and enabled — but the kiosk never got set up,
+and the cause was my installer, in three separate ways:
+
+1. **`sudo -u user systemctl --user` has no bus.** Sudo drops `XDG_RUNTIME_DIR` and
+   `DBUS_SESSION_BUS_ADDRESS`, and a machine may have no user session at all. The
+   kiosk is now an **XDG autostart** entry (`~/.config/autostart/piano-kiosk.desktop`
+   → `~/.local/bin/piano-kiosk.sh`), which needs no bus and is honoured by Cinnamon,
+   MATE and XFCE. `deploy/piano-kiosk.service` is **deleted** rather than kept as a
+   second mechanism that would race with the first.
+2. **Mint ships no chromium package** (Mint dropped it when Ubuntu's became a snap
+   stub), so the unit would have failed at boot even with the bus fixed. The wrapper
+   now resolves Chromium, Chrome, Brave, Vivaldi, Edge or flatpak Chromium at runtime,
+   so installing a browser later starts working — and the profile directory follows
+   the browser (a flatpak gets `~/.var/app/...`).
+3. **The policy directory is package-specific.** Chromium's own default is
+   `/etc/chromium/policies`, but Debian and Ubuntu packages read
+   `/etc/chromium-browser/policies`, and Chrome reads `/etc/opt/chrome/policies`. The
+   installer picks by detected browser; a flatpak browser cannot read `/etc` at all,
+   so it attempts an override and then says the MIDI prompt may need one click (the
+   kiosk profile remembers it).
+
+New in the repo: `deploy/browser.sh`, `deploy/kiosk-run.sh`,
+`deploy/piano-kiosk.desktop`, `deploy/browser.test.sh` (ten cases, plain bash — it
+stubs a PATH so a machine with a real browser cannot make a case pass by accident),
+and `deploy/install.sh --check`, which reports the resolved paths and detected browser
+without root and without writing anything.
+
+For anyone whose install stopped at the kiosk step: remove the stray, disabled unit
+(`rm ~/.config/systemd/user/piano-kiosk.service`), pull, re-run
+`sudo ./deploy/install.sh`, and log out and back in. Automatic login is required —
+the kiosk needs a graphical session — and the kiosk log is
+`~/.local/state/piano-kiosk.log`.
