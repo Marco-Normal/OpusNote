@@ -145,3 +145,68 @@ export function forHands(notes: readonly SynthNote[], hands: readonly Hand[]): S
 export function durationOf(notes: readonly SynthNote[]): number {
   return notes.reduce((end, note) => Math.max(end, note.onset + note.duration), 0);
 }
+
+/** A pedal move as stored: CC64, where 64 and above is "down". */
+export interface PedalPoint {
+  onset_ms: number;
+  value: number;
+}
+
+const PEDAL_DOWN = 64;
+
+/**
+ * How much longer a note rings when the pedal is still down at the end of the
+ * recording. A pedal-up that never arrives must not hold a note forever; half a
+ * second is enough to hear the chord fade rather than be cut dead.
+ */
+const UNCLOSED_PEDAL_TAIL_S = 0.5;
+
+/**
+ * Let the sustain pedal hold each note past its release.
+ *
+ * The piano reports CC64 as a stream of values, so this turns it into the
+ * intervals those values describe and extends every note whose release falls
+ * inside one. Two details are the whole behaviour:
+ *
+ * - A pedal pressed *after* a note was released does not bring it back. The synth
+ *   has already let it go, and pretending otherwise would invent a sound that
+ *   never happened.
+ * - A pedal still down at the end extends to the end of the last note plus a
+ *   short tail rather than to infinity, so a pedal unplugged mid-press cannot
+ *   produce a note that never stops.
+ */
+export function sustained(
+  notes: readonly SynthNote[],
+  pedals: readonly PedalPoint[],
+): SynthNote[] {
+  if (notes.length === 0 || pedals.length === 0) return [...notes];
+
+  const ordered = [...pedals].sort((a, b) => a.onset_ms - b.onset_ms);
+  const end = durationOf(notes);
+  const intervals: { start: number; end: number }[] = [];
+  let down: number | null = null;
+  for (const pedal of ordered) {
+    const at = pedal.onset_ms / 1000;
+    if (pedal.value >= PEDAL_DOWN) {
+      // Repeated "down" values are common; only the first starts the stretch.
+      if (down === null) down = at;
+    } else if (down !== null) {
+      intervals.push({ start: down, end: at });
+      down = null;
+    }
+  }
+  if (down !== null) intervals.push({ start: down, end: end + UNCLOSED_PEDAL_TAIL_S });
+  if (intervals.length === 0) return [...notes];
+
+  return notes.map((note) => {
+    const release = note.onset + note.duration;
+    for (const interval of intervals) {
+      if (interval.start <= release && release < interval.end) {
+        // max() so a pedal can only ever lengthen a note: one already sounding
+        // past the pedal-up keeps its own end.
+        return { ...note, duration: Math.max(note.duration, interval.end - note.onset) };
+      }
+    }
+    return note;
+  });
+}

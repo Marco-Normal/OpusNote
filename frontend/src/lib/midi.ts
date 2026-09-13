@@ -45,11 +45,27 @@ export interface MonitorRelease extends MonitorNote {
   durationMs: number;
 }
 
+/**
+ * A sustain-pedal move, on the wall clock like `MonitorNote`.
+ *
+ * The raw CC value rather than a boolean: the exercise path only ever wants
+ * "down or up", but the log keeps what the pedal actually sent, and collapsing
+ * 0..127 to one bit at the edge cannot be undone later.
+ */
+export interface MonitorPedal {
+  /** Absolute time, ms since the Unix epoch. */
+  epochMs: number;
+  /** The CC64 value: 64 and above is down, which is what the piano sends. */
+  value: number;
+  channel: number;
+}
+
 type NoteHandler = (event: RawMidiEvent) => void;
 type SustainHandler = (down: boolean) => void;
 type DevicesHandler = (devices: MidiDeviceInfo[]) => void;
 type MonitorOnHandler = (note: MonitorNote) => void;
 type MonitorOffHandler = (note: MonitorRelease) => void;
+type PedalHandler = (pedal: MonitorPedal) => void;
 type PortsHandler = (ports: PortSnapshot[]) => void;
 
 interface NoteState {
@@ -102,6 +118,7 @@ export class MidiInput {
    */
   private monitorOnHandlers = new Set<MonitorOnHandler>();
   private monitorOffHandlers = new Set<MonitorOffHandler>();
+  private pedalHandlers = new Set<PedalHandler>();
   private portsHandlers = new Set<PortsHandler>();
 
   static isSupported(): boolean {
@@ -272,6 +289,12 @@ export class MidiInput {
     return () => this.monitorOffHandlers.delete(handler);
   }
 
+  /** Every sustain-pedal move, with its time and raw CC value. */
+  onPedalMonitor(handler: PedalHandler): () => void {
+    this.pedalHandlers.add(handler);
+    return () => this.pedalHandlers.delete(handler);
+  }
+
   onDevices(handler: DevicesHandler): () => void {
     this.devicesHandlers.add(handler);
     return () => this.devicesHandlers.delete(handler);
@@ -391,8 +414,16 @@ export class MidiInput {
     }
 
     if (status === 0xb0 && first === 64) {
-      const down = second >= 64;
-      this.sustainHandlers.forEach((handler) => handler(down));
+      // The exercise path wants one bit, and gets it. The practice log wants the
+      // time and the raw value too, because a pedal is only interesting as a
+      // stretch of time, and a stream of booleans cannot say when it was pressed.
+      this.sustainHandlers.forEach((handler) => handler(second >= 64));
+      const pedal: MonitorPedal = {
+        epochMs: this.epochMsFor(this.eventTimeMs(event)),
+        value: second,
+        channel,
+      };
+      this.pedalHandlers.forEach((handler) => handler(pedal));
     }
   }
 

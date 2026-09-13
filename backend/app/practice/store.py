@@ -35,6 +35,7 @@ from .models import (
     EventBatch,
     IngestResult,
     LoggedNote,
+    LoggedPedal,
     NeglectedPiece,
     PiecePractice,
     PiecePracticeDetail,
@@ -107,12 +108,15 @@ def ingest(batch: EventBatch, db_path: Path | None = None) -> IngestResult:
         ),
         key=lambda note: (note.epoch_ms, note.pitch),
     )
-    if not notes:
+    pedals = sorted(batch.pedals, key=lambda pedal: pedal.epoch_ms)
+    if not notes and not pedals:
         raise InvalidRequest("cannot ingest an empty batch")
 
     accepted = 0
     duplicates = 0
-    sitting_id = 0
+    pedals_accepted = 0
+    pedals_ignored = 0
+    sitting_id: int | None = None
     with db.transaction(db_path) as conn:
         for note in notes:
             row = _find_sitting(conn, note.epoch_ms, gap_ms)
@@ -162,16 +166,49 @@ def ingest(batch: EventBatch, db_path: Path | None = None) -> IngestResult:
                 (note.end_ms, utc_text(note.end_ms), sitting_id),
             )
 
-        final = conn.execute(
-            "SELECT started_at, ended_at FROM sittings WHERE id = ?", (sitting_id,)
-        ).fetchone()
+        # Pedals after the notes, on purpose: a batch that opens a sitting must
+        # attach its pedal to that sitting, and one that presses the pedal after
+        # the last note must find the window the notes just extended.
+        #
+        # Nothing here extends a sitting. A pedal is not practice — a foot resting
+        # on it for an hour would otherwise hold a sitting open — so a move with
+        # no sitting around it is dropped and counted, not invented into one.
+        for pedal in pedals:
+            row = _find_sitting(conn, pedal.epoch_ms, gap_ms)
+            if row is None:
+                pedals_ignored += 1
+                continue
+            pedal_sitting = int(row["id"])
+            cursor = conn.execute(
+                "INSERT OR IGNORE INTO pedal_events"
+                " (sitting_id, onset_ms, value, channel) VALUES (?1, ?2, ?3, ?4)",
+                (
+                    pedal_sitting,
+                    pedal.epoch_ms - int(row["started_ms"]),
+                    pedal.value,
+                    pedal.channel,
+                ),
+            )
+            if cursor.rowcount:
+                pedals_accepted += 1
+                sitting_id = pedal_sitting
+
+        final = (
+            conn.execute(
+                "SELECT started_at, ended_at FROM sittings WHERE id = ?", (sitting_id,)
+            ).fetchone()
+            if sitting_id is not None
+            else None
+        )
 
     return IngestResult(
         sitting_id=sitting_id,
         accepted=accepted,
         duplicates=duplicates,
-        started_at=final["started_at"],
-        ended_at=final["ended_at"],
+        started_at=final["started_at"] if final is not None else None,
+        ended_at=final["ended_at"] if final is not None else None,
+        pedals_accepted=pedals_accepted,
+        pedals_ignored=pedals_ignored,
     )
 
 
@@ -439,10 +476,11 @@ def sitting_detail(
 
 
 def sitting_notes(sitting_id: int, db_path: Path | None = None) -> SittingNotes:
-    """Every note of a sitting, in the order it was played.
+    """Every note of a sitting, in the order it was played, with its pedalling.
 
     The stored form is exactly what a synthesiser needs — onset, release-derived
-    duration, pitch, velocity — which is why playback is faithful to timing and touch
+    duration, pitch, velocity, and the pedal moves that held notes past their
+    release. That is why playback is faithful to timing, touch and pedalling
     without any reconstruction.
     """
     conn = db.connect(db_path)
@@ -457,10 +495,16 @@ def sitting_notes(sitting_id: int, db_path: Path | None = None) -> SittingNotes:
             " WHERE sitting_id = ? ORDER BY onset_ms, pitch",
             (sitting_id,),
         ).fetchall()
+        pedals = conn.execute(
+            "SELECT onset_ms, value, channel FROM pedal_events"
+            " WHERE sitting_id = ? ORDER BY onset_ms",
+            (sitting_id,),
+        ).fetchall()
         return SittingNotes(
             sitting_id=int(sitting["id"]),
             started_ms=int(sitting["started_ms"]),
             notes=[LoggedNote(**dict(row)) for row in rows],
+            pedals=[LoggedPedal(**dict(row)) for row in pedals],
         )
     finally:
         conn.close()

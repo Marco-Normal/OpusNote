@@ -67,7 +67,10 @@ def _handle(call, *args, **kwargs):
 
 @router.post("/events", response_model=IngestResult)
 def post_events(batch: EventBatch) -> IngestResult:
-    if not batch.events:
+    # Pedals alone are a legitimate batch. The client flushes every two seconds
+    # and keeps a failed batch queued, so refusing a pedal-only flush would block
+    # every note behind it until the player happened to play again.
+    if not batch.events and not batch.pedals:
         raise HTTPException(status_code=422, detail="events must not be empty")
     return _handle(store.ingest, batch)
 

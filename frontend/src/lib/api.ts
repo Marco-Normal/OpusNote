@@ -292,8 +292,13 @@ export const api = {
         duration_ms: number;
         channel: number | null;
       }[];
+      /**
+       * Sustain-pedal moves. Optional on the wire: a batch with none is the
+       * ordinary case, and a server that predates the field ignores it.
+       */
+      pedals?: { epoch_ms: number; value: number; channel: number | null }[];
     }) =>
-      request<{ sitting_id: number; accepted: number; duplicates: number }>(
+      request<{ sitting_id: number | null; accepted: number; duplicates: number }>(
         '/practice/events',
         {
           method: 'POST',

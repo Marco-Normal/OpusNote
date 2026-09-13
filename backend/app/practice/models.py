@@ -26,12 +26,30 @@ class WireNote(BaseModel):
     channel: int | None = Field(default=None, ge=0, le=15)
 
 
+class WirePedal(BaseModel):
+    """One sustain-pedal move, as the piano sent it.
+
+    The raw CC value rather than a boolean: it is what the device said, and a
+    client that had already collapsed it to "down or up" could not send anything
+    else without a change here.
+    """
+
+    epoch_ms: int = Field(description="Absolute event time, ms since the Unix epoch")
+    value: int = Field(ge=0, le=127, description="CC64 value; 64 and above is down")
+    channel: int | None = Field(default=None, ge=0, le=15)
+
+
 class EventBatch(BaseModel):
-    """A batch of played notes.
+    """A batch of played notes, and the pedal moves that went with them.
 
     ``client_id`` is deliberately absent. The ported logger validated one and
     then never stored it; now that one app owns capture there is exactly one
     client, so the field would be a value nothing reads.
+
+    ``pedals`` is optional on the wire, so a client that predates it — or a
+    keyboard with no pedal — keeps working unchanged. That is also why an empty
+    ``events`` list is allowed when pedals are present: a client should not have
+    to know which of the two the server would rather receive.
     """
 
     tz_offset_minutes: int = Field(
@@ -39,14 +57,23 @@ class EventBatch(BaseModel):
     )
     source: PracticeSource = "web_midi"
     events: list[WireNote] = Field(default_factory=list)
+    pedals: list[WirePedal] = Field(default_factory=list)
 
 
 class IngestResult(BaseModel):
-    sitting_id: int
+    #: None when the batch held nothing a sitting could be found for — a pedal
+    #: move with no music around it. That is a successful request, not an error:
+    #: refusing it would leave a client retrying the same batch forever.
+    sitting_id: int | None = None
     accepted: int
     duplicates: int
-    started_at: str
-    ended_at: str
+    started_at: str | None = None
+    ended_at: str | None = None
+    #: Pedal moves stored in this batch, and those dropped because no sitting was
+    #: open at the time. A pedal pressed with no music around it is not practice,
+    #: so it is dropped rather than allowed to open or extend a sitting.
+    pedals_accepted: int = 0
+    pedals_ignored: int = 0
 
 
 class SittingSummary(BaseModel):
@@ -97,17 +124,30 @@ class LoggedNote(BaseModel):
     channel: int | None = None
 
 
+class LoggedPedal(BaseModel):
+    """One pedal move as it was played. Onsets are relative to the sitting's start."""
+
+    onset_ms: int
+    value: int
+    channel: int | None = None
+
+
 class SittingNotes(BaseModel):
-    """Every note of a sitting, for playback.
+    """Every note of a sitting, for playback, and the pedalling under it.
 
     Separate from the detail view because it is the only heavy payload in the practice
     domain: a four-minute sitting is a few thousand notes, and the detail is re-read
     after every edit to a segment, which has no use for them.
+
+    The pedals travel with the notes rather than in a payload of their own: a
+    recording that reproduces the notes but not the pedal is not what was played,
+    and splitting them would make it possible to fetch one without the other.
     """
 
     sitting_id: int
     started_ms: int
     notes: list[LoggedNote]
+    pedals: list[LoggedPedal] = Field(default_factory=list)
 
 
 class SittingDetail(BaseModel):

@@ -5,7 +5,8 @@ Rust app" premise of
 [`INTEGRATION-practice-logger.md`](./INTEGRATION-practice-logger.md), which
 remains accurate about *what exists today* but is no longer the destination.
 
-Status: **decided; Phases 1-9 are landed.** See §9 and §10 for what each one delivered.
+Status: **decided; Phases 1-12 and 13a are landed.** See §9 and §10 for what each one
+delivered.
 
 ---
 
@@ -193,7 +194,7 @@ sessionizer and segmentation move across as-is with their tests.
 | 8 | **MIDI that sets itself up** | Auto-connect and auto-select on a piano that is switched on later, across a device list that includes ALSA's dead *Midi Through* port. | low |
 | 11 | **Progress you can see** | Rating history per skill, click-and-hear a past attempt, sub-score trends, week in review. | low |
 | 12 | **Ops polish** | Nightly rotating backups, a health panel, latency suggested from your own timing bias. | low |
-| 13 | **Library depth** | Attach and render scores (PDF and MusicXML), waveform with A/B loop, sustain pedal captured, self-similarity auto-tagging. | medium |
+| 13 | **Library depth** | Attach and render scores (PDF and MusicXML), waveform with A/B loop, sustain pedal captured, self-similarity auto-tagging. **Scores, waveform and pedal landed (13a); the matcher is 13b.** | medium |
 | 14 | **More musical content** | Unusual meters, clef reading, dynamics and articulation depth. | medium |
 | 10 | **Playback** | Hear a scored attempt back (either hand, or the exercise as written) and hear a logged sitting or segment from the practice log, with a playhead. | low |
 | 9 | **LAN server** | A planted notebook serving the whole app on the local network: `deploy/`, kiosk autostart, capture heartbeat, upload cap, concurrent-write hardening. | medium |
@@ -690,30 +691,49 @@ A nightly rotating JSON backup (a systemd timer reusing the export), a health pa
 heartbeat), and a latency suggestion derived from your own median onset bias —
 suggested with one click, never applied silently.
 
-### Phase 13 — next (library depth), in two slices
+### Phase 13 — library depth, in two slices
 
 Decided with the user: the three self-contained parts land first, and the matcher
 follows as its own slice so its effect on tagging can be judged on its own rather than
 buried in a large change.
 
-**13a — scores, waveform, pedal.**
+### Phase 13a — landed (scores, waveform, pedal)
 
-- Attach a score to a piece — **PDF** (the browser renders it; no library) and
-  **MusicXML** (rendered in-app through the OSMD already present) — stored through the
-  existing content-hashed media pipeline with `kind='score'`. No ffmpeg in that path:
-  those files need no probing or transcoding, only hashing and a home.
-- A waveform for a recording with an A/B loop, peaks decoded client-side with WebAudio
-  (no new endpoint, no ffmpeg pass), markers stored in the database so they are the same
-  from either machine.
-- Sustain pedal captured at last. CC64 is parsed and dropped today; the ingest batch
-  gains an optional `pedals` list and a `pedal_events` table, and playback holds notes
-  through the pedal. Optional on the wire, so an older client keeps working.
+- **A score attached to a piece** — PDF (the browser's own viewer; no library) and
+  MusicXML (engraved in-app by the OSMD that was already there). Stored through the
+  existing content-hashed media pipeline as `media.kind='score'`, with **no ffmpeg in
+  that path**: a score is not probed (its own bytes are the honest description) and not
+  re-encoded, so the file you attach is the file you read. Identification is real rather
+  than trusting the suffix — `%PDF-` for a PDF, a parsed `score-partwise`/`score-timewise`
+  root for MusicXML — because the only other symptom of a wrong file would be a blank
+  frame at the piano. `.mxl` is refused with a message about unzipping it rather than an
+  unzip dependency. Scores are excluded from the recording counts and from
+  present/pending/missing, since a score is never "not copied from the legacy library";
+  `score_count` and `status.scores` keep the two separable.
+- **A waveform with an A/B loop.** Peaks are decoded client-side with WebAudio and drawn
+  on two stacked canvases (the picture changes rarely, the playhead sixty times a
+  second), so there is no new endpoint and no second ffmpeg pass. Markers live on the
+  `media` row (`loop_start_s`/`loop_end_s`, additive migration) and the route validates
+  the *merged* pair — a PATCH carries one marker at a time, so checking the body alone
+  would let an inverted loop through. Audio outside the loop is dimmed rather than
+  hidden: a passage is found by its surroundings, which is the reason to look at a
+  waveform at all. Decoding is declined past 64 MB with a message that says so, because
+  expanding a compressed recording into raw samples is how a practice machine starts
+  swapping to draw a picture.
+- **Sustain pedal captured.** CC64 was parsed and thrown away. Now a `pedal_events`
+  table stores the raw value stream (onset + value), the ingest batch takes an optional
+  `pedals` list, and `sustained()` in the client extends each note to the pedal-up that
+  covers its release. A pedal move never opens or extends a sitting — a foot resting on
+  the pedal is not practice — so a move with no music around it is dropped and counted
+  rather than invented into one, and a pedal-only batch is accepted so a client's queued
+  flush cannot block the notes behind it.
 
-**13b — self-similarity auto-tagging**, as specified but never built: a pitch-class
-profile, tempo proximity and register overlap per segment, k-nearest over your own
-labelled segments, confidence bands from two thresholds, and the "was this right?"
-prompt. Corrections are already recorded, so the matcher has training data from the day
-it first runs.
+### Phase 13b — next (self-similarity auto-tagging)
+
+As specified but never built: a pitch-class profile, tempo proximity and register overlap
+per segment, k-nearest over your own labelled segments, confidence bands from two
+thresholds, and the "was this right?" prompt. Corrections are already recorded, so the
+matcher has training data from the day it first runs.
 
 ### Originally planned as Phase 13 (library depth)
 

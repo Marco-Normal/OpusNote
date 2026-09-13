@@ -647,3 +647,40 @@ Two things the e2e caught that are worth keeping:
 
 Impact on the other side: none. `practice-logger/` and `piano-progress/` are
 untouched; `media` gained two nullable columns that only this app writes.
+
+## 2026-09-13 — sight-reading agent — Phase 13a, part 3: the sustain pedal
+
+Scope: `backend/app/practice/{schema,models,store,api}.py`,
+`backend/tests/{test_practice_store,test_practice_api,test_backup}.py`,
+`frontend/src/lib/{midi,capture,playback,types,api}.ts` (+ tests),
+`frontend/src/components/{SegmentTimeline,CaptureBar}.svelte`,
+`backend/tools/e2e_browser.py`, and the user-facing docs.
+
+Did:
+
+- **CC64 is no longer dropped.** `note_events` gains a sibling: a `pedal_events`
+  table holding the raw value stream (onset, value, channel) with the same
+  `INSERT OR IGNORE` idempotence a retried batch needs. `EventBatch.pedals` is
+  optional on the wire, so an older client — or a keyboard with no pedal — is
+  unaffected.
+- **A pedal never opens or extends a sitting.** A move is attached to the sitting
+  that contains it and otherwise dropped and counted (`pedals_ignored`). A foot
+  resting on the pedal is not practice, and letting it extend a window would hold
+  a sitting open for as long as it rested there.
+- **A pedal-only batch is accepted**, with `sitting_id: null` when nothing matched.
+  The client keeps a failed batch queued and resends it, so refusing these would
+  block every note behind them until the player happened to play again.
+- **Playback holds the notes.** `sustained()` turns the value stream into intervals
+  and extends each note whose release falls inside one; a pedal pressed after a
+  release does not resurrect the note, and a pedal-up that never arrives ends at a
+  short tail rather than at infinity. Applied to the whole sitting before any
+  segment range is taken, so a note pedalled over a segment boundary still rings
+  where the next segment starts.
+- 11 new backend tests (plus a pedal row in the backup round trip) and 9 frontend
+  unit tests; the browser scenario presses CC64 through the simulated device and
+  reads both halves of the press back from the API, timed against the notes.
+
+Impact on the other side: none. `practice-logger/` and `piano-progress/` are
+untouched. The shared database gains one table (`pedal_events`) that only this app
+writes, and the JSON backup picks it up automatically because the table list is read
+from `sqlite_master`.

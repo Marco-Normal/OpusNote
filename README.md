@@ -101,9 +101,23 @@ So:
 **Repertoire** tab, top right: **New piece**. The editor takes a title, opus, key,
 difficulty, status and a description, and it can create a **composer** inline
 (*+ new composer…* in the composer list), so a fresh install needs nothing else. From
-a piece's detail you can add journal entries, edit it, upload a recording and delete
-it. All of it works from any machine on the LAN except deleting, which is piano-machine
-only (see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)).
+a piece's detail you can add journal entries, edit it, attach a score, upload a
+recording and delete it. All of it works from any machine on the LAN except deleting,
+which is piano-machine only (see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)).
+
+**Scores** go in beside the recordings: a **PDF** is shown in the browser's own viewer,
+and **MusicXML** is engraved in the app by the same renderer the exercises use. Neither
+is re-encoded — the file you attach is the file you read — and both are checked on
+upload, so a `.pdf` that is not a PDF or an XML file that is not MusicXML is refused
+before it can become a blank frame at the piano. (A compressed `.mxl` has to be unzipped
+first.) Scores are counted separately from recordings everywhere.
+
+**Recordings** get a waveform and an **A/B loop**. Open a recording, press *Waveform*,
+and the peaks are decoded in the browser (nothing new is generated server-side); click
+the picture to move the playhead, then *Set A* and *Set B*. Playback then stays inside
+those markers, the audio outside them is dimmed, and the markers are saved with the
+recording rather than in the browser — so the same passage is there on the other
+machine. A recording over 64 MB is not decoded for a picture (it still plays).
 
 Starting empty is a supported path: with no pieces at all, the Repertoire tab offers
 both *Import from piano-progress* (if that database is on this machine) and **New
@@ -165,9 +179,11 @@ Two players, because there are two things worth hearing:
 Both are a synthesiser, not the piano: the app ships no samples, and saying so is
 better than the alternative. What is faithful is *timing and touch* — every onset,
 duration and velocity is the one your playing produced, because a note's length is
-measured at its release. In the passive log the two hands cannot be separated: the
-piano sends them on one MIDI channel, and that is all that is stored. A scored attempt
-can separate them, because the exercise knows which hand each note is.
+measured at its release — and, in the log, **the sustain pedal**: CC64 is stored as it
+arrived and each note is held to the pedal-up that covers its release, so a pedalled
+chord rings on instead of stopping dead. In the passive log the two hands cannot be
+separated: the piano sends them on one MIDI channel, and that is all that is stored. A
+scored attempt can separate them, because the exercise knows which hand each note is.
 
 ### Keeping it healthy
 

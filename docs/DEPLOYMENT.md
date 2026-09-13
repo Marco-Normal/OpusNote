@@ -140,8 +140,13 @@ Two independent signals, both visible from any machine in the Log tab:
 
 | Path | What |
 | --- | --- |
-| `~/.local/share/piano-ecosystem/piano.db` | Every table: library, journal, media rows, sittings, note events, segments, workouts, ratings |
-| `~/.local/share/piano-ecosystem/media/` | Recording files, named by content hash |
+| `~/.local/share/piano-ecosystem/piano.db` | Every table: library, journal, media rows, sittings, note events, **pedal events**, segments, workouts, ratings |
+| `~/.local/share/piano-ecosystem/media/` | Recordings (`.ogg`/`.mp4`) and scores (`.pdf`/`.musicxml`), named by content hash |
+
+Scores live in the same directory as recordings. They are small — a PDF or a
+MusicXML file is kilobytes next to a recording's megabytes — so they are not what
+makes a copy slow, and they are in no way separable from it: a media row without
+its file shows up as *missing* in both cases.
 
 Override with `SRT_DB_PATH` and `SRT_MEDIA_DIR` (see the README's configuration
 table). The legacy `~/.local/share/piano-progress/` directory is only ever read,
@@ -212,5 +217,6 @@ re-run while you still use the old apps.
 | "No MIDI device connected" | The page is not on `localhost`/HTTPS, or the piano is off/USB unplugged. MIDI works in Chrome, Edge and Opera; not Safari. |
 | Capture shows "Not reaching the API — retrying" | The backend is down or on another port. Batches are held and resent; nothing is lost until the tab closes. |
 | A recording reads *pending* | Its row came across but the file has not been copied. Import with copying on, or copy `media/`. |
+| The waveform says the recording is too large to decode | Over 64 MB. It plays normally; only the picture is declined, because decoding expands the whole file into raw samples in the browser. |
 | Two tabs open | Each tab captures; the same notes would be logged twice. Keep one. |
 | Streak looks wrong after travelling | `local_date` is written from the browser's UTC offset *at the time of playing*, which is deliberate: it cannot be recovered later. |

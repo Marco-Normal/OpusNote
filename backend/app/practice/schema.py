@@ -1,6 +1,6 @@
 """Practice domain schema.
 
-Owns four tables and one column-set, executed by the single initialiser in
+Owns five tables and one column-set, executed by the single initialiser in
 :mod:`app.db`. Times are epoch milliseconds — authoritative — alongside
 human-readable UTC text, because re-deriving a session start from a
 second-precision timestamp would round every onset and quietly destroy every
@@ -51,6 +51,23 @@ CREATE TABLE IF NOT EXISTS note_events (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_events_dedupe
     ON note_events(sitting_id, onset_ms, pitch);
 CREATE INDEX IF NOT EXISTS idx_events_sitting ON note_events(sitting_id, onset_ms);
+
+-- Sustain-pedal moves, raw CC64. Stored as a stream of values rather than as
+-- derived "pedal down from X to Y" intervals: intervals need an up that may
+-- never arrive (a device unplugged mid-passage), and playback can close the last
+-- one at the end of the sitting. Nothing here is recomputable from the notes.
+CREATE TABLE IF NOT EXISTS pedal_events (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    sitting_id   INTEGER NOT NULL REFERENCES sittings(id) ON DELETE CASCADE,
+    onset_ms     INTEGER NOT NULL,       -- ms since the sitting start
+    value        INTEGER NOT NULL,       -- the CC value; 64 and above is down
+    channel      INTEGER
+);
+-- The same idempotence as note_events: a retried batch must not double a pedal
+-- move, and two genuine moves at one millisecond with one value cannot happen.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pedals_dedupe
+    ON pedal_events(sitting_id, onset_ms, value);
+CREATE INDEX IF NOT EXISTS idx_pedals_sitting ON pedal_events(sitting_id, onset_ms);
 
 -- A contiguous chunk of a sitting believed to be one piece or one workout.
 CREATE TABLE IF NOT EXISTS segments (

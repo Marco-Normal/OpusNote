@@ -11,7 +11,7 @@ from pathlib import Path
 
 from app import backup
 from app.practice import store as practice_store
-from app.practice.models import EventBatch, WireNote
+from app.practice.models import EventBatch, WireNote, WirePedal
 
 BASE_MS = 1_700_011_800_000
 LATER_MS = BASE_MS + 10_000_000
@@ -47,6 +47,9 @@ def _populate(client) -> int:
                 )
                 for index, offset in enumerate((0, 500, 20_000, 60_000))
             ],
+            # Pedalling is data like any other, and a backup that dropped it would
+            # still restore a database that looks complete.
+            pedals=[WirePedal(epoch_ms=BASE_MS + 200, value=127, channel=0)],
         )
     ).sitting_id
     segments = practice_store.ensure_segments(sitting_id, now_ms=LATER_MS)
@@ -78,6 +81,7 @@ def test_an_export_covers_every_table(client) -> None:
         "piece_journal",
         "sittings",
         "note_events",
+        "pedal_events",
         "segments",
         "workouts",
         "exercises",
@@ -116,6 +120,7 @@ def test_a_backup_round_trips_through_a_wipe(client) -> None:
 
     reread = client.get("/api/backup/export").json()
     assert reread["counts"] == before, "every table came back with the same row count"
+    assert reread["counts"]["pedal_events"] == 1, "including the pedalling"
 
     detail = client.get(f"/api/repertoire/pieces/{piece_id}").json()
     assert detail["title"] == "Intermezzo"

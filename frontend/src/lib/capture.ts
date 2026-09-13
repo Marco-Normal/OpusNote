@@ -20,7 +20,7 @@
  */
 
 import { api } from './api';
-import type { MidiInput, MonitorNote, MonitorRelease } from './midi';
+import type { MidiInput, MonitorNote, MonitorPedal, MonitorRelease } from './midi';
 import type { PracticeSource } from './types';
 
 /** How often buffered notes are sent. Matches the standalone logger's cadence. */
@@ -51,9 +51,25 @@ interface CapturedNote {
   channel: number | null;
 }
 
+/**
+ * A pedal move on its way to the log.
+ *
+ * Kept apart from the notes because it has no duration and nothing to wait for:
+ * it is complete the moment it arrives, so it can be flushed in the same tick.
+ * The two lists travel in one batch so a note and the pedal under it keep their
+ * relative order on the wire.
+ */
+interface CapturedPedal {
+  epoch_ms: number;
+  value: number;
+  channel: number | null;
+}
+
 export interface CaptureStatus {
   enabled: boolean;
   buffered: number;
+  /** Pedal moves waiting to be sent, counted apart from notes. */
+  pedals: number;
   sent: number;
   failed: number;
   lastError: string | null;
@@ -70,6 +86,8 @@ export class CaptureClient {
   private readonly open = new Map<number, CapturedNote[]>();
   /** Notes ready to send — released, or held past `MAX_HOLD_MS`. */
   private buffer: CapturedNote[] = [];
+  /** Pedal moves ready to send. Nothing is ever held back here. */
+  private pedals: CapturedPedal[] = [];
 
   private enabled = false;
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -89,6 +107,7 @@ export class CaptureClient {
     this.onStatus = onStatus;
     this.midi.onNoteOnMonitor((note) => this.receiveOn(note));
     this.midi.onNoteOffMonitor((note) => this.receiveOff(note));
+    this.midi.onPedalMonitor((pedal) => this.receivePedal(pedal));
   }
 
   get isEnabled(): boolean {
@@ -130,7 +149,7 @@ export class CaptureClient {
       else this.open.delete(pitch);
     }
 
-    if (this.buffer.length === 0) {
+    if (this.buffer.length === 0 && this.pedals.length === 0) {
       this.publish();
       return;
     }
@@ -140,16 +159,23 @@ export class CaptureClient {
     if (this.buffer.length > MAX_BUFFERED) {
       this.buffer = this.buffer.slice(-MAX_BUFFERED);
     }
+    this.pedals.sort((a, b) => a.epoch_ms - b.epoch_ms);
+    if (this.pedals.length > MAX_BUFFERED) {
+      this.pedals = this.pedals.slice(-MAX_BUFFERED);
+    }
 
     const batch = this.buffer;
+    const pedals = this.pedals;
     this.flushing = true;
     try {
       await api.practice.ingest({
         source: this.source(),
         events: batch,
+        pedals,
       });
       // Only now are they gone: a failure below leaves the whole batch queued.
       this.buffer = this.buffer.slice(batch.length);
+      this.pedals = this.pedals.slice(pedals.length);
       this.sent += batch.length;
       this.lastSentAt = batch[batch.length - 1]?.epoch_ms ?? this.lastSentAt;
       this.lastError = null;
@@ -188,10 +214,21 @@ export class CaptureClient {
     this.publish();
   }
 
+  private receivePedal(pedal: MonitorPedal): void {
+    if (!this.enabled) return;
+    this.pedals.push({
+      epoch_ms: pedal.epochMs,
+      value: pedal.value,
+      channel: pedal.channel ?? null,
+    });
+    this.publish();
+  }
+
   private publish(): void {
     this.onStatus({
       enabled: this.enabled,
       buffered: this.buffer.length,
+      pedals: this.pedals.length,
       sent: this.sent,
       failed: this.failed,
       lastError: this.lastError,

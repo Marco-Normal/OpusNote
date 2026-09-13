@@ -120,6 +120,74 @@ def test_client_id_is_no_longer_part_of_the_contract(client) -> None:
     assert response.json()["duplicates"] == 1
 
 
+def test_pedals_arrive_and_come_back_with_the_notes(client) -> None:
+    """The whole wire path for the sustain pedal: a batch carrying notes and
+    pedal moves together, then the playback payload."""
+    payload = batch_payload([0, 500])
+    payload["pedals"] = [
+        {"epoch_ms": BASE_MS + 200, "value": 127, "channel": 0},
+        {"epoch_ms": BASE_MS + 900, "value": 0, "channel": 0},
+    ]
+    body = client.post("/api/practice/events", json=payload).json()
+    assert (body["pedals_accepted"], body["pedals_ignored"]) == (2, 0)
+
+    notes = client.get(f"/api/practice/sittings/{body['sitting_id']}/notes").json()
+    assert [(item["onset_ms"], item["value"]) for item in notes["pedals"]] == [
+        (200, 127),
+        (900, 0),
+    ]
+
+
+def test_a_batch_without_pedals_is_unchanged(client) -> None:
+    """The field is optional on the wire: a client that predates it — or a
+    keyboard with no pedal — keeps working, and reads back an empty list."""
+    body = client.post("/api/practice/events", json=batch_payload([0, 500])).json()
+    assert (body["pedals_accepted"], body["pedals_ignored"]) == (0, 0)
+
+    notes = client.get(f"/api/practice/sittings/{body['sitting_id']}/notes").json()
+    assert notes["pedals"] == []
+
+
+def test_a_pedal_only_batch_is_accepted_and_can_be_ignored(client) -> None:
+    """A pedal-only batch cannot be refused: the client would retry it forever,
+    blocking every batch behind it. Inside a sitting it is stored; outside one it
+    is dropped and counted, with no sitting invented for it."""
+    opened = client.post("/api/practice/events", json=batch_payload([0, 500])).json()
+    inside = client.post(
+        "/api/practice/events",
+        json={
+            "tz_offset_minutes": 0,
+            "pedals": [{"epoch_ms": BASE_MS + 700, "value": 127, "channel": 0}],
+        },
+    )
+    assert inside.status_code == 200
+    assert inside.json()["sitting_id"] == opened["sitting_id"]
+    assert inside.json()["pedals_accepted"] == 1
+
+    away = client.post(
+        "/api/practice/events",
+        json={
+            "tz_offset_minutes": 0,
+            "pedals": [{"epoch_ms": BASE_MS + 60 * 60 * 1000, "value": 127, "channel": 0}],
+        },
+    )
+    assert away.status_code == 200
+    assert away.json()["pedals_ignored"] == 1
+    assert away.json()["sitting_id"] is None
+    assert len(client.get("/api/practice/sittings").json()) == 1
+
+
+def test_a_pedal_value_out_of_range_is_rejected(client) -> None:
+    response = client.post(
+        "/api/practice/events",
+        json={
+            "tz_offset_minutes": 0,
+            "pedals": [{"epoch_ms": BASE_MS, "value": 200, "channel": 0}],
+        },
+    )
+    assert response.status_code == 422
+
+
 def test_status_says_whether_a_sitting_is_still_open(client) -> None:
     """"Is capture working?" must be answerable without playing a note."""
     import time

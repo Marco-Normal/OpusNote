@@ -448,10 +448,22 @@ export interface LoggedNote {
   channel: number | null;
 }
 
+/** A sustain-pedal move as it was played. `value` is CC64; 64 and above is down. */
+export interface LoggedPedal {
+  onset_ms: number;
+  value: number;
+  channel: number | null;
+}
+
 export interface SittingNotes {
   sitting_id: number;
   started_ms: number;
   notes: LoggedNote[];
+  /**
+   * Additive: absent from a server that predates pedal capture, which is why
+   * every reader treats it as an empty list rather than as a required field.
+   */
+  pedals: LoggedPedal[];
 }
 
 export interface SittingDetail {

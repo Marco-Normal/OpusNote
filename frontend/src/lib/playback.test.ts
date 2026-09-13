@@ -7,6 +7,7 @@ import {
   loggedEvents,
   playedEvents,
   sounding,
+  sustained,
   within,
   writtenEvents,
 } from './playback.ts';
@@ -148,4 +149,80 @@ test('a segment takes the notes inside it, edges included', () => {
     'a note exactly on the boundary belongs to the segment that ends there',
   );
   assert.deepEqual(within(notes, 501, 999).map((note) => note.pitch), []);
+});
+
+// --------------------------------------------------------------------------
+// The sustain pedal
+// --------------------------------------------------------------------------
+
+const pedalAt = (onset_ms: number, value: number) => ({ onset_ms, value });
+
+/** One note at 0s held for 0.5s, which is what most of these are about. */
+const oneNote = () => [
+  { pitch: 60, onset: 0, duration: 0.5, velocity: 0.6, hand: null },
+];
+
+test('the pedal holds a released note until it is lifted', () => {
+  const notes = sustained(oneNote(), [pedalAt(0, 127), pedalAt(2000, 0)]);
+  assert.equal(notes[0].duration, 2, 'held to the pedal-up, not to its release');
+});
+
+test('a note released after the pedal-up is left alone', () => {
+  const notes = sustained(oneNote(), [pedalAt(0, 127), pedalAt(200, 0)]);
+  assert.equal(notes[0].duration, 0.5, 'the release is already past the pedal-up');
+});
+
+test('pressing the pedal after the release does not bring a note back', () => {
+  const notes = sustained(oneNote(), [pedalAt(1000, 127), pedalAt(3000, 0)]);
+  assert.equal(notes[0].duration, 0.5, 'the synth has already let it go');
+});
+
+test('a pedal pressed before the note still catches it', () => {
+  const notes = sustained(
+    [{ pitch: 60, onset: 1, duration: 0.5, velocity: 0.6, hand: null }],
+    [pedalAt(0, 127), pedalAt(3000, 0)],
+  );
+  assert.equal(notes[0].duration, 2, 'sounding until 3s, from a start at 1s');
+});
+
+test('a re-press only affects the notes under it', () => {
+  const notes = sustained(
+    [
+      { pitch: 60, onset: 0, duration: 0.4, velocity: 0.6, hand: null },
+      { pitch: 62, onset: 2, duration: 0.4, velocity: 0.6, hand: null },
+      { pitch: 64, onset: 4, duration: 0.4, velocity: 0.6, hand: null },
+    ],
+    [pedalAt(0, 127), pedalAt(1000, 0), pedalAt(2000, 127), pedalAt(3000, 0)],
+  );
+  assert.equal(notes[0].duration, 1, 'held to the first pedal-up');
+  assert.equal(notes[1].duration, 1, 'held to the second pedal-up');
+  assert.equal(notes[2].duration, 0.4, 'released with no pedal down');
+});
+
+test('repeated down values do not restart the stretch', () => {
+  // A piano sends 127 again on some presses, and a keyboard that repeats it must
+  // not move the pedal-up to the wrong place.
+  const notes = sustained(oneNote(), [pedalAt(0, 127), pedalAt(300, 127), pedalAt(1000, 0)]);
+  assert.equal(notes[0].duration, 1);
+});
+
+test('a pedal that is never lifted extends to a tail, not forever', () => {
+  const notes = sustained(oneNote(), [pedalAt(0, 127)]);
+  assert.equal(notes[0].duration, 1, '0.5s of note + a 0.5s tail');
+  assert.ok(Number.isFinite(notes[0].duration));
+});
+
+test('a pedal can only lengthen a note', () => {
+  const notes = sustained(
+    [{ pitch: 60, onset: 0, duration: 5, velocity: 0.6, hand: null }],
+    [pedalAt(0, 127), pedalAt(1000, 0)],
+  );
+  assert.equal(notes[0].duration, 5, 'the note outlasts the pedal stretch');
+});
+
+test('no pedalling leaves the notes exactly as they were', () => {
+  const before = oneNote();
+  const after = sustained(before, []);
+  assert.deepEqual(after, before);
+  assert.notEqual(after, before, 'and hands back a copy rather than the array it was given');
 });

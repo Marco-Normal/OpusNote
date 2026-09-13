@@ -135,6 +135,7 @@ class AppState {
   captureStatus = $state<CaptureStatus>({
     enabled: false,
     buffered: 0,
+    pedals: 0,
     sent: 0,
     failed: 0,
     lastError: null,

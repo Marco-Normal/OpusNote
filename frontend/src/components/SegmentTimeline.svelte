@@ -9,7 +9,7 @@
   import { onDestroy } from 'svelte';
   import { api } from '../lib/api';
   import { PianoPlayer } from '../lib/pianoPlayer';
-  import { loggedEvents, sounding, within, type SynthNote } from '../lib/playback';
+  import { loggedEvents, sounding, sustained, within, type SynthNote } from '../lib/playback';
   import { formatClock, type PieceSummary, type SittingDetail } from '../lib/types';
 
   interface Props {
@@ -52,7 +52,10 @@
   async function loadNotes(): Promise<SynthNote[]> {
     if (notes) return notes;
     const body = await api.practice.sittingNotes(detail.id);
-    notes = loggedEvents(body.notes);
+    // The pedal is applied to the whole sitting before any range is taken: a note
+    // released under the pedal at the end of one segment must still be sounding
+    // where the next one begins, and slicing first would cut that off.
+    notes = sustained(loggedEvents(body.notes), body.pedals ?? []);
     return notes;
   }
 

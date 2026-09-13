@@ -25,7 +25,7 @@
       <span class="pill warn">No MIDI device connected</span>
     {/if}
     <span class="muted small">
-      {status.sent} notes sent{#if status.buffered > 0}, {status.buffered} buffered{/if}
+      {status.sent} notes sent{#if status.buffered > 0}, {status.buffered} buffered{/if}{#if status.pedals > 0}, {status.pedals} pedal moves waiting{/if}
     </span>
     {#if status.lastSentAt}
       <span class="muted small mono">last {new Date(status.lastSentAt).toLocaleTimeString()}</span>

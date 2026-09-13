@@ -32,7 +32,7 @@ from typing import Any
 
 from urllib.request import urlopen
 
-from playwright.sync_api import Page, sync_playwright
+from playwright.sync_api import Page, TimeoutError as PlaywrightTimeout, sync_playwright
 
 BASE_URL = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8000"
 #: Optional substring filter on the scenario name, for a fast single-scenario run.
@@ -348,8 +348,16 @@ def ensure_midi(page: Page, timeout: float = 15_000) -> None:
     gesture.
     """
     page.wait_for_selector("text=Sight-Reading Trainer", timeout=timeout)
-    if page.get_by_role("button", name="Connect MIDI", exact=True).count():
-        click_button(page, "Connect MIDI")
+    connect = page.get_by_role("button", name="Connect MIDI", exact=True)
+    if connect.count():
+        try:
+            connect.first.click(timeout=3_000)
+        except PlaywrightTimeout:
+            # The app connected by itself between the check and the click, which
+            # removes the button. That is the behaviour we want — and checking
+            # first is still right, because clicking when already connected is a
+            # gesture the auto-detect scenario exists to prove is unnecessary.
+            pass
     page.wait_for_selector("text=MIDI connected", timeout=timeout)
     check(page.evaluate("() => window.__fakeMidi.ready()"), "app installed a MIDI message handler")
 
@@ -1617,7 +1625,14 @@ def clear_practice() -> None:
     """
     conn = sqlite3.connect(os.environ.get("SRT_DB_PATH", str(DEFAULT_DB)), timeout=15)
     try:
-        for table in ("segment_metrics", "segments", "note_events", "sittings", "workouts"):
+        for table in (
+            "pedal_events",
+            "segment_metrics",
+            "segments",
+            "note_events",
+            "sittings",
+            "workouts",
+        ):
             conn.execute(f"DELETE FROM {table}")
         conn.execute("UPDATE performances SET workout_id = NULL")
         conn.commit()
@@ -1696,6 +1711,29 @@ def scenario_practice_log(browser) -> None:
     )
     counter = page.inner_text('[data-capture="on"]')
     check("notes sent" in counter, f"the capture bar reports what it has sent ({counter!r})")
+
+    # --- the sustain pedal travels with the notes it was under ---
+    # CC64 was parsed and dropped before this slice; the whole path is exercised
+    # here: the MIDI decoder, the capture buffer, the batch, and the database.
+    pedal_sitting = api("/api/practice/sittings")[0]["id"]
+    page.evaluate("() => window.__fakeMidi.send([0xb0, 64, 127])")
+    play_phrase(page, [60, 64, 67])
+    page.evaluate("() => window.__fakeMidi.send([0xb0, 64, 0])")
+    page.wait_for_timeout(2_600)
+    pedalled = api(f"/api/practice/sittings/{pedal_sitting}/notes")
+    values = [move["value"] for move in pedalled["pedals"]]
+    check(127 in values and 0 in values, f"both halves of the press are stored ({values})")
+    check(
+        [move["onset_ms"] for move in pedalled["pedals"]] == sorted(
+            move["onset_ms"] for move in pedalled["pedals"]
+        ),
+        "in the order they happened",
+    )
+    check(
+        pedalled["pedals"][0]["onset_ms"] <= pedalled["notes"][-1]["onset_ms"],
+        "and the press is timed against the notes rather than against the sitting's end",
+    )
+    page.screenshot(path=str(SHOTS / "22-pedal.png"), full_page=True)
 
     # --- a workout: declared, and therefore distinguishable from noodling ---
     click_button(page, "Start workout")

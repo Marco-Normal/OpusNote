@@ -11,7 +11,7 @@ import pytest
 from app.config import settings
 from app.db import connect
 from app.practice import store
-from app.practice.models import EventBatch, WireNote
+from app.practice.models import EventBatch, WireNote, WirePedal
 
 # 2023-11-15 01:30:00 UTC: safely in the past, so sittings read as "closed".
 BASE_MS = 1_700_011_800_000
@@ -118,6 +118,103 @@ def test_timezone_offset_moves_the_local_date(fresh_db) -> None:
 def test_an_empty_batch_is_rejected(fresh_db) -> None:
     with pytest.raises(store.InvalidRequest):
         store.ingest(EventBatch(tz_offset_minutes=0, events=[]))
+
+
+# --- the sustain pedal ----------------------------------------------------
+
+
+def pedal_batch(offsets: list[int], *, value: int = 127, events: list[int] | None = None):
+    """A batch of pedal moves, optionally with notes of its own."""
+    return EventBatch(
+        tz_offset_minutes=0,
+        events=[
+            WireNote(
+                epoch_ms=BASE_MS + offset,
+                pitch=60 + index,
+                velocity=70,
+                duration_ms=300,
+                channel=0,
+            )
+            for index, offset in enumerate(events or [])
+        ],
+        pedals=[
+            WirePedal(epoch_ms=BASE_MS + offset, value=value, channel=0) for offset in offsets
+        ],
+    )
+
+
+def test_a_pedal_move_is_stored_against_its_sitting(fresh_db) -> None:
+    sitting_id = _prepared()
+    result = store.ingest(pedal_batch([400], value=127))
+
+    assert result.pedals_accepted == 1
+    assert result.pedals_ignored == 0
+    assert result.sitting_id == sitting_id, "the pedal joins the sitting the notes opened"
+    stored = store.sitting_notes(sitting_id)
+    assert [(item.onset_ms, item.value) for item in stored.pedals] == [(400, 127)]
+
+
+def test_notes_and_pedals_travel_in_one_batch(fresh_db) -> None:
+    """The first batch of a sitting can carry both, and the pedal's onset has to
+    be measured from the sitting the notes just created."""
+    result = store.ingest(pedal_batch([200], events=[0, 500]))
+    assert (result.accepted, result.pedals_accepted) == (2, 1)
+
+    stored = store.sitting_notes(result.sitting_id)
+    assert [item.onset_ms for item in stored.notes] == [0, 500]
+    assert [item.onset_ms for item in stored.pedals] == [200]
+
+
+def test_a_pedal_with_no_sitting_around_it_is_dropped(fresh_db) -> None:
+    """Not practice, and not allowed to invent a sitting: a foot resting on the
+    pedal while the player is away must not open one."""
+    store.ingest(batch([0, 500]))
+    before = len(store.list_sittings())
+
+    result = store.ingest(pedal_batch([60 * 60 * 1000], value=127))
+
+    assert result.pedals_ignored == 1
+    assert result.pedals_accepted == 0
+    assert result.sitting_id is None, "there is nothing to report a sitting for"
+    assert len(store.list_sittings()) == before
+
+
+def test_a_pedal_does_not_extend_a_sitting(fresh_db) -> None:
+    """The sitting's end is the last *note*. Letting a pedal move push it out
+    would keep a sitting open for as long as a foot rests on the pedal."""
+    sitting_id = _prepared()
+    before = next(row for row in store.list_sittings() if row.id == sitting_id).duration_s
+
+    store.ingest(pedal_batch([60_000], value=127))
+
+    after = next(row for row in store.list_sittings() if row.id == sitting_id).duration_s
+    assert after == before
+
+
+def test_a_retried_pedal_batch_does_not_double_the_moves(fresh_db) -> None:
+    sitting_id = _prepared()
+    assert store.ingest(pedal_batch([400], value=127)).pedals_accepted == 1
+    assert store.ingest(pedal_batch([400], value=127)).pedals_accepted == 0
+
+    assert len(store.sitting_notes(sitting_id).pedals) == 1
+
+
+def test_both_halves_of_a_pedal_press_are_kept(fresh_db) -> None:
+    """Down and up are two rows, not one interval: a release that never arrives
+    must not leave a note sounding past the end of the sitting."""
+    sitting_id = _prepared()
+    store.ingest(pedal_batch([400], value=127))
+    store.ingest(pedal_batch([1_200], value=0))
+
+    stored = store.sitting_notes(sitting_id)
+    assert [(item.onset_ms, item.value) for item in stored.pedals] == [(400, 127), (1_200, 0)]
+
+
+def test_a_sitting_without_pedalling_reports_none(fresh_db) -> None:
+    """The field is additive on the wire, so an old client must read as "no
+    pedalling" rather than as a missing key."""
+    sitting_id = _prepared()
+    assert store.sitting_notes(sitting_id).pedals == []
 
 
 # --- segmentation ---------------------------------------------------------
