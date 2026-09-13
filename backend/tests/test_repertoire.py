@@ -52,6 +52,7 @@ def test_import_copies_the_legacy_library(fresh_db, legacy_db):
             "composers": 2,
             "journal_entries": 2,
             "media_rows": 3,
+            "scores": 0,
         }
     finally:
         conn.close()

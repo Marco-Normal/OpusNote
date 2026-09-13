@@ -568,3 +568,41 @@ re-derived later:
   goes into `hand_position` (and `intervals` for cross-staff reading), which keeps the
   radar chart, the calibration ladder and the default levels as they are. The accepted
   cost: clef reading cannot be tracked as a skill in its own right.
+
+## 2026-09-13 — sight-reading agent — Phase 13a, part 1: scores (PDF and MusicXML)
+
+Scope: `backend/app/repertoire/`, `backend/tests/test_scores.py`,
+`frontend/src/components/{RepertoireView,ScoreViewer}.svelte`,
+`frontend/src/lib/{api,types}.ts`, `backend/tools/e2e_browser.py`. No table
+changed: a score is a `media` row with `kind='score'`.
+
+Did:
+
+- **`media_pipeline.store_score`** — a score takes the same content-hashed,
+  content-addressed storage as a recording but no ffmpeg pass at all. It is not
+  probed (its own bytes are the honest description) and not re-encoded, so the
+  file you attach is the file you read. `.pdf` must begin with `%PDF-`; MusicXML
+  must parse and have a `score-partwise`/`score-timewise` root. `.mxl` is refused
+  with a message saying to unzip it, rather than an unzip dependency.
+- **`POST /api/repertoire/pieces/{id}/scores`** and a
+  `api.repertoire.uploadScore` client call. The stored name is the content hash,
+  so re-attaching the same document is a 409 that names where it already lives
+  instead of a unique-constraint error.
+- **Scores are not recordings.** `recording_count` and the
+  present/pending/missing media counts now exclude `kind='score'` (a score is
+  never "not copied yet"), and `score_count`/`status.scores` were added so the
+  counts stay separable. The serve route picks the MIME type from the stored
+  format, because `mimetypes` does not know `.musicxml` and calls `.xml` text —
+  either of which makes a browser download the score.
+- **UI**: a Scores section in the piece panel (PDF in an `<iframe>` using the
+  browser's own viewer; MusicXML engraved in place by the existing OSMD
+  `ScoreRenderer` with no expected-note timeline), a size/codec pill per score,
+  and an attach form.
+- 16 new backend tests; the repertoire browser scenario now attaches both a
+  MusicXML and a PDF score, checks the engraving, the content type, and the
+  duplicate refusal. The e2e also gained an optional scenario-name filter
+  argument so a single scenario can be re-run while fixing it.
+
+Impact on the other side: none — `practice-logger/` and `piano-progress/` are
+untouched, and no shared table changed. `media.kind` gains one more value
+(`'score'`), which only this app writes.

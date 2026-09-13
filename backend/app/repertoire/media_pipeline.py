@@ -1,6 +1,6 @@
-"""Recording import: probe, transcode, hash, store.
+"""Recording and score import: probe, transcode, hash, store.
 
-Mirrors what the Rust app did, so the library keeps its shape:
+Mirrors what the Rust app did for recordings, so the library keeps its shape:
 
 * **Content-hashed file names.** The hash *is* the identity, so importing the
   same recording twice stores it once, and re-importing never duplicates 138 MB
@@ -9,9 +9,12 @@ Mirrors what the Rust app did, so the library keeps its shape:
   Opus in `.ogg`. The player's source files are typically uncompressed WAV or
   phone video; storing them as they arrive would multiply the library size.
 
+Scores (§ *Scores* at the end) reuse the same hashing and placement but take no
+ffmpeg pass, and are identified by their own bytes instead of by ffprobe.
+
 ffmpeg does the work through subprocesses. Everything here is a pure function of
-a path on disk except `store_recording`, which is the one piece that touches the
-database.
+a path on disk except `store_recording` and `store_score`, which return what to
+catalogue and leave the database to the caller.
 """
 
 from __future__ import annotations
@@ -21,6 +24,7 @@ import json
 import shutil
 import subprocess
 import tempfile
+import xml.etree.ElementTree as ElementTree
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -39,6 +43,35 @@ KNOWN_SUFFIXES = frozenset(
         ".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v", ".3gp",
     }
 )
+
+#: Scores travel through the same content-hashed storage as recordings but take
+#: no ffmpeg pass: there is nothing to probe (their own bytes identify them) and
+#: nothing to re-encode (the browser reads a PDF, and OSMD reads MusicXML).
+SCORE_SUFFIXES = frozenset({".pdf", ".musicxml", ".xml"})
+
+#: Which format each accepted suffix is, and — because a stored score is named
+#: for its format rather than for whatever it happened to be called — the suffix
+#: the file gets in the media directory. `.xml` and `.musicxml` collapse onto one,
+#: so the same MusicXML under either name is a single stored file.
+SCORE_FORMATS: dict[str, str] = {".pdf": "pdf", ".musicxml": "musicxml", ".xml": "musicxml"}
+
+#: What to serve each stored score as. `mimetypes` does not know `.musicxml` at
+#: all, and guesses `text/xml` for `.xml`; both are wrong enough that a browser
+#: may download the file rather than hand it to a renderer.
+SCORE_MEDIA_TYPES: dict[str, str] = {
+    "pdf": "application/pdf",
+    "musicxml": "application/vnd.recordare.musicxml+xml",
+}
+
+#: A score is an XML document we hand to a parser, so a pathological upload must
+#: not be able to chew through memory. Far above any real score: the largest
+#: published MusicXML files are single-digit megabytes.
+MAX_SCORE_BYTES = 32 * 1024 * 1024
+
+#: `%PDF-` must appear within this many bytes of the start. The specification says
+#: the very first line, but files from sloppy producers carry a little junk first
+#: and every reader tolerates it, so we do too.
+PDF_HEADER_SCAN = 1024
 
 
 class MediaError(RuntimeError):
@@ -221,5 +254,132 @@ def store_recording(
         duration_secs=stored.duration_secs,
         size_bytes=stored.size_bytes,
         codec=stored.codec,
+        reused=reused,
+    )
+
+
+# --------------------------------------------------------------------------
+# Scores
+#
+# A score is a *document*, not a recording, and the differences matter: there is
+# no duration and no codec to probe, no conversion worth doing, and the file's
+# own bytes are the only thing that can tell us whether it is really a PDF or
+# really MusicXML. So this path validates content and stores the file untouched.
+# --------------------------------------------------------------------------
+
+
+def _local_name(tag: str) -> str:
+    """An element's name without its XML namespace, e.g. `{ns}score-partwise`."""
+    return tag.rsplit("}", 1)[-1].strip().lower()
+
+
+def looks_like_pdf(path: Path) -> bool:
+    """Whether the file starts with the PDF header, whatever it is called."""
+    with path.open("rb") as handle:
+        return b"%PDF-" in handle.read(PDF_HEADER_SCAN)
+
+
+def musicxml_root(path: Path) -> str | None:
+    """The MusicXML root element's name, or ``None`` if this is not MusicXML.
+
+    Well-formedness is checked as a side effect, which is the point: a truncated
+    or corrupt score is refused at upload with a real parser's complaint rather
+    than at the piano, as a blank page.
+    """
+    try:
+        root = ElementTree.parse(path).getroot()
+    except ElementTree.ParseError as exc:
+        raise MediaError(f"this is not valid XML: {exc}") from exc
+    name = _local_name(root.tag)
+    return name if name in {"score-partwise", "score-timewise"} else None
+
+
+def score_format(path: Path, suffix: str) -> str:
+    """Identify a score by its content, refusing anything we cannot render.
+
+    The declared suffix chooses which check applies; the content decides whether
+    it passes. A `.pdf` that is not a PDF and an `.xml` that is not MusicXML are
+    both refused here, so nothing unrenderable reaches the library — where the
+    only symptom would be a blank frame on the practice machine.
+    """
+    key = suffix.lower()
+    if key not in SCORE_SUFFIXES:
+        raise MediaError(
+            "scores must be PDF or uncompressed MusicXML (.musicxml/.xml); "
+            "a .mxl archive has to be unzipped first"
+        )
+
+    size = path.stat().st_size
+    if size == 0:
+        raise MediaError("the file is empty")
+    if size > MAX_SCORE_BYTES:
+        raise MediaError(f"the score is larger than {MAX_SCORE_BYTES // (1024 * 1024)} MB")
+
+    expected = SCORE_FORMATS[key]
+    if expected == "pdf":
+        if not looks_like_pdf(path):
+            raise MediaError("this file does not begin with a PDF header")
+        return "pdf"
+
+    if musicxml_root(path) is None:
+        raise MediaError(
+            "this XML file is not MusicXML: a score's root element must be "
+            "<score-partwise> or <score-timewise>"
+        )
+    return "musicxml"
+
+
+@dataclass(frozen=True)
+class StoredScore:
+    file_name: str
+    kind: str
+    codec: str
+    size_bytes: int
+    original_name: str | None
+    reused: bool
+
+
+def store_score(
+    source: Path,
+    *,
+    media_dir: Path,
+    original_name: str | None = None,
+) -> StoredScore:
+    """Validate, hash and place one uploaded score.
+
+    Returns the facts to record in the database and does **not** touch it: the
+    caller owns the transaction, exactly as `store_recording` does.
+
+    The stored name is the content hash plus the *format* (`.pdf`/`.musicxml`),
+    never the uploaded suffix, so the same document uploaded as `.xml` and as
+    `.musicxml` is one file. Because the name is derived from content and the
+    `media.file_name` column is unique, storing can legitimately produce a name
+    that is already catalogued — the caller must check and refuse the duplicate
+    row rather than let the insert collide.
+    """
+    codec = score_format(source, source.suffix)
+    media_dir.mkdir(parents=True, exist_ok=True)
+
+    digest = content_hash(source)
+    file_name = f"{digest}.{codec}"
+    destination = media_dir / file_name
+
+    reused = destination.exists()
+    if not reused:
+        # Content-addressed, so the file is already its own checksum: copying it
+        # into place is all the "conversion" a score needs, and it loses nothing.
+        # Staged and moved, like a recording, so an interrupted copy cannot leave
+        # a truncated file under a name that claims to be complete.
+        with tempfile.TemporaryDirectory(dir=media_dir) as scratch:
+            staged = Path(scratch) / f"score.{codec}"
+            shutil.copy2(source, staged)
+            shutil.move(str(staged), destination)
+
+    return StoredScore(
+        file_name=file_name,
+        kind="score",
+        codec=codec,
+        size_bytes=destination.stat().st_size,
+        original_name=original_name,
         reused=reused,
     )

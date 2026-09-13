@@ -298,6 +298,8 @@ export interface PieceSummary {
   journal_entries: number;
   logged_minutes: number;
   recording_count: number;
+  /** Attached scores (PDF or MusicXML), counted apart from recordings. */
+  score_count: number;
 }
 
 export interface PieceDetail extends PieceSummary {
@@ -319,6 +321,8 @@ export interface RepertoireStatus {
   composers: number;
   journal_entries: number;
   media_rows: number;
+  /** Attached scores, which are media rows with `kind='score'`. */
+  scores: number;
   media_present: number;
   media_pending: number;
   media_missing: number;

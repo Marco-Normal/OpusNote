@@ -245,6 +245,20 @@ export const api = {
 
     deleteRecording: (mediaId: number) =>
       request<DeleteResult>(`/repertoire/media/${mediaId}`, { method: 'DELETE' }),
+
+    /**
+     * Attach a score. Its own endpoint rather than the recording one: a score is
+     * validated by its content and stored untouched, so it never reaches ffmpeg.
+     */
+    uploadScore: (pieceId: number, file: File, title?: string) => {
+      const form = new FormData();
+      form.append('file', file);
+      if (title) form.append('title', title);
+      return requestForm<Recording>(`/repertoire/pieces/${pieceId}/scores`, form);
+    },
+
+    /** Where a media row's bytes are served from, for an <audio>/<iframe>/fetch. */
+    mediaUrl: (mediaId: number) => `/api/repertoire/media/${mediaId}/file`,
   },
 
   practice: {

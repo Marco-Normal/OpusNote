@@ -104,8 +104,12 @@ def list_pieces(
                    AS journal_entries,
                (SELECT COALESCE(SUM(j.practice_minutes), 0) FROM piece_journal j
                  WHERE j.piece_id = p.id) AS logged_minutes,
-               (SELECT COUNT(*) FROM media m WHERE m.piece_id = p.id)
-                   AS recording_count
+               (SELECT COUNT(*) FROM media m
+                 WHERE m.piece_id = p.id AND m.kind <> 'score')
+                   AS recording_count,
+               (SELECT COUNT(*) FROM media m
+                 WHERE m.piece_id = p.id AND m.kind = 'score')
+                   AS score_count
         FROM pieces p
         LEFT JOIN composers c ON c.id = p.composer_id
         {where}
@@ -181,6 +185,9 @@ def counts(conn: sqlite3.Connection) -> dict[str, int]:
         "composers": count("composers"),
         "journal_entries": count("piece_journal"),
         "media_rows": count("media"),
+        "scores": int(
+            conn.execute("SELECT COUNT(*) FROM media WHERE kind = 'score'").fetchone()[0]
+        ),
     }
 
 
@@ -201,8 +208,15 @@ def get_media(conn: sqlite3.Connection, media_id: int) -> dict[str, Any] | None:
 
 
 def media_state_counts(conn: sqlite3.Connection) -> dict[str, int]:
+    """Where the *recordings* are, by state.
+
+    Scores are excluded rather than counted as `present`. They arrive by upload
+    and are never copied from the legacy library, so including them would make
+    "recordings in library" include documents and the health panel's number would
+    stop meaning what it says.
+    """
     counts = {"present": 0, "pending": 0, "missing": 0}
-    for row in conn.execute("SELECT file_name FROM media"):
+    for row in conn.execute("SELECT file_name FROM media WHERE kind <> 'score'"):
         counts[media_state(str(row["file_name"]))] += 1
     return counts
 
@@ -211,9 +225,27 @@ def pending_media(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     """Recordings that exist in the legacy directory but not in ours."""
     return [
         dict(row)
-        for row in conn.execute("SELECT id, file_name FROM media")
+        for row in conn.execute("SELECT id, file_name FROM media WHERE kind <> 'score'")
         if media_state(str(row["file_name"])) == "pending"
     ]
+
+
+def find_media_by_file_name(conn: sqlite3.Connection, file_name: str) -> dict[str, Any] | None:
+    """The row already holding a content-addressed file, if any.
+
+    Needed because `media.file_name` is unique: a second upload of the same bytes
+    is a duplicate entry, not a second file, and the insert would collide. Asking
+    first lets the caller refuse it and say where it already lives.
+    """
+    row = conn.execute(
+        """
+        SELECT m.id, m.piece_id, m.kind, m.title, m.original_name, p.title AS piece_title
+        FROM media m LEFT JOIN pieces p ON p.id = m.piece_id
+        WHERE m.file_name = ?
+        """,
+        (file_name,),
+    ).fetchone()
+    return dict(row) if row is not None else None
 
 
 # --------------------------------------------------------------------------

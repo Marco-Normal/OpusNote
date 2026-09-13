@@ -20,7 +20,13 @@ from ..config import settings
 from ..hostinfo import require_loopback
 from . import store
 from .importer import LegacyDatabaseMissing, LegacySchemaUnexpected, import_legacy
-from .media_pipeline import MediaError, probe, store_recording
+from .media_pipeline import (
+    SCORE_MEDIA_TYPES,
+    MediaError,
+    probe,
+    store_recording,
+    store_score,
+)
 from .models import (
     ComposerCreate,
     ComposerOut,
@@ -130,7 +136,12 @@ def media_file(media_id: int, conn: sqlite3.Connection = Depends(get_conn)) -> F
     media_type, _encoding = mimetypes.guess_type(str(path))
     return FileResponse(
         path,
-        media_type=media_type or "application/octet-stream",
+        # A score's type comes from its stored format, because `mimetypes` does not
+        # know `.musicxml` and calls `.xml` plain text — either of which makes a
+        # browser download the file instead of rendering it. Recordings keep the
+        # guess, which is right for the containers we produce ourselves.
+        media_type=SCORE_MEDIA_TYPES.get(str(record["codec"] or ""), media_type)
+        or "application/octet-stream",
         # Left inline on purpose: an <audio> element needs to stream it, not
         # download it. Starlette handles Range requests, so seeking works.
     )
@@ -298,6 +309,38 @@ def delete_journal_entry(entry_id: int) -> DeleteResult:
 # --------------------------------------------------------------------------
 
 
+def _stage_upload(file: UploadFile, *, scratch: Path, what: str) -> Path:
+    """Write one upload to a scratch path, enforcing the size cap while writing.
+
+    Shared by recordings and scores so the cap cannot be enforced in one path and
+    forgotten in the other. The cap is checked as the bytes arrive rather than
+    against the declared size alone, because a client can lie about that and the
+    point of the cap is to protect the disk.
+    """
+    limit_bytes = settings.max_upload_mb * 1024 * 1024
+    if file.size is not None and file.size > limit_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"the {what} is larger than {settings.max_upload_mb} MB",
+        )
+
+    suffix = Path(file.filename or "").suffix
+    staged = scratch / f"upload{suffix}"
+    written = 0
+    with staged.open("wb") as handle:
+        while chunk := file.file.read(1024 * 1024):
+            written += len(chunk)
+            if written > limit_bytes:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"the {what} is larger than {settings.max_upload_mb} MB",
+                )
+            handle.write(chunk)
+    if staged.stat().st_size == 0:
+        raise HTTPException(status_code=422, detail="the uploaded file is empty")
+    return staged
+
+
 @router.post("/pieces/{piece_id}/media", response_model=MediaOut, status_code=201)
 def upload_recording(
     piece_id: int,
@@ -314,31 +357,9 @@ def upload_recording(
         if not store.piece_exists(conn, piece_id):
             raise HTTPException(status_code=404, detail=f"no piece {piece_id}")
 
-    limit_bytes = settings.max_upload_mb * 1024 * 1024
-    if file.size is not None and file.size > limit_bytes:
-        raise HTTPException(
-            status_code=413,
-            detail=f"the recording is larger than {settings.max_upload_mb} MB",
-        )
-
-    suffix = Path(file.filename or "").suffix
     media_dir = Path(settings.media_dir)
     with tempfile.TemporaryDirectory() as scratch:
-        staged = Path(scratch) / f"upload{suffix}"
-        written = 0
-        with staged.open("wb") as handle:
-            while chunk := file.file.read(1024 * 1024):
-                written += len(chunk)
-                # Checked while writing, not only against the declared size: a client
-                # can lie about that, and the point of the cap is to protect the disk.
-                if written > limit_bytes:
-                    raise HTTPException(
-                        status_code=413,
-                        detail=f"the recording is larger than {settings.max_upload_mb} MB",
-                    )
-                handle.write(chunk)
-        if staged.stat().st_size == 0:
-            raise HTTPException(status_code=422, detail="the uploaded file is empty")
+        staged = _stage_upload(file, scratch=Path(scratch), what="recording")
         try:
             staged_info = probe(staged)
         except MediaError as exc:
@@ -377,6 +398,68 @@ def upload_recording(
                 original_name=file.filename,
                 title=title,
                 duration_secs=stored.duration_secs,
+                size_bytes=stored.size_bytes,
+                codec=stored.codec,
+            )
+            row = store.get_media(conn, media_id)
+
+    assert row is not None
+    return MediaOut(**row)
+
+
+# --------------------------------------------------------------------------
+# Scores
+# --------------------------------------------------------------------------
+
+
+@router.post("/pieces/{piece_id}/scores", response_model=MediaOut, status_code=201)
+def upload_score(
+    piece_id: int,
+    file: UploadFile = File(...),
+    title: str | None = Form(default=None),
+) -> MediaOut:
+    """Attach a score: validate it, hash it, store it, catalogue it.
+
+    No ffmpeg anywhere in this path. A score is not probed (its bytes are the
+    only honest description of it) and not re-encoded (the browser draws a PDF
+    and OSMD reads MusicXML), so the file is stored exactly as uploaded — which
+    also means what you read in the app is the edition you chose.
+    """
+    with db.transaction(settings.db_path) as conn:
+        if not store.piece_exists(conn, piece_id):
+            raise HTTPException(status_code=404, detail=f"no piece {piece_id}")
+
+    media_dir = Path(settings.media_dir)
+    with tempfile.TemporaryDirectory() as scratch:
+        staged = _stage_upload(file, scratch=Path(scratch), what="score")
+        try:
+            stored = store_score(staged, media_dir=media_dir, original_name=file.filename)
+        except MediaError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        with db.transaction(settings.db_path) as conn:
+            # The stored name is the content hash, so the same document uploaded
+            # twice is one file and the second row would collide. Refused with the
+            # place it already lives: a score attached to the wrong piece can be
+            # moved, and knowing where it is beats a bare integrity error.
+            existing = store.find_media_by_file_name(conn, stored.file_name)
+            if existing is not None:
+                where = existing["piece_title"] or f"piece {existing['piece_id']}"
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"this exact score is already attached to {where} "
+                        f"(id {existing['id']})"
+                    ),
+                )
+            media_id = store.create_media(
+                conn,
+                piece_id=piece_id,
+                kind=stored.kind,
+                file_name=stored.file_name,
+                original_name=file.filename,
+                title=title,
+                duration_secs=None,
                 size_bytes=stored.size_bytes,
                 codec=stored.codec,
             )

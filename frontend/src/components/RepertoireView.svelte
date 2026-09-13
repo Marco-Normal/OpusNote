@@ -14,6 +14,7 @@
   import { formatDuration, formatMinutes, formatSize } from '../lib/types';
   import type { PiecePracticeDetail } from '../lib/types';
   import LineChart from './LineChart.svelte';
+  import ScoreViewer from './ScoreViewer.svelte';
 
   type Grouping = 'none' | 'composer' | 'difficulty';
 
@@ -44,6 +45,14 @@
   let uploadTitle = $state('');
   let uploading = $state(false);
   let uploadNote = $state<string | null>(null);
+  let scoreFile = $state<File | null>(null);
+  let scoreInput = $state<HTMLInputElement | undefined>(undefined);
+  let scoreTitle = $state('');
+  let attachingScore = $state(false);
+  let scoreNote = $state<string | null>(null);
+  //: Which score is open in the viewer, if any. One at a time: two engravings on
+  //: screen at once is a comparison nobody asked this panel for yet.
+  let openScoreId = $state<number | null>(null);
   let copyMedia = $state(true);
   let importReport = $state<ImportReport | null>(null);
   //: MIDI-measured practice for the open piece. Fetched separately from the
@@ -196,6 +205,47 @@
     }
   }
 
+  async function attachScore(): Promise<void> {
+    if (!detail || !scoreFile) return;
+    attachingScore = true;
+    scoreNote = null;
+    error = null;
+    try {
+      const pieceId = detail.id;
+      const attached = await api.repertoire.uploadScore(
+        pieceId,
+        scoreFile,
+        scoreTitle.trim(),
+      );
+      scoreFile = null;
+      scoreTitle = '';
+      // Same reason as the recording input: the browser fires no `change` event
+      // when the same file is picked again, so the control would go dead.
+      if (scoreInput) scoreInput.value = '';
+      scoreNote = `Attached “${attached.original_name ?? attached.file_name}”.`;
+      openScoreId = attached.id;
+      await afterWrite(pieceId);
+    } catch (cause) {
+      // "Already attached" is an answer, not a failure, so it belongs in the note.
+      const message = cause instanceof Error ? cause.message : String(cause);
+      if (message.includes('409')) scoreNote = message.replace(/^.*?: /, '');
+      else error = message;
+    } finally {
+      attachingScore = false;
+    }
+  }
+
+  async function removeScore(scoreId: number): Promise<void> {
+    if (!detail) return;
+    try {
+      await api.repertoire.deleteRecording(scoreId);
+      if (openScoreId === scoreId) openScoreId = null;
+      await afterWrite(detail.id);
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : String(cause);
+    }
+  }
+
   async function removePiece(): Promise<void> {
     if (!detail) return;
     try {
@@ -238,13 +288,23 @@
 
   const suggestion = $derived(detail ? suggestions.get(detail.id) : undefined);
 
+  /**
+   * `media` holds two things now: recordings and scores. They are split here
+   * rather than in two queries because a piece has a handful of rows, and one
+   * list means the panel's section counts cannot disagree with each other.
+   */
+  const scores = $derived(detail ? detail.media.filter((row) => row.kind === 'score') : []);
+  const recordings = $derived(detail ? detail.media.filter((row) => row.kind !== 'score') : []);
+  const openScore = $derived(scores.find((row) => row.id === openScoreId) ?? null);
+
   const pendingInDetail = $derived(
-    detail ? detail.media.filter((row) => row.state === 'pending').length : 0,
+    recordings.filter((row) => row.state === 'pending').length,
   );
 
   const totals = $derived({
     minutes: pieces.reduce((sum, piece) => sum + piece.logged_minutes, 0),
     recordings: pieces.reduce((sum, piece) => sum + piece.recording_count, 0),
+    scores: pieces.reduce((sum, piece) => sum + piece.score_count, 0),
   });
 
   $effect(() => {
@@ -266,6 +326,9 @@
         <span class="pill mono">{status.pieces} pieces</span>
         <span class="pill mono">{status.composers} composers</span>
         <span class="pill mono">{totals.recordings} recordings</span>
+        {#if totals.scores > 0}
+          <span class="pill mono">{totals.scores} scores</span>
+        {/if}
         {#if totals.minutes > 0}
           <span class="pill mono">{totals.minutes} min logged</span>
         {/if}
@@ -392,6 +455,7 @@
               <span class="counts muted mono">
                 {#if piece.journal_entries}✎ {piece.journal_entries}{/if}
                 {#if piece.recording_count}♪ {piece.recording_count}{/if}
+                {#if piece.score_count}𝄞 {piece.score_count}{/if}
               </span>
             </button>
           {/each}
@@ -443,7 +507,7 @@
               Deleting removes the piece, its
               {detail.journal.length} journal {detail.journal.length === 1 ? 'entry' : 'entries'} and
               its {detail.media.length} catalogue {detail.media.length === 1 ? 'row' : 'rows'}.
-              <strong>Recording files are left on disk.</strong>
+              <strong>Recording and score files are left on disk.</strong>
             </div>
           {/if}
 
@@ -590,8 +654,86 @@
             </button>
           </form>
 
-          <h4>Recordings <span class="muted">({detail.media.length})</span></h4>
-          {#if detail.media.length === 0}
+          <h4>Scores <span class="muted">({scores.length})</span></h4>
+          <p class="muted small">
+            The edition you actually play from — a PDF as it was published, or
+            MusicXML engraved here. Kept with the piece, so it is on the piano
+            machine and on anything that can reach it.
+          </p>
+          {#if scores.length === 0}
+            <p class="muted small">None attached.</p>
+          {:else}
+            <ul class="scores">
+              {#each scores as score (score.id)}
+                <li>
+                  <div class="rec-head">
+                    <span class="rec-name">
+                      {score.title ?? score.original_name ?? score.file_name}
+                    </span>
+                    <span class="row">
+                      <span class="pill mono" data-score-codec={score.codec}>
+                        {score.codec ?? 'score'}
+                      </span>
+                      <button
+                        class="ghost tiny"
+                        onclick={() => (openScoreId = openScoreId === score.id ? null : score.id)}
+                      >
+                        {openScoreId === score.id ? 'Hide' : 'View'}
+                      </button>
+                      <button
+                        class="ghost tiny"
+                        disabled={!app.host?.loopback}
+                        title={app.host?.loopback
+                          ? 'Remove this score from the library'
+                          : 'Only on the piano machine'}
+                        onclick={() => void removeScore(score.id)}>×</button
+                      >
+                    </span>
+                  </div>
+                  <p class="muted small mono">
+                    {formatSize(score.size_bytes)}{#if score.taken_on} · {score.taken_on}{/if}
+                  </p>
+                  {#if openScoreId === score.id && openScore}
+                    <ScoreViewer score={openScore} />
+                  {/if}
+                </li>
+              {/each}
+            </ul>
+          {/if}
+
+          <form
+            class="upload"
+            onsubmit={(event) => {
+              event.preventDefault();
+              void attachScore();
+            }}
+          >
+            <input
+              type="file"
+              accept="application/pdf,.pdf,.musicxml,.xml"
+              aria-label="Score file"
+              bind:this={scoreInput}
+              onchange={(event) => {
+                const input = event.currentTarget as HTMLInputElement;
+                scoreFile = input.files?.[0] ?? null;
+                scoreNote = null;
+              }}
+            />
+            <input
+              placeholder="Title (optional)"
+              bind:value={scoreTitle}
+              aria-label="Score title"
+            />
+            <button class="primary" type="submit" disabled={attachingScore || !scoreFile}>
+              {attachingScore ? 'Attaching…' : 'Attach score'}
+            </button>
+          </form>
+          {#if scoreNote}
+            <div class="notice">{scoreNote}</div>
+          {/if}
+
+          <h4>Recordings <span class="muted">({recordings.length})</span></h4>
+          {#if recordings.length === 0}
             <p class="muted small">None attached.</p>
           {:else}
             {#if pendingInDetail > 0}
@@ -609,7 +751,7 @@
             {/if}
 
             <ul class="recordings">
-              {#each detail.media as recording (recording.id)}
+              {#each recordings as recording (recording.id)}
                 <li>
                   <div class="rec-head">
                     <span class="rec-name">
@@ -927,7 +1069,8 @@
     margin-top: 0.2rem;
   }
 
-  .recordings {
+  .recordings,
+  .scores {
     list-style: none;
     margin: 0;
     padding: 0;
@@ -936,7 +1079,8 @@
     gap: 0.7rem;
   }
 
-  .recordings li {
+  .recordings li,
+  .scores li {
     border: 1px solid var(--line);
     border-radius: var(--radius);
     padding: 0.5rem 0.6rem;

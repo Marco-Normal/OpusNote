@@ -12,7 +12,11 @@ Requirements: the API must already be running and serving the built frontend
 
 Usage::
 
-    backend/.venv/bin/python backend/tools/e2e_browser.py [base_url]
+    backend/.venv/bin/python backend/tools/e2e_browser.py [base_url] [scenario]
+
+The optional second argument is a substring of a scenario name (``repertoire``,
+``practice_log``, …) and runs only that one. It exists to iterate on a fix; a
+slice is verified by running the whole file with no filter.
 """
 
 from __future__ import annotations
@@ -31,6 +35,8 @@ from urllib.request import urlopen
 from playwright.sync_api import Page, sync_playwright
 
 BASE_URL = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8000"
+#: Optional substring filter on the scenario name, for a fast single-scenario run.
+ONLY = sys.argv[2].lower() if len(sys.argv) > 2 else ""
 CHROMIUM = "/usr/bin/chromium"
 SHOTS = Path(__file__).resolve().parent.parent / "screenshots"
 DEFAULT_DB = Path(__file__).resolve().parent.parent / "data" / "e2e.sqlite3"
@@ -1064,6 +1070,53 @@ def make_tone_wav(destination: Path, *, seconds: int = 2) -> Path:
     return destination
 
 
+def make_score_files(directory: Path) -> tuple[Path, Path]:
+    """A MusicXML score and a PDF, for the attachment path.
+
+    Real files rather than bytes on the wire: the server identifies a score by its
+    own content, so a fake would be refused — which is the behaviour under test.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    musicxml = directory / "e2e-score.musicxml"
+    musicxml.write_text(
+        """<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="4.0">
+  <part-list>
+    <score-part id="P1"><part-name>Piano</part-name></score-part>
+  </part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes>
+        <divisions>1</divisions>
+        <key><fifths>0</fifths></key>
+        <time><beats>4</beats><beat-type>4</beat-type></time>
+        <clef><sign>G</sign><line>2</line></clef>
+      </attributes>
+      <note>
+        <pitch><step>C</step><octave>4</octave></pitch>
+        <duration>4</duration><type>whole</type>
+      </note>
+    </measure>
+  </part>
+</score-partwise>
+"""
+    )
+    pdf = directory / "e2e-score.pdf"
+    pdf.write_bytes(MINIMAL_PDF)
+    return musicxml, pdf
+
+
+#: One blank page, written out properly. Chromium's PDF viewer is what renders it,
+#: so it has to be a document the viewer will actually open.
+MINIMAL_PDF = b"""%PDF-1.4
+1 0 obj <</Type /Catalog /Pages 2 0 R>> endobj
+2 0 obj <</Type /Pages /Kids [3 0 R] /Count 1>> endobj
+3 0 obj <</Type /Page /Parent 2 0 R /MediaBox [0 0 200 200]>> endobj
+trailer <</Root 1 0 R>>
+%%EOF
+"""
+
+
 def scenario_repertoire(browser) -> None:
     print("\n[7] Repertoire: the library, the journal, and the sight-reading bridge")
     fixture = ensure_legacy_fixture(
@@ -1279,8 +1332,13 @@ def scenario_repertoire(browser) -> None:
     )
     check(reached == 1, f"the chosen file reached the input ({reached})")
     page.fill('input[aria-label="Recording title"]', "e2e take")
+    # Scoped to this form: the panel now has a second upload form for scores, and
+    # "the first `.upload button` on the page" would quietly test the wrong one.
     check(
-        not page.evaluate("() => document.querySelector('.upload button').disabled"),
+        not page.evaluate(
+            "() => document.querySelector('input[aria-label=\"Recording file\"]')"
+            ".closest('form').querySelector('button').disabled"
+        ),
         "the import button becomes available once a file is chosen",
     )
     with page.expect_response(
@@ -1314,10 +1372,98 @@ def scenario_repertoire(browser) -> None:
     )
     tone.unlink(missing_ok=True)
 
+    # --- scores: attached, validated by content, and rendered in place ---
+    musicxml, pdf = make_score_files(DEFAULT_DB.parent)
+    page.set_input_files('input[aria-label="Score file"]', str(musicxml))
+    page.wait_for_timeout(300)
+    page.fill('input[aria-label="Score title"]', "e2e sonata")
+    check(
+        not page.evaluate(
+            "() => document.querySelector('input[aria-label=\"Score file\"]')"
+            ".closest('form').querySelector('button').disabled"
+        ),
+        "the score button becomes available once a file is chosen",
+    )
+    with page.expect_response(
+        lambda r: "/scores" in r.url and r.request.method == "POST", timeout=60_000
+    ) as attached:
+        click_button(page, "Attach score")
+    score = attached.value.json()
+    check(score["kind"] == "score", f"the score is catalogued as a score ({score['kind']})")
+    check(score["codec"] == "musicxml", f"identified as MusicXML ({score['codec']})")
+    # Engraved by OSMD, from the file the server stored — not a download prompt.
+    page.wait_for_selector("[data-score-viewer] svg", timeout=30_000)
+    check(
+        page.evaluate("() => document.querySelectorAll('[data-score-viewer] svg').length") > 0,
+        "the attached MusicXML is engraved in the viewer",
+    )
+    check(
+        "e2e sonata" in page.locator(".detail").inner_text(),
+        "the score's title is shown",
+    )
+    served = page.evaluate(
+        """async (id) => {
+             const response = await fetch(`/api/repertoire/media/${id}/file`);
+             return { type: response.headers.get('content-type'), body: (await response.text()).slice(0, 5) };
+           }""",
+        score["id"],
+    )
+    check(
+        served["type"].startswith("application/vnd.recordare.musicxml"),
+        f"served with a MusicXML content type ({served['type']})",
+    )
+    check(served["body"].startswith("<?xml"), "and it is the file that was uploaded")
+
+    # The same document again is refused: the stored name is its content hash, so
+    # a second catalogue row would be the same file twice.
+    page.set_input_files('input[aria-label="Score file"]', str(musicxml))
+    with page.expect_response(
+        lambda r: "/scores" in r.url and r.request.method == "POST", timeout=60_000
+    ) as duplicate_score:
+        click_button(page, "Attach score")
+    check(
+        duplicate_score.value.status == 409,
+        f"re-attaching the same score is refused ({duplicate_score.value.status})",
+    )
+    page.wait_for_timeout(400)
+    check(
+        page.locator("[data-score-codec]").count() == 1,
+        "and no second score appeared",
+    )
+
+    # A PDF goes through the browser's own viewer, which is the whole reason no
+    # PDF library is needed here.
+    page.set_input_files('input[aria-label="Score file"]', str(pdf))
+    page.fill('input[aria-label="Score title"]', "")
+    with page.expect_response(
+        lambda r: "/scores" in r.url and r.request.method == "POST", timeout=60_000
+    ) as attached_pdf:
+        click_button(page, "Attach score")
+    check(attached_pdf.value.json()["codec"] == "pdf", "a PDF is accepted as a PDF")
+    page.wait_for_selector("[data-score-viewer='pdf'] iframe", timeout=20_000)
+    check(
+        page.evaluate(
+            "() => document.querySelectorAll(\"[data-score-viewer='pdf'] iframe\").length"
+        ) == 1,
+        "the PDF is framed rather than re-rendered",
+    )
+    check(
+        page.evaluate("() => document.querySelectorAll('[data-score-codec]').length") == 2,
+        "both scores are listed",
+    )
+    check(
+        page.locator(".pill", has_text="2 scores").count() == 1,
+        "and the library header counts them apart from recordings",
+    )
+    page.screenshot(path=str(SHOTS / "20-scores.png"), full_page=True)
+
     # Deleting asks first, then removes the piece.
     click_button(page, "Delete")
     page.wait_for_selector(".notice", timeout=5_000)
-    check("Recording files are left on disk" in page.inner_text(".notice"), "the delete warns about cascades")
+    check(
+        "Recording and score files are left on disk" in page.inner_text(".notice"),
+        "the delete warns about cascades",
+    )
     click_button(page, "Keep")
     page.wait_for_timeout(200)
     check(
@@ -1809,16 +1955,24 @@ def main() -> int:
             ],
         )
         try:
-            scenario_perfect(browser)
-            scenario_wrong_and_silence(browser)
-            scenario_calibration_and_stats(browser)
-            scenario_theming(browser)
-            scenario_long_exercises(browser)
-            scenario_two_hands(browser)
-            scenario_repertoire(browser)
-            scenario_practice_log(browser)
-            scenario_midi_autodetect(browser)
-            scenario_lan_viewer(browser)
+            for scenario in (
+                scenario_perfect,
+                scenario_wrong_and_silence,
+                scenario_calibration_and_stats,
+                scenario_theming,
+                scenario_long_exercises,
+                scenario_two_hands,
+                scenario_repertoire,
+                scenario_practice_log,
+                scenario_midi_autodetect,
+                scenario_lan_viewer,
+            ):
+                # An optional filter, so a fix to one scenario can be checked in
+                # seconds instead of by replaying the whole suite. The full run
+                # (no argument) is still what verifies a slice.
+                if ONLY and ONLY not in scenario.__name__:
+                    continue
+                scenario(browser)
         finally:
             browser.close()
 

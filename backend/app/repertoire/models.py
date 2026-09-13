@@ -55,6 +55,9 @@ class PieceSummary(BaseModel):
     journal_entries: int = 0
     logged_minutes: int = 0
     recording_count: int = 0
+    #: Attached scores (PDF or MusicXML), counted apart from recordings so
+    #: "3 recordings" never turns out to include a PDF.
+    score_count: int = 0
 
 
 class PieceDetail(PieceSummary):
@@ -100,6 +103,8 @@ class RepertoireStatus(BaseModel):
     composers: int
     journal_entries: int
     media_rows: int
+    #: Attached scores, which are media rows with `kind='score'`.
+    scores: int = 0
     media_present: int
     media_pending: int
     media_missing: int
