@@ -554,3 +554,17 @@ Small production change worth noting: the status route passes its backup directo
 `backup.latest_backup(dir)` explicitly instead of letting the helper resolve settings
 itself. Two places reading the same configuration independently is how a panel ends up
 reporting a directory nothing writes to.
+
+## 2026-09-12 — sight-reading agent — Phase 13 split, clef reading decided
+
+Two scope decisions taken, recorded in `docs/ECOSYSTEM.md` §10 so they are not
+re-derived later:
+
+- **Phase 13 is two slices.** Scores (PDF + MusicXML through the existing media
+  pipeline, `kind='score'`, no ffmpeg in that path), a client-side waveform with a
+  database-stored A/B loop, and sustain-pedal capture land first; **self-similarity
+  auto-tagging** follows as its own slice, so its accuracy can be judged on its own.
+- **Clef reading is a modifier on existing dimensions, not a tenth skill.** Clef variety
+  goes into `hand_position` (and `intervals` for cross-staff reading), which keeps the
+  radar chart, the calibration ladder and the default levels as they are. The accepted
+  cost: clef reading cannot be tracked as a skill in its own right.

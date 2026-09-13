@@ -690,7 +690,32 @@ A nightly rotating JSON backup (a systemd timer reusing the export), a health pa
 heartbeat), and a latency suggestion derived from your own median onset bias —
 suggested with one click, never applied silently.
 
-### Phase 13 — planned (library depth)
+### Phase 13 — next (library depth), in two slices
+
+Decided with the user: the three self-contained parts land first, and the matcher
+follows as its own slice so its effect on tagging can be judged on its own rather than
+buried in a large change.
+
+**13a — scores, waveform, pedal.**
+
+- Attach a score to a piece — **PDF** (the browser renders it; no library) and
+  **MusicXML** (rendered in-app through the OSMD already present) — stored through the
+  existing content-hashed media pipeline with `kind='score'`. No ffmpeg in that path:
+  those files need no probing or transcoding, only hashing and a home.
+- A waveform for a recording with an A/B loop, peaks decoded client-side with WebAudio
+  (no new endpoint, no ffmpeg pass), markers stored in the database so they are the same
+  from either machine.
+- Sustain pedal captured at last. CC64 is parsed and dropped today; the ingest batch
+  gains an optional `pedals` list and a `pedal_events` table, and playback holds notes
+  through the pedal. Optional on the wire, so an older client keeps working.
+
+**13b — self-similarity auto-tagging**, as specified but never built: a pitch-class
+profile, tempo proximity and register overlap per segment, k-nearest over your own
+labelled segments, confidence bands from two thresholds, and the "was this right?"
+prompt. Corrections are already recorded, so the matcher has training data from the day
+it first runs.
+
+### Originally planned as Phase 13 (library depth)
 
 Attach a score to a piece — **PDF** (the browser renders it; no library) and
 **MusicXML** (rendered in-app through the OSMD already present) — stored through the
@@ -702,16 +727,27 @@ original design specified but never built.
 
 ### Phase 14 — planned (musical content)
 
-Unusual meters (5/4, 7/8, 3/8, 2/2) via the existing meter table; **clef reading** as a
-new skill dimension (a real, independently trainable skill, with the honest cost that
-it ripples into the radar chart, the calibration ladder and the defaults); and dynamics
-— notation first, velocity scoring later, because scoring a dynamic is a new contract.
+Unusual meters (5/4, 7/8, 3/8, 2/2) via the existing meter table.
+
+**Clef reading is a modifier, not a tenth dimension** — decided with the user. Clef
+variety is added inside the existing dimensions (`hand_position` most directly, and
+`intervals` for reading across the staves), so the radar chart, the calibration ladder
+and the default levels keep their current shape. The accepted cost, recorded rather than
+glossed: clef reading cannot then be tracked as a skill in its own right, and its
+difficulty will surface inside `hand_position`'s rating.
+
+Dynamics: notation first, velocity scoring later, because scoring a dynamic is a new
+contract — `ExpectedNote` carries no velocity today.
 
 ### Still open, from the earlier brainstorm
 
 **Section practice** (pick bars, slow down, loop until clean) and **per-hand practice**,
 both offered and both deferred by the user. They remain the highest-value items on this
 list by my estimate, since they change what the app is *for* rather than what it shows.
+
+Also open: **retiring `practice-logger/`** — its code and history are ported and
+importable, so deleting the directory is the user's call — and the **courtesy time
+signature** at system breaks, which OSMD cannot be talked into.
 
 ### Risks, stated plainly
 
