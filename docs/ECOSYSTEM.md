@@ -191,6 +191,7 @@ sessionizer and segmentation move across as-is with their tests.
 | 6 | **Cross-domain features** | Sight-reading generated from your active pieces; unified time-per-piece; one dashboard; workouts (roadmap Slice E). | low |
 | 7 | **Portability** | JSON export/import, deployment notes for the piano machine, backup guidance for WAL. | low |
 | 8 | **MIDI that sets itself up** | Auto-connect and auto-select on a piano that is switched on later, across a device list that includes ALSA's dead *Midi Through* port. | low |
+| 10 | **Playback** | Hear a scored attempt back (either hand, or the exercise as written) and hear a logged sitting or segment from the practice log, with a playhead. | low |
 | 9 | **LAN server** | A planted notebook serving the whole app on the local network: `deploy/`, kiosk autostart, capture heartbeat, upload cap, concurrent-write hardening. | medium |
 
 Phases 1-2 are the useful minimum: they get the library out of the Rust app's
@@ -477,7 +478,7 @@ correctness; tab *discarding* would cost notes, which the policy prevents.
 
 | ID | Question | Decision | Consequence |
 | --- | --- | --- | --- |
-| **D7** | Where does capture live on the notebook? | **A kiosk browser on its own session.** Exercises need Web MIDI anyway, and the two unattended risks (permission prompt, tab discard) are policy settings, not code | No second capture path, so no exercise-window filter and no new always-on process. The daemon stays available as Phase 10 with the ingest contract already compatible |
+| **D7** | Where does capture live on the notebook? | **A kiosk browser on its own session.** Exercises need Web MIDI anyway, and the two unattended risks (permission prompt, tab discard) are policy settings, not code | No second capture path, so no exercise-window filter and no new always-on process. The daemon stays available as a later phase with the ingest contract already compatible |
 | **D8** | What does the LAN side require? | **No authentication, but the irreversible actions are loopback-only.** Read, listen, upload, edit pieces and tag segments work from any machine; deleting a piece, composer, journal entry or recording, resetting the profile, replacing the database from a backup and re-segmenting over labels are refused off the piano machine | The stated intent was "see statistics and maybe upload", so the LAN gets exactly that plus the harmless edits. No password, no login screen, and the boundary is a property of the route rather than of the person using it |
 | **D9** | Which URL is used to play? | **`http://localhost:8000` on the notebook; `http://piano.local:8000` from the main computer.** No TLS | Remote MIDI stays impossible by design, which is what was asked for. If it is ever wanted, it needs a locally trusted certificate or an insecure-origin browser flag |
 
@@ -607,6 +608,39 @@ procfs named the phantom input the user reported: `Client 14 : "Midi Through" Po
 : "Midi Through Port-0"`. The probe now accepts either signal, and the diagnosis is
 recorded as confirmed rather than inferred.
 
+### Phase 10 — playback
+
+Triggered by the user asking why the logger records every note and cannot play any of
+it. The answer was that nothing did: `Tone.js` was imported by one file (the count-in
+click), and the practice API did not expose individual notes at all — `SegmentSummary`
+carried counts and metrics, so the browser could not have played them even if it wanted
+to. The original logger's pipeline was capture → sessions → segments → metrics →
+dashboard, and its Phase 4 "media" work meant *recordings*, a different feature. So it
+was an omission, not a decision.
+
+Two players, from the two ends of the data:
+
+- **The attempt you just played** (results panel): no backend change, because the played
+  notes, the expected notes and the per-note analysis are all still in the browser.
+  `lib/playback.ts` converts both sides into one shape — written durations from quarter
+  notes at the exercise's own tempo, so playback matches the count-in that was heard,
+  and each played note's **hand** recovered by reconstructing
+  `played.onset = expected.onset_s + onset_error_s` from the scorer's own feedback.
+- **A logged sitting or segment** (Log tab): `GET /api/practice/sittings/{id}/notes`,
+  read on demand because it is the only payload in the domain that grows with how long
+  you played, plus a playhead positioned across the segment strip.
+
+Both go through `lib/pianoPlayer.ts`, a Tone `PolySynth` — a dependency already present
+— with `releaseAll()` on stop so a stopped playback cannot leave notes ringing. The
+interface says what it is: synthesised, not the piano. Timing and touch are faithful
+because they are *stored* that way (durations come from note-off); the instrument is
+not, and no sample library is being pretended into existence.
+
+**What playback cannot do**, stated rather than discovered later: in the passive log the
+hands are not separable, because the piano sends both hands on one MIDI channel and only
+that channel is stored. A scored attempt does not have that limit, because the exercise
+knows which hand each note belongs to.
+
 ### Risks, stated plainly
 
 | Risk | Treatment |
@@ -621,7 +655,7 @@ recorded as confirmed rather than inferred.
 ### Non-goals
 
 HTTPS/TLS on the LAN, remote MIDI from the main computer, multi-user accounts,
-syncing two databases, and the headless capture daemon (Phase 10, deferred until
+syncing two databases, and the headless capture daemon (deferred until
 the kiosk path proves insufficient in real use).
 
 **ADR signal.** D8 is a trust-boundary decision (what the LAN may do without

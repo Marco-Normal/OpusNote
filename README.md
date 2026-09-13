@@ -136,6 +136,27 @@ Pieces are measured, not claimed: `median_tempo` is a **note rate** over attack
 clusters (chords are one attack, so they do not read as infinite BPM). It is
 comparable with itself over time, not an absolute metronome reading.
 
+### Hearing it back
+
+Two players, because there are two things worth hearing:
+
+- **After an attempt**, the results panel has *Hear it*: **Play yours**, **Play as
+  written**, or either hand alone. Written notes are played at the tempo you were
+  counted in at, and your own notes carry the hands the scorer matched them to. This is
+  the one that teaches something — a hesitation or a wrong note you only saw as a
+  colour becomes audible.
+- **In the Log tab**, a sitting or a single segment can be played back from the notes
+  themselves, with a playhead crossing the segment strip. Notes are fetched on demand
+  (a long sitting is thousands of them) and a segment starts immediately rather than
+  waiting out the silence that preceded it.
+
+Both are a synthesiser, not the piano: the app ships no samples, and saying so is
+better than the alternative. What is faithful is *timing and touch* — every onset,
+duration and velocity is the one your playing produced, because a note's length is
+measured at its release. In the passive log the two hands cannot be separated: the
+piano sends them on one MIDI channel, and that is all that is stored. A scored attempt
+can separate them, because the exercise knows which hand each note is.
+
 ### Export and backup
 
 **Log → Export & backup** downloads one JSON document containing every table:

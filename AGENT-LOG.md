@@ -472,3 +472,39 @@ Two regression tests, one of which does not depend on the time of day: a fixed z
 day. The practice-side streak test was also sending `tz_offset_minutes=0` while the
 analytics compare against the server's local today; it now sends this machine's offset,
 which is what a browser in the same room sends.
+
+## 2026-09-12 — sight-reading agent — playback: the logged notes can finally be heard
+
+Asked by the user why the log records every note but cannot play any of it. Nothing
+did, and the notes were not even reachable: `Tone.js` was used only by the count-in
+click, and the practice API exposed counts and metrics, never note events. The original
+logger's pipeline had no playback stage — its "media" phase meant *audio recordings* —
+so this was an omission in the port, not a hidden feature.
+
+Two players landed:
+
+- **Attempt playback** (results panel, `lib/playback.ts` + `lib/pianoPlayer.ts`, no
+  backend change): play your performance, the exercise as notated, or either hand.
+  Written durations come from quarter notes at the exercise's tempo; each played note's
+  hand is recovered by reconstructing `played.onset = expected.onset_s +
+  onset_error_s` from the scorer's own feedback, so no scoring logic is duplicated on
+  the client.
+- **Log playback** (`GET /api/practice/sittings/{id}/notes`): read on demand, because
+  it is the only payload in the practice domain that grows with how long you played —
+  the sitting detail is re-read after every segment edit and needs none of it.
+  Synthesised through the same player, with a playhead over the segment strip and a
+  per-segment play button.
+
+Contract note for the other side: **one new additive route**, no changed fields.
+`SittingNotes` = `{sitting_id, started_ms, notes: [{onset_ms, duration_ms, pitch,
+velocity, channel}]}`.
+
+Honest limits, recorded in the UI as well as here: it is a synthesiser, not the piano
+(no samples ship); and the passive log cannot separate hands, because the piano sends
+both on one MIDI channel and only the channel is stored. A scored attempt can, because
+the exercise labels each note's hand.
+
+Verified: 652 backend tests, 21 frontend unit tests, `svelte-check` clean, frontend
+built, all ten browser scenarios — including assertions that the player reports which
+source is sounding, that Stop clears the playhead, and that the notes route is fetched
+only when playback is asked for.

@@ -29,7 +29,7 @@ browser (`frontend/src/lib/midi.ts` + `capture.ts`), one capture client. See
 instead of one and de-duplicates cross-port echoes; a small host-information module
 tells the SPA where it is being used from and whether ALSA's sequencer exists; a
 `deploy/` directory turns the notebook into a service. No new process, no new
-runtime dependency. Phase 10 (a headless capture daemon) is explicitly **not** part
+runtime dependency. A headless capture daemon (a later phase) is explicitly **not** part
 of this plan.
 
 **Tech stack.** Python 3.11 venv at `backend/.venv`, FastAPI, pydantic v2, stdlib
