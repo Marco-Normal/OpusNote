@@ -15,6 +15,7 @@ import type {
   ImportReport,
   PieceDetail,
   PiecePracticeDetail,
+  PerformanceDetail,
   PieceSummary,
   PracticeImportReport,
   PracticeSource,
@@ -29,6 +30,7 @@ import type {
   Profile,
   Recording,
   RepertoireStatus,
+  RatingHistory,
   ScoreResult,
   SegmentSummary,
   SittingDetail,
@@ -159,6 +161,12 @@ export const api = {
   }) => request<ScoreResult>('/score', { method: 'POST', body: JSON.stringify(payload) }),
 
   stats: () => request<Stats>('/stats'),
+
+  /** Every rating change in the window, grouped by skill. */
+  progressRatings: (days = 90) => request<RatingHistory>(`/progress/ratings?days=${days}`),
+
+  /** One past attempt, in the same shapes the results panel uses. */
+  performance: (id: number) => request<PerformanceDetail>(`/performances/${id}`),
 
   repertoire: {
     status: () => request<RepertoireStatus>('/repertoire/status'),

@@ -103,6 +103,83 @@ def apply_rating_updates(conn, user_id: int, updated: Mapping[str, float], now: 
         )
 
 
+def record_rating_events(
+    conn,
+    user_id: int,
+    *,
+    before: Mapping[str, float],
+    after: Mapping[str, float],
+    score: float,
+    performance_id: int | None = None,
+) -> int:
+    """One row per skill whose rating moved.
+
+    Only the changes: a row for nine unchanged skills per attempt would bury the curve
+    in noise, and the curve is the whole point of the table.
+    """
+    written = 0
+    for slug, value in after.items():
+        previous = float(before.get(slug, value))
+        if abs(previous - float(value)) < 1e-9:
+            continue
+        conn.execute(
+            """
+            INSERT INTO rating_events
+                (user_id, skill_id, before, after, score, performance_id)
+            VALUES (?1, (SELECT id FROM skills WHERE slug = ?2), ?3, ?4, ?5, ?6)
+            """,
+            (user_id, slug, previous, float(value), float(score), performance_id),
+        )
+        written += 1
+    return written
+
+
+def rating_series(conn, user_id: int, *, days: int = 90) -> dict[str, list[dict[str, Any]]]:
+    """Rating changes per skill, oldest first, inside a window.
+
+    Grouped by slug so the client can draw one line per skill without knowing the
+    skill ids, and including the score and performance id so a point on the curve can
+    be traced back to the attempt that produced it.
+    """
+    rows = conn.execute(
+        """
+        SELECT s.slug,
+               e.before,
+               e.after,
+               e.score,
+               e.performance_id,
+               e.created_at,
+               p.performed_at,
+               json_extract(x.params_json, '$.target_skill') AS focus
+        FROM rating_events e
+        JOIN skills s ON s.id = e.skill_id
+        LEFT JOIN performances p ON p.id = e.performance_id
+        LEFT JOIN exercises x ON x.id = p.exercise_id
+        WHERE e.user_id = ?1 AND e.created_at >= datetime('now', ?2)
+        ORDER BY e.id
+        """,
+        (user_id, f"-{int(days)} days"),
+    ).fetchall()
+    out: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        out.setdefault(row["slug"], []).append(
+            {
+                "at": row["performed_at"] or row["created_at"],
+                "before": row["before"],
+                "after": row["after"],
+                "delta": round(float(row["after"]) - float(row["before"]), 2),
+                "score": row["score"],
+                "performance_id": row["performance_id"],
+                # Every skill moves a little on every attempt — the Elo engine spreads
+                # the update across dimensions — so a point says whether its skill was
+                # the one being trained. Without that, eight incidental nudges of a
+                # fifth of a point bury the one series that means something.
+                "focus": row["focus"] == row["slug"],
+            }
+        )
+    return out
+
+
 def recent_target_skills(conn, user_id: int, limit: int = 3) -> list[str]:
     rows = conn.execute(
         """
@@ -333,6 +410,43 @@ def recent_performances(conn, user_id: int, limit: int = 20) -> list[dict[str, A
         (user_id, limit),
     ).fetchall()
     return [dict(row) for row in rows]
+
+
+def performance_detail(conn, performance_id: int, user_id: int) -> dict[str, Any] | None:
+    """Everything needed to show — and replay — one past attempt.
+
+    The played notes and the analysis were stored when the attempt happened, and the
+    exercise is still in the database, so nothing has to be reconstructed: the same
+    three things the results panel had in memory are read back.
+    """
+    row = conn.execute(
+        """
+        SELECT p.id, p.exercise_id, p.score, p.pitch_accuracy, p.rhythm_accuracy,
+               p.continuity_accuracy, p.mode, p.tempo_bpm, p.latency_ms,
+               p.performed_at, p.played_notes_json, p.analysis_json,
+               e.key_name, e.meter, e.difficulty_elo, e.musicxml_blob,
+               e.params_json, e.expected_json,
+               json_extract(e.params_json, '$.target_skill') AS target_skill
+        FROM performances p
+        JOIN exercises e ON e.id = p.exercise_id
+        WHERE p.id = ? AND p.user_id = ?
+        """,
+        (performance_id, user_id),
+    ).fetchone()
+    if row is None:
+        return None
+    data = dict(row)
+    data["played_notes"] = json_load(data.pop("played_notes_json"), [])
+    analysis = json_load(data.pop("analysis_json"), {}) or {}
+    data["analysis"] = analysis
+    data["feedback"] = analysis.get("feedback", [])
+    data["levels"] = analysis.get("levels", {})
+    data["by_hand"] = analysis.get("by_hand", {})
+    data["weights"] = analysis.get("weights", {})
+    data["expected_notes"] = json_load(data.pop("expected_json"), [])
+    data["measures"] = json_load(data.pop("params_json"), {})
+    data.pop("musicxml_blob", None)
+    return data
 
 
 def performance_count(conn, user_id: int) -> int:

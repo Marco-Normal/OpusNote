@@ -96,6 +96,26 @@ CREATE TABLE IF NOT EXISTS performances (
 
 CREATE INDEX IF NOT EXISTS idx_performances_user_time
     ON performances (user_id, performed_at DESC);
+
+-- Every Elo change, one row per skill per performance.
+--
+-- `user_skills` holds only the current rating, so without this there is no curve to
+-- draw: "your rhythm is up 40 points this month" is the reason a rating is worth
+-- keeping, and a number that only ever shows today's value cannot say it.
+CREATE TABLE IF NOT EXISTS rating_events (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id        INTEGER NOT NULL,
+    skill_id       INTEGER NOT NULL,
+    before         REAL NOT NULL,
+    after          REAL NOT NULL,
+    score          REAL,
+    performance_id INTEGER REFERENCES performances(id) ON DELETE SET NULL,
+    created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id)  REFERENCES users(id)  ON DELETE CASCADE,
+    FOREIGN KEY (skill_id) REFERENCES skills(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_rating_events_skill
+    ON rating_events (user_id, skill_id, id);
 CREATE INDEX IF NOT EXISTS idx_exercise_skills_skill
     ON exercise_skills (skill_id);
 """

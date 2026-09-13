@@ -107,6 +107,52 @@ export interface ScoreResult {
   next_hint: string;
 }
 
+/** One rating change, and whether that skill was the attempt's focus. */
+export interface RatingPoint {
+  at: string;
+  before: number;
+  after: number;
+  delta: number;
+  score: number | null;
+  performance_id: number | null;
+  focus: boolean;
+}
+
+export interface SkillRatingSeries {
+  slug: string;
+  name: string;
+  points: RatingPoint[];
+}
+
+export interface RatingHistory {
+  days: number;
+  skills: SkillRatingSeries[];
+  biggest_gain: string | null;
+  biggest_gain_delta: number;
+}
+
+/** A past attempt, with everything needed to show and replay it. */
+export interface PerformanceDetail {
+  performance_id: number;
+  exercise_id: number;
+  score: number | null;
+  pitch_accuracy: number | null;
+  rhythm_accuracy: number | null;
+  continuity_accuracy: number | null;
+  mode: string;
+  tempo_bpm: number | null;
+  performed_at: string | null;
+  key_name: string | null;
+  meter: string | null;
+  difficulty_elo: number | null;
+  target_skill: string | null;
+  levels: Record<string, number>;
+  expected_notes: ExpectedNote[];
+  played_notes: PlayedNote[];
+  feedback: NoteFeedback[];
+  by_hand: Record<string, { total: number; accuracy: number }>;
+}
+
 export interface SkillInfo {
   slug: string;
   name: string;

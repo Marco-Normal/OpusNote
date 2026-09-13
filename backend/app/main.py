@@ -21,10 +21,20 @@ from .backup import router as backup_router
 from .config import settings
 from .db import init_db
 from .hostinfo import require_loopback, router as hostinfo_router
-from .models import ExerciseOut, HealthOut, ProfileOut, ScoreRequest, SkillOut
+from .models import (
+    ExerciseOut,
+    RatingPoint,
+    SkillRatingSeries,
+    HealthOut,
+    PerformanceDetail,
+    ProfileOut,
+    RatingHistory,
+    ScoreRequest,
+    SkillOut,
+)
 from .practice.api import router as practice_router
 from .repertoire.api import router as repertoire_router
-from .skills_data import SKILLS, SKILL_SLUGS, level_for_key
+from .skills_data import SKILLS, SKILLS_BY_SLUG, SKILL_SLUGS, level_for_key
 from .workout import store as workout_store
 from .workout.api import router as workout_router
 
@@ -277,6 +287,72 @@ def practice_suggestions(conn: Connection = Depends(get_conn)) -> JSONResponse:
             }
             for item in suggestions
         ]
+    )
+
+
+@app.get("/api/progress/ratings", response_model=RatingHistory)
+def progress_ratings(
+    conn: Connection = Depends(get_conn),
+    days: int = Query(default=90, ge=1, le=3650),
+) -> RatingHistory:
+    """Every rating change in the window, grouped by skill.
+
+    `user_skills` holds one number per skill, so a curve has to come from the recorded
+    changes. Skills with no movement in the window are absent rather than present with
+    an empty series, so the client can say "nothing changed" instead of drawing nine
+    flat lines.
+    """
+    series = store.rating_series(conn, current_user_id(), days=days)
+    skills = []
+    biggest: tuple[str, float] | None = None
+    for slug in SKILL_SLUGS:
+        points = series.get(slug)
+        if not points:
+            continue
+        spec = SKILLS_BY_SLUG[slug]
+        skills.append(SkillRatingSeries(slug=slug, name=spec.name, points=points))
+        total = round(sum(point["delta"] for point in points), 2)
+        if biggest is None or total > biggest[1]:
+            biggest = (spec.name, total)
+    return RatingHistory(
+        days=days,
+        skills=skills,
+        biggest_gain=biggest[0] if biggest else None,
+        biggest_gain_delta=biggest[1] if biggest else 0.0,
+    )
+
+
+@app.get("/api/performances/{performance_id}", response_model=PerformanceDetail)
+def performance_detail(
+    performance_id: int, conn: Connection = Depends(get_conn)
+) -> PerformanceDetail:
+    """One past attempt: the score, the notes as written, the notes as played.
+
+    Stored when the attempt happened, so this is a read rather than a reconstruction —
+    and it is what lets a history row be opened and heard instead of only counted.
+    """
+    row = store.performance_detail(conn, performance_id, current_user_id())
+    if row is None:
+        raise HTTPException(status_code=404, detail="performance not found")
+    return PerformanceDetail(
+        performance_id=row["id"],
+        exercise_id=row["exercise_id"],
+        score=row["score"],
+        pitch_accuracy=row["pitch_accuracy"],
+        rhythm_accuracy=row["rhythm_accuracy"],
+        continuity_accuracy=row["continuity_accuracy"],
+        mode=row["mode"],
+        tempo_bpm=row["tempo_bpm"],
+        performed_at=row["performed_at"],
+        key_name=row["key_name"],
+        meter=row["meter"],
+        difficulty_elo=row["difficulty_elo"],
+        target_skill=row["target_skill"],
+        levels=row["levels"],
+        expected_notes=row["expected_notes"],
+        played_notes=row["played_notes"],
+        feedback=row["feedback"],
+        by_hand=row["by_hand"],
     )
 
 

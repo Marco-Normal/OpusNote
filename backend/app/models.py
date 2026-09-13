@@ -17,6 +17,54 @@ class PlayedNoteIn(BaseModel):
     channel: int = Field(default=0, ge=0, le=15)
 
 
+class RatingPoint(BaseModel):
+    at: str
+    before: float
+    after: float
+    delta: float
+    score: float | None = None
+    performance_id: int | None = None
+    #: True when this skill was the attempt's target, rather than incidentally nudged.
+    focus: bool = False
+
+
+class SkillRatingSeries(BaseModel):
+    slug: str
+    name: str
+    points: list[RatingPoint]
+
+
+class RatingHistory(BaseModel):
+    days: int
+    skills: list[SkillRatingSeries]
+    #: Skills that moved most in the window, for a summary line.
+    biggest_gain: str | None = None
+    biggest_gain_delta: float = 0.0
+
+
+class PerformanceDetail(BaseModel):
+    """One past attempt, with everything needed to display and replay it."""
+
+    performance_id: int
+    exercise_id: int
+    score: float | None = None
+    pitch_accuracy: float | None = None
+    rhythm_accuracy: float | None = None
+    continuity_accuracy: float | None = None
+    mode: str
+    tempo_bpm: float | None = None
+    performed_at: str | None = None
+    key_name: str | None = None
+    meter: str | None = None
+    difficulty_elo: float | None = None
+    target_skill: str | None = None
+    levels: dict[str, int] = Field(default_factory=dict)
+    expected_notes: list[dict] = Field(default_factory=list)
+    played_notes: list[dict] = Field(default_factory=list)
+    feedback: list[dict] = Field(default_factory=list)
+    by_hand: dict = Field(default_factory=dict)
+
+
 class ScoreRequest(BaseModel):
     exercise_id: int
     notes: list[PlayedNoteIn] = Field(default_factory=list)

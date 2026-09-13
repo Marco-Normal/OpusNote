@@ -136,6 +136,18 @@ Pieces are measured, not claimed: `median_tempo` is a **note rate** over attack
 clusters (chords are one attack, so they do not read as infinite BPM). It is
 comparable with itself over time, not an absolute metronome reading.
 
+### Progress, and hearing the past
+
+- **Rating over time** (Progress tab): every rating change is recorded, so each skill
+  has a curve rather than a single number. The Elo engine nudges all nine dimensions on
+  every attempt, so each point records whether its skill was that attempt's *focus*;
+  the chart draws the whole line and tells you how many points were focus attempts.
+- **Click a row in Recent exercises** to open that attempt: its sub-scores, its counts,
+  and the same *Hear it* player a fresh result gets — your performance, or the exercise
+  as written, either hand.
+- **This week** (Log tab): minutes over the last seven days, workouts and streak, the
+  most improved skill, and the piece you have neglected longest.
+
 ### Hearing it back
 
 Two players, because there are two things worth hearing:

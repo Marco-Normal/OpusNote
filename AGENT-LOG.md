@@ -508,3 +508,28 @@ Verified: 652 backend tests, 21 frontend unit tests, `svelte-check` clean, front
 built, all ten browser scenarios — including assertions that the player reports which
 source is sounding, that Stop clears the playhead, and that the notes route is fetched
 only when playback is asked for.
+
+## 2026-09-12 — sight-reading agent — Phase 11 landed (progress you can see), and Phases 12-14 planned
+
+After a brainstorm the user picked four directions and an order: progress (11), ops
+polish (12), library depth (13), musical content (14). They explicitly *declined*
+section practice and per-hand practice for now; both are recorded as still-open rather
+than quietly dropped.
+
+Phase 11 landed:
+
+- **`rating_events`**, written for every skill whose rating moves, one row per attempt.
+  `user_skills` kept only the current number, so there was no curve. The Elo engine
+  moves all nine dimensions on every attempt, so each point carries a **focus** flag —
+  without it, eight incidental nudges drown the series that matters.
+- **`GET /api/progress/ratings?days=`** (grouped by skill, with the biggest gain) and
+  **`GET /api/performances/{id}`** (the stored played notes, analysis and exercise, in
+  the shapes the results panel already used). Both additive; no existing field changed.
+- **`HearIt.svelte`** now owns the player UI, used by a fresh result and by a past
+  attempt, so the two cannot drift.
+- Week in review in the Log tab, and clickable history rows in Progress.
+
+Contract note for the other side: the only new stored artefact is `rating_events`, and
+the two new routes are read-only. `PerformanceDetail.expected_notes` uses `onset_s` and
+`duration_q` (the notation's own units) while `played_notes` uses `onset`/`duration` in
+seconds — the same asymmetry the score endpoint has, deliberately.

@@ -257,6 +257,16 @@ def record_performance(
         analysis=analysis,
     )
     store.apply_rating_updates(conn, user_id, updated)
+    # The change is recorded, not just applied: `user_skills` keeps only the current
+    # value, so this row is the only way to see a curve later.
+    store.record_rating_events(
+        conn,
+        user_id,
+        before=ratings,
+        after=updated,
+        score=result.score,
+        performance_id=performance_id,
+    )
 
     passed = result.score >= cfg.pass_threshold
     skill_rows = {row["slug"]: row for row in store.get_skill_rows(conn, user_id)}

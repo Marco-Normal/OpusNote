@@ -594,6 +594,32 @@ def scenario_calibration_and_stats(browser) -> None:
     check("streak" in tiles, "progress view shows the practice streak")
     history_rows = page.evaluate("() => document.querySelectorAll('table tbody tr').length")
     check(history_rows > 0, f"progress view lists {history_rows} recent exercises")
+
+    # Rating history: recorded per attempt, because `user_skills` keeps only today's
+    # number and a curve cannot be recovered from it.
+    check(
+        page.locator('[data-ratings="shown"]').count() == 1,
+        "the rating curve has points after a scored attempt",
+    )
+    check(
+        page.locator('[data-ratings="shown"] svg .line').count() >= 1,
+        "and it is drawn",
+    )
+
+    # A past attempt opened from the history, and heard back.
+    page.locator("table tbody tr.pickable").first.click()
+    page.wait_for_selector("[data-attempt]", timeout=15_000)
+    check(True, "a past attempt can be opened from the history")
+    check(
+        page.locator("[data-attempt] .hearing[data-playing]").count() == 1,
+        "and it offers the same player as a fresh result",
+    )
+    page.get_by_role("button", name="Play yours", exact=True).click()
+    page.wait_for_selector('[data-playing="mine"]', timeout=10_000)
+    check(True, "a past attempt can be played back from the stored notes")
+    click_button(page, "Stop")
+    page.wait_for_selector('[data-playing="false"]', timeout=10_000)
+    page.screenshot(path=str(SHOTS / "04-progress.png"), full_page=True)
     check(page.evaluate("() => document.querySelectorAll('svg .area').length") == 1, "radar chart drawn")
     page.screenshot(path=str(SHOTS / "04-progress.png"), full_page=True)
 

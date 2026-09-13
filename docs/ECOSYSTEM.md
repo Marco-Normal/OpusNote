@@ -191,6 +191,10 @@ sessionizer and segmentation move across as-is with their tests.
 | 6 | **Cross-domain features** | Sight-reading generated from your active pieces; unified time-per-piece; one dashboard; workouts (roadmap Slice E). | low |
 | 7 | **Portability** | JSON export/import, deployment notes for the piano machine, backup guidance for WAL. | low |
 | 8 | **MIDI that sets itself up** | Auto-connect and auto-select on a piano that is switched on later, across a device list that includes ALSA's dead *Midi Through* port. | low |
+| 11 | **Progress you can see** | Rating history per skill, click-and-hear a past attempt, sub-score trends, week in review. | low |
+| 12 | **Ops polish** | Nightly rotating backups, a health panel, latency suggested from your own timing bias. | low |
+| 13 | **Library depth** | Attach and render scores (PDF and MusicXML), waveform with A/B loop, sustain pedal captured, self-similarity auto-tagging. | medium |
+| 14 | **More musical content** | Unusual meters, clef reading, dynamics and articulation depth. | medium |
 | 10 | **Playback** | Hear a scored attempt back (either hand, or the exercise as written) and hear a logged sitting or segment from the practice log, with a playhead. | low |
 | 9 | **LAN server** | A planted notebook serving the whole app on the local network: `deploy/`, kiosk autostart, capture heartbeat, upload cap, concurrent-write hardening. | medium |
 
@@ -640,6 +644,56 @@ not, and no sample library is being pretended into existence.
 hands are not separable, because the piano sends both hands on one MIDI channel and only
 that channel is stored. A scored attempt does not have that limit, because the exercise
 knows which hand each note belongs to.
+
+### Phase 11 — landed (progress you can see)
+
+Chosen by the user from a brainstorm, in preference to section practice and per-hand
+practice (both still on the list below). The half of the app that makes effort visible.
+
+- **Rating history.** `user_skills` holds one number per skill, so there was no curve to
+  draw and no way to say "rhythm is up 40 points this month". A `rating_events` row is
+  written for every skill whose rating moves, one per attempt. It turned out that the
+  Elo engine moves *all nine* dimensions a little on every attempt, so each point also
+  records whether its skill was the attempt's **focus** — otherwise eight incidental
+  nudges of a fifth of a point would bury the series that means something. The chart
+  draws the whole line and reports how many of its points were focus attempts.
+- **A past attempt, opened and heard.** `GET /api/performances/{id}` reads the stored
+  `played_notes_json`, the analysis and the exercise back in the same shapes the results
+  panel used, so a history row is a thing you can listen to rather than only count. The
+  player UI moved into `HearIt.svelte` so a fresh result and a past attempt share one
+  owner and cannot drift.
+- **Week in review** in the Log tab: minutes over the last seven days, workouts and
+  streak, the most improved skill, and the most neglected piece.
+
+### Phase 12 — planned (ops polish)
+
+A nightly rotating JSON backup (a systemd timer reusing the export), a health panel
+(database size, media present/pending/missing, last backup age, sequencer, capture
+heartbeat), and a latency suggestion derived from your own median onset bias —
+suggested with one click, never applied silently.
+
+### Phase 13 — planned (library depth)
+
+Attach a score to a piece — **PDF** (the browser renders it; no library) and
+**MusicXML** (rendered in-app through the OSMD already present) — stored through the
+existing content-hashed media pipeline with `kind='score'` rather than a new table.
+Plus a waveform with an A/B loop for recordings (peaks decoded client-side; markers in
+the database so they are visible from any machine), sustain pedal captured at last
+(CC64 is parsed and dropped today), and the self-similarity auto-tagging that the
+original design specified but never built.
+
+### Phase 14 — planned (musical content)
+
+Unusual meters (5/4, 7/8, 3/8, 2/2) via the existing meter table; **clef reading** as a
+new skill dimension (a real, independently trainable skill, with the honest cost that
+it ripples into the radar chart, the calibration ladder and the defaults); and dynamics
+— notation first, velocity scoring later, because scoring a dynamic is a new contract.
+
+### Still open, from the earlier brainstorm
+
+**Section practice** (pick bars, slow down, loop until clean) and **per-hand practice**,
+both offered and both deferred by the user. They remain the highest-value items on this
+list by my estimate, since they change what the app is *for* rather than what it shows.
 
 ### Risks, stated plainly
 

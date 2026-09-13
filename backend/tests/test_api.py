@@ -533,3 +533,103 @@ def test_the_suggestion_endpoint_output_can_be_fed_back_as_a_key(client, legacy_
             "/api/exercise/next", params={"key": suggestion["suggested_key"]}
         ).json()
         assert exercise["key_name"] == suggestion["suggested_key"]
+
+
+# --- progress: rating history and past attempts ---------------------------
+
+
+def test_scoring_records_where_each_rating_moved(client):
+    """`user_skills` keeps only today's number, so the curve needs recorded changes."""
+    exercise = client.get("/api/exercise/next").json()
+    assert client.get("/api/progress/ratings").json()["skills"] == []
+
+    client.post(
+        "/api/score",
+        json={"exercise_id": exercise["exercise_id"], "notes": perfect_performance(exercise)},
+    )
+    body = client.get("/api/progress/ratings").json()
+    # The Elo engine spreads an update across every dimension, so every skill moves a
+    # little and all nine appear. The skill that was actually trained moves most, and
+    # every point says whether it was the focus.
+    assert {entry["slug"] for entry in body["skills"]} == set(SKILL_SLUGS)
+    focus = next(entry for entry in body["skills"] if entry["slug"] == exercise["target_skill"])
+    assert focus["name"]
+    point = focus["points"][0]
+    assert point["focus"] is True
+    assert point["after"] > point["before"], "a perfect attempt raises the rating"
+    assert point["delta"] == round(point["after"] - point["before"], 2)
+    assert point["score"] == pytest.approx(100.0, abs=0.5)
+    assert point["performance_id"] is not None
+
+    incidental = [entry for entry in body["skills"] if entry["slug"] != exercise["target_skill"]]
+    assert any(entry["points"][0]["focus"] is False for entry in incidental)
+    assert focus["points"][0]["delta"] > max(
+        abs(entry["points"][0]["delta"]) for entry in incidental
+    ), "the trained skill moves more than the incidental nudges"
+    assert body["biggest_gain"] == focus["name"]
+    assert body["biggest_gain_delta"] > 0
+
+
+def test_a_failed_attempt_records_a_fall(client):
+    exercise = client.get("/api/exercise/next").json()
+    client.post(
+        "/api/score",
+        json={"exercise_id": exercise["exercise_id"], "notes": []},
+    )
+    point = client.get("/api/progress/ratings").json()["skills"][0]["points"][0]
+    assert point["after"] < point["before"]
+    assert point["delta"] < 0
+
+
+def test_rating_history_accumulates_in_order(client):
+    for _ in range(3):
+        exercise = client.get("/api/exercise/next").json()
+        client.post(
+            "/api/score",
+            json={"exercise_id": exercise["exercise_id"], "notes": []},
+        )
+    skills = client.get("/api/progress/ratings").json()["skills"]
+    assert skills
+    for entry in skills:
+        points = entry["points"]
+        assert len(points) == 3, f"{entry['slug']} should have one point per attempt"
+        assert [point["at"] for point in points] == sorted(point["at"] for point in points)
+        # Every series has to be continuous: a point starts where the last one ended,
+        # or the curve is drawing a rating that never existed.
+        for previous, following in zip(points, points[1:]):
+            assert following["before"] == pytest.approx(previous["after"])
+
+
+def test_rating_history_can_be_windowed(client):
+    exercise = client.get("/api/exercise/next").json()
+    client.post(
+        "/api/score",
+        json={"exercise_id": exercise["exercise_id"], "notes": perfect_performance(exercise)},
+    )
+    assert client.get("/api/progress/ratings?days=1").json()["skills"] != []
+    assert client.get("/api/progress/ratings?days=1").json()["days"] == 1
+
+
+def test_a_past_attempt_can_be_read_back_for_replay(client):
+    """The three things the results panel had in memory, read from the database."""
+    exercise = client.get("/api/exercise/next").json()
+    notes = perfect_performance(exercise)
+    scored = client.post(
+        "/api/score", json={"exercise_id": exercise["exercise_id"], "notes": notes}
+    ).json()
+
+    detail = client.get(f"/api/performances/{scored['performance_id']}").json()
+    assert detail["exercise_id"] == exercise["exercise_id"]
+    assert detail["score"] == pytest.approx(scored["score"])
+    assert detail["target_skill"] == exercise["target_skill"]
+    assert len(detail["expected_notes"]) == len(exercise["expected_notes"])
+    assert len(detail["played_notes"]) == len(notes)
+    assert len(detail["feedback"]) == len(exercise["expected_notes"])
+    # Both sides carry what playback needs: pitch, onset in seconds, and a duration.
+    assert {"pitch", "onset_s", "hand"} <= set(detail["expected_notes"][0])
+    assert {"pitch", "onset", "duration", "velocity"} <= set(detail["played_notes"][0])
+    assert {"hand", "played_pitch", "onset_error_s"} <= set(detail["feedback"][0])
+
+
+def test_an_unknown_performance_is_not_found(client):
+    assert client.get("/api/performances/9999").status_code == 404

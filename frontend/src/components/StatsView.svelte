@@ -1,21 +1,72 @@
 <script lang="ts">
   import { api } from '../lib/api';
   import { app } from '../lib/state.svelte';
-  import type { Stats } from '../lib/types';
+  import type { PerformanceDetail, RatingHistory, Stats } from '../lib/types';
   import { theme } from '../lib/theme.svelte';
+  import AttemptDetail from './AttemptDetail.svelte';
   import RadarChart from './RadarChart.svelte';
   import LineChart from './LineChart.svelte';
 
   let stats = $state<Stats | null>(null);
+  let ratings = $state<RatingHistory | null>(null);
+  let ratingSkill = $state<string>('');
+  let attempt = $state<PerformanceDetail | null>(null);
   let loading = $state(false);
   let error = $state<string | null>(null);
   let confirmingReset = $state(false);
+
+  /** The skill to draw: the one chosen, else the one that moved most. */
+  const chosen = $derived.by(() => {
+    if (!ratings || ratings.skills.length === 0) return null;
+    const bySlug = ratings.skills.find((entry) => entry.slug === ratingSkill);
+    if (bySlug) return bySlug;
+    return [...ratings.skills].sort((a, b) => totalDelta(b) - totalDelta(a))[0];
+  });
+
+  function totalDelta(entry: { points: { delta: number }[] }): number {
+    return entry.points.reduce((sum, point) => sum + Math.abs(point.delta), 0);
+  }
+
+  const ratingSeries = $derived(
+    chosen
+      ? [
+          {
+            label: chosen.name,
+            color: 'var(--accent)',
+            points: chosen.points.map((point) => ({
+              x: new Date(`${point.at.replace(' ', 'T')}Z`).getTime(),
+              y: point.after,
+            })),
+          },
+        ]
+      : [],
+  );
+
+  const ratingRange = $derived.by(() => {
+    const values = chosen?.points.flatMap((point) => [point.before, point.after]) ?? [];
+    if (values.length === 0) return { min: 0, max: 100 };
+    const low = Math.min(...values);
+    const high = Math.max(...values);
+    const pad = Math.max(25, (high - low) * 0.2);
+    return { min: Math.floor(low - pad), max: Math.ceil(high + pad) };
+  });
+
+  const focusCount = $derived(chosen?.points.filter((point) => point.focus).length ?? 0);
+
+  async function openAttempt(id: number): Promise<void> {
+    try {
+      attempt = await api.performance(id);
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : String(cause);
+    }
+  }
 
   async function load(): Promise<void> {
     loading = true;
     error = null;
     try {
       stats = await api.stats();
+      ratings = await api.progressRatings(90).catch(() => null);
     } catch (cause) {
       error = cause instanceof Error ? cause.message : String(cause);
     } finally {
@@ -187,8 +238,52 @@
     </section>
   </div>
 
+  <section class="card panel" data-ratings={chosen ? 'shown' : 'empty'}>
+    <div class="spread wrap">
+      <h3>Rating over time</h3>
+      {#if ratings && ratings.skills.length > 1}
+        <label class="row pick">
+          <span class="muted small">Skill</span>
+          <select bind:value={ratingSkill}>
+            {#each ratings.skills as entry (entry.slug)}
+              <option value={entry.slug}>{entry.name}</option>
+            {/each}
+          </select>
+        </label>
+      {/if}
+    </div>
+
+    {#if !chosen}
+      <p class="muted small">
+        Nothing recorded yet. A rating change is written every time an exercise is
+        scored, so this fills as you play.
+      </p>
+    {:else}
+      <LineChart
+        series={ratingSeries}
+        yMin={ratingRange.min}
+        yMax={ratingRange.max}
+        yLabel="Rating over time"
+      />
+      <p class="muted small">
+        {chosen.name}: {chosen.points.length} changes, {focusCount} of them when this was
+        the focus. Every skill moves a little on every attempt — the trained one moves
+        most — so the line is the whole picture, not only the highlighted attempts.
+        {#if ratings?.biggest_gain}
+          Biggest gain in 90 days: {ratings.biggest_gain}
+          {ratings.biggest_gain_delta > 0 ? '+' : ''}{ratings.biggest_gain_delta}.
+        {/if}
+      </p>
+    {/if}
+  </section>
+
+  {#if attempt}
+    <AttemptDetail detail={attempt} onclose={() => (attempt = null)} />
+  {/if}
+
   <section class="card panel">
     <h3>Recent exercises</h3>
+    <p class="muted small">Click a row to see the attempt and hear it back.</p>
     {#if stats.history.length === 0}
       <p class="muted small">Nothing played yet.</p>
     {:else}
@@ -209,7 +304,11 @@
           </thead>
           <tbody>
             {#each [...stats.history].reverse() as item (item.id)}
-              <tr>
+              <tr
+                class="pickable"
+                class:selected={attempt?.performance_id === item.id}
+                onclick={() => void openAttempt(item.id)}
+              >
                 <td class="muted">{item.performed_at.slice(5, 16)}</td>
                 <td>{item.target_skill?.replace(/_/g, ' ') ?? '—'}</td>
                 <td>{item.key_name ?? '—'}</td>
@@ -274,6 +373,22 @@
     font-size: 0.72rem;
     color: var(--muted);
     font-weight: 400;
+  }
+
+  .pickable {
+    cursor: pointer;
+  }
+
+  .pickable:hover {
+    background: var(--scrim);
+  }
+
+  .pickable.selected {
+    background: var(--accent-soft);
+  }
+
+  .pick {
+    gap: 0.35rem;
   }
 
   .table-wrap {
