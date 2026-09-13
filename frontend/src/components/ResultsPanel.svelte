@@ -1,15 +1,59 @@
 <script lang="ts">
-  import type { Exercise, ScoreResult } from '../lib/types';
+  import { onDestroy } from 'svelte';
+  import { PianoPlayer } from '../lib/pianoPlayer';
+  import { forHands, playedEvents, sounding, writtenEvents } from '../lib/playback';
+  import type { Hand } from '../lib/playback';
+  import type { Exercise, PlayedNote, ScoreResult } from '../lib/types';
   import { midiToName } from '../lib/types';
 
   interface Props {
     result: ScoreResult;
     exercise: Exercise;
+    /** What was played, from the run that produced this result. */
+    played: readonly PlayedNote[];
     onNext: () => void;
     onRetry: () => void;
   }
 
-  let { result, exercise, onNext, onRetry }: Props = $props();
+  let { result, exercise, played, onNext, onRetry }: Props = $props();
+
+  const player = new PianoPlayer();
+  let playing = $state<'mine' | 'written' | null>(null);
+  let hearRight = $state(true);
+  let hearLeft = $state(true);
+  let progress = $state(0);
+
+  const hands = $derived(
+    [hearRight ? 'RH' : null, hearLeft ? 'LH' : null].filter(Boolean) as Hand[],
+  );
+
+  /** Played notes carrying the hand the scorer matched them to. */
+  const mine = $derived(sounding(forHands(playedEvents(played, result.feedback), hands)));
+  /** The same bars as notated, at the tempo that was counted in. */
+  const written = $derived(sounding(forHands(writtenEvents(exercise.expected_notes, exercise.tempo_bpm), hands)));
+
+  async function hear(source: 'mine' | 'written'): Promise<void> {
+    const notes = source === 'mine' ? mine : written;
+    playing = source;
+    progress = 0;
+    await player.play(notes, {
+      onProgress: (handle) => {
+        progress = handle.total > 0 ? Math.min(1, handle.elapsed / handle.total) : 0;
+      },
+      onDone: () => {
+        playing = null;
+        progress = 0;
+      },
+    });
+  }
+
+  function stop(): void {
+    player.stop();
+    playing = null;
+    progress = 0;
+  }
+
+  onDestroy(() => player.dispose());
 
   const wrongNotes = $derived(result.feedback.filter((item) => item.status === 'wrong_pitch'));
   const missedNotes = $derived(result.feedback.filter((item) => item.status === 'missed'));
@@ -126,6 +170,29 @@
     </div>
   {/if}
 
+  <div class="row wrap hearing" data-playing={playing ?? 'false'}>
+    <span class="muted small">Hear it</span>
+    <button class="ghost" onclick={() => void hear('mine')} disabled={mine.length === 0}>
+      Play yours
+    </button>
+    <button class="ghost" onclick={() => void hear('written')}>Play as written</button>
+    {#if playing}
+      <button class="ghost" onclick={stop}>Stop</button>
+    {/if}
+    <label class="hand">
+      <input type="checkbox" bind:checked={hearRight} /> RH
+    </label>
+    <label class="hand">
+      <input type="checkbox" bind:checked={hearLeft} /> LH
+    </label>
+    {#if playing}
+      <span class="meter" aria-hidden="true"><span style="width: {progress * 100}%"></span></span>
+    {/if}
+    <span class="muted small">
+      Synthesised, not the piano — but the timing and touch are yours.
+    </span>
+  </div>
+
   <div class="row">
     <button class="primary" onclick={onNext}>Next exercise</button>
     <button onclick={onRetry}>Play again</button>
@@ -134,6 +201,33 @@
 </div>
 
 <style>
+  .hearing {
+    border-top: 1px solid var(--line);
+    padding-top: 0.6rem;
+    align-items: center;
+  }
+
+  .hand {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 0.82rem;
+    color: var(--muted);
+  }
+
+  .meter {
+    flex: 0 0 6rem;
+    height: 3px;
+    border-radius: 999px;
+    background: var(--track);
+    overflow: hidden;
+  }
+
+  .meter span {
+    display: block;
+    height: 100%;
+    background: var(--accent);
+  }
   .result {
     display: flex;
     flex-direction: column;

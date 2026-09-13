@@ -453,6 +453,32 @@ def scenario_perfect(browser) -> None:
         f"every note is coloured as correct on the score ({counts.get(correct, 0)}/{len(expected)} at {correct})",
     )
 
+    # Playback of the attempt. Sound cannot be asserted in a headless browser, but the
+    # state transitions can, and they are what breaks: a player that never reports
+    # itself finished leaves a Stop button and a stuck synth behind.
+    check(
+        page.locator(".hearing[data-playing]").count() == 1,
+        "the result offers to play the attempt back",
+    )
+    check(
+        page.get_by_role("button", name="Play as written", exact=True).count() == 1,
+        "and to play the exercise as notated",
+    )
+    page.get_by_role("button", name="Play yours", exact=True).click()
+    page.wait_for_selector('.hearing[data-playing="mine"]', timeout=5_000)
+    check(True, "playing the attempt starts and reports which source is playing")
+    click_button(page, "Stop")
+    page.wait_for_selector('.hearing[data-playing="false"]', timeout=5_000)
+    check(True, "and stopping it returns the panel to rest")
+
+    # Left hand only: the hand checkboxes filter both sources.
+    page.get_by_label("LH").uncheck()
+    page.get_by_role("button", name="Play as written", exact=True).click()
+    page.wait_for_selector('.hearing[data-playing="written"]', timeout=5_000)
+    check(True, "and either hand alone can be heard")
+    click_button(page, "Stop")
+    page.get_by_label("LH").check()
+
     notes_right = result_stat(page, "Notes right")
     check(
         notes_right == f"{len(expected)}/{len(expected)}",

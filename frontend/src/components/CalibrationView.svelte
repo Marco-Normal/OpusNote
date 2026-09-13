@@ -27,6 +27,8 @@
   let total = $state(8);
 
   let played: PlayedNote[] = [];
+  /** What was played, frozen at scoring time: the results panel replays this. */
+  let attempt = $state<PlayedNote[]>([]);
   let matcher: LiveMatcher | null = null;
   let endTimer: ReturnType<typeof setTimeout> | null = null;
   let offBeat: (() => void) | null = null;
@@ -118,6 +120,7 @@
     }
 
     played = [];
+    attempt = [];
     durations = new Map();
     matcher = new LiveMatcher(exercise.expected_notes);
     liveStatuses = new Map();
@@ -152,6 +155,7 @@
     app.midi.stopRecording();
     beatInfo = null;
     phase = 'submitting';
+    attempt = played.map((note) => ({ ...note }));
 
     try {
       const scored = await api.score({
@@ -284,6 +288,7 @@
       <ResultsPanel
         {result}
         {exercise}
+        played={attempt}
         onNext={() => void load()}
         onRetry={() => void start()}
       />

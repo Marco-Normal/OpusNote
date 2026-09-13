@@ -33,6 +33,8 @@
   let progress = $state({ done: 0, total: 0, correct: 0, wrong: 0, extra: 0 });
 
   let played: PlayedNote[] = [];
+  /** What was played, frozen at scoring time: the results panel replays this. */
+  let attempt = $state<PlayedNote[]>([]);
   let matcher: LiveMatcher | null = null;
   let endTimer: ReturnType<typeof setTimeout> | null = null;
   let offBeat: (() => void) | null = null;
@@ -182,6 +184,7 @@
     metronome.stop();
     app.midi.stopRecording();
     played = [];
+    attempt = [];
     durations = new Map();
     matcher = null;
     result = null;
@@ -243,6 +246,7 @@
 
     phase = 'submitting';
     const notes = played.map((note) => ({ ...note }));
+    attempt = notes;
 
     try {
       const scored = await api.score({
@@ -434,7 +438,13 @@
     <div class="score-surface" bind:this={scoreContainer}></div>
 
     {#if phase === 'result' && result}
-      <ResultsPanel {result} {exercise} onNext={() => void loadExercise()} onRetry={() => void start()} />
+      <ResultsPanel
+        {result}
+        {exercise}
+        played={attempt}
+        onNext={() => void loadExercise()}
+        onRetry={() => void start()}
+      />
     {:else if phase !== 'result'}
       <NoteStrip notes={exercise.expected_notes} statuses={liveStatuses} />
     {/if}
