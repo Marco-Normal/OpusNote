@@ -313,8 +313,12 @@ cd ../backend && .venv/bin/python -m uvicorn app.main:app --port 8000
 cd backend && .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m pytest -q
 
-# Full browser end-to-end against the running server (see tools/e2e_browser.py)
-.venv/bin/python tools/e2e_browser.py
+# Full browser end-to-end against the running server (see tools/e2e_browser.py).
+# It wants its own database and media directory, and a writable piano directory —
+# the app serves the samples from a static mount it creates at startup:
+SRT_DB_PATH=$PWD/data/e2e.sqlite3 SRT_LEGACY_DB=$PWD/data/legacy-fixture.db \
+  SRT_MEDIA_DIR=$PWD/data/e2e-media SRT_PIANO_DIR=$PWD/data/e2e-piano \
+  .venv/bin/python tools/e2e_browser.py
 
 # How well the matcher recognises a drilled section, on generated material
 # (see tools/measure_autotag.py — this is where the shipped weights come from)
