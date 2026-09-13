@@ -364,6 +364,21 @@ export interface SegmentSummary {
   metrics: SegmentMetrics | null;
 }
 
+/** One note as it was played, relative to the sitting's start. */
+export interface LoggedNote {
+  onset_ms: number;
+  duration_ms: number;
+  pitch: number;
+  velocity: number;
+  channel: number | null;
+}
+
+export interface SittingNotes {
+  sitting_id: number;
+  started_ms: number;
+  notes: LoggedNote[];
+}
+
 export interface SittingDetail {
   id: number;
   started_at: string;

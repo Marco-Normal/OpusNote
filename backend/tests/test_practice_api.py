@@ -431,3 +431,59 @@ def test_settings_still_point_at_one_database(client) -> None:
         "pieces",
     } <= names
     assert settings.db_path.name == "test.sqlite3"
+
+
+# --- playback -------------------------------------------------------------
+
+
+def test_the_notes_of_a_sitting_are_available_for_playback(client) -> None:
+    """Everything a synthesiser needs, in playing order."""
+    sitting_id = record([0, 500, 1_000]).sitting_id
+    body = client.get(f"/api/practice/sittings/{sitting_id}/notes").json()
+    assert body["sitting_id"] == sitting_id
+    assert body["started_ms"] == BASE_MS
+    assert [note["onset_ms"] for note in body["notes"]] == [0, 500, 1_000]
+    assert all(note["duration_ms"] == 300 for note in body["notes"])
+    assert all(note["velocity"] == 70 for note in body["notes"])
+    assert [note["pitch"] for note in body["notes"]] == [60, 61, 62]
+
+
+def test_the_notes_are_ordered_by_onset_not_by_insertion(client) -> None:
+    """A batch can arrive out of order; playback must not replay it that way."""
+    from app.practice.models import EventBatch, WireNote
+
+    store.ingest(
+        EventBatch(
+            tz_offset_minutes=0,
+            events=[
+                WireNote(epoch_ms=BASE_MS + offset, pitch=pitch, velocity=70, duration_ms=100)
+                for pitch, offset in ((72, 900), (60, 0), (67, 450))
+            ],
+        )
+    )
+    notes = client.get("/api/practice/sittings/1/notes").json()["notes"]
+    assert [note["onset_ms"] for note in notes] == [0, 450, 900]
+
+
+def test_playback_of_a_sitting_with_no_notes_is_empty_not_an_error(client) -> None:
+    from app import db as db_module
+    from app.config import settings
+
+    conn = db_module.connect(settings.db_path)
+    try:
+        conn.execute("BEGIN")
+        sitting_id = int(
+            conn.execute(
+                "INSERT INTO sittings (started_ms, ended_ms, started_at, ended_at, local_date)"
+                " VALUES (0, 0, '1970-01-01 00:00:00', '1970-01-01 00:00:00', '1970-01-01')"
+            ).lastrowid
+        )
+        conn.execute("COMMIT")
+    finally:
+        conn.close()
+    body = client.get(f"/api/practice/sittings/{sitting_id}/notes").json()
+    assert body["notes"] == []
+
+
+def test_notes_for_an_unknown_sitting_are_404(client) -> None:
+    assert client.get("/api/practice/sittings/9999/notes").status_code == 404

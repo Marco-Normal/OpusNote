@@ -1492,6 +1492,27 @@ def scenario_practice_log(browser) -> None:
         page.click(f'[data-sitting="{seeded}"]')
     page.wait_for_selector('section.timeline[data-segments="2"]', timeout=20_000)
 
+    # Playback of what was logged. The notes are fetched on demand, which is the part
+    # worth asserting: the sitting detail deliberately does not carry them.
+    with page.expect_response(lambda r: f"/api/practice/sittings/{seeded}/notes" in r.url):
+        click_button(page, "Play the sitting")
+    page.wait_for_selector('[data-playing="true"]', timeout=10_000)
+    check(True, "a logged sitting can be played back from its notes")
+    check(
+        page.locator("[data-playhead]").count() == 1,
+        "and the strip shows where playback has reached",
+    )
+    click_button(page, "Stop")
+    page.wait_for_selector('[data-playing="false"]', timeout=10_000)
+    check(True, "stopping clears the playhead")
+
+    # One segment on its own.
+    page.get_by_role("button", name=re.compile(r"^▶")).first.click()
+    page.wait_for_selector('[data-playing="true"]', timeout=10_000)
+    check(True, "and a single segment can be heard on its own")
+    click_button(page, "Stop")
+    page.wait_for_selector('[data-playing="false"]', timeout=10_000)
+
     # Split: the silence detector's boundary was wrong, so move it by hand.
     split = page.locator(".split input").first
     split.fill("10")

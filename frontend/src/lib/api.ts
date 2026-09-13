@@ -32,6 +32,7 @@ import type {
   ScoreResult,
   SegmentSummary,
   SittingDetail,
+  SittingNotes,
   SittingSummary,
   SkillInfo,
   Stats,
@@ -274,6 +275,9 @@ export const api = {
     sittings: (limit = 20) => request<SittingSummary[]>(`/practice/sittings?limit=${limit}`),
 
     sitting: (id: number) => request<SittingDetail>(`/practice/sittings/${id}`),
+
+    /** Every note of a sitting, read on demand: the only heavy payload here. */
+    sittingNotes: (id: number) => request<SittingNotes>(`/practice/sittings/${id}/notes`),
 
     resegment: (id: number, confirm = false) =>
       request<SegmentSummary[]>(`/practice/sittings/${id}/resegment`, {

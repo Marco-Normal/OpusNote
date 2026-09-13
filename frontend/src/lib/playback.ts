@@ -6,7 +6,7 @@
  * check by ear and trivial to check in a test. `pianoPlayer.ts` does the Tone part.
  */
 
-import type { ExpectedNote, NoteFeedback, PlayedNote } from './types';
+import type { ExpectedNote, LoggedNote, NoteFeedback, PlayedNote } from './types';
 
 export type Hand = 'RH' | 'LH';
 
@@ -91,6 +91,35 @@ export function writtenEvents(
     velocity: WRITTEN_VELOCITY,
     hand: note.hand,
   }));
+}
+
+/**
+ * What was logged, from the practice log.
+ *
+ * No hand: the passive log keeps the MIDI channel, and the piano sends both hands on
+ * one channel, so a hand filter here would be invented rather than known. Everything
+ * else is exact — these are the durations the piano reported on release.
+ */
+export function loggedEvents(notes: readonly LoggedNote[]): SynthNote[] {
+  return notes.map((note) => ({
+    pitch: note.pitch,
+    onset: note.onset_ms / 1000,
+    duration: Math.max(0.05, note.duration_ms / 1000),
+    velocity: Math.min(1, Math.max(0.05, note.velocity / 127)),
+    hand: null,
+  }));
+}
+
+/** The notes whose onsets fall inside a segment. */
+export function within(
+  notes: readonly SynthNote[],
+  startMs: number,
+  endMs: number,
+): SynthNote[] {
+  return notes.filter((note) => {
+    const onsetMs = note.onset * 1000;
+    return onsetMs >= startMs && onsetMs <= endMs;
+  });
 }
 
 /** Shift everything so playback starts at once, without an initial silence. */

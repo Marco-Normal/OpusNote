@@ -6,6 +6,10 @@
    * deliberate edit: tag a segment, split a boundary the silence detector got
    * wrong, merge two it split, or throw the boundaries away and start again.
    */
+  import { onDestroy } from 'svelte';
+  import { api } from '../lib/api';
+  import { PianoPlayer } from '../lib/pianoPlayer';
+  import { loggedEvents, sounding, within, type SynthNote } from '../lib/playback';
   import { formatClock, type PieceSummary, type SittingDetail } from '../lib/types';
 
   interface Props {
@@ -24,6 +28,61 @@
   let splitAt = $state<Record<number, string>>({});
 
   const total = $derived(Math.max(detail.duration_s * 1000, 1));
+
+  const player = new PianoPlayer();
+  /** Which range is sounding, in sitting-relative milliseconds, or null. */
+  let playing = $state<{ fromMs: number; toMs: number; segmentId: number | null } | null>(null);
+  let playError = $state<string | null>(null);
+  // Notes are fetched on the first play rather than with the detail: a long sitting is
+  // thousands of notes, and every segment edit re-reads the detail without needing one.
+  let notes: SynthNote[] | null = null;
+
+  // A segment's playhead is positioned from the segment's own offset while it plays,
+  // so it tracks the block it started in rather than jumping to the sitting's start.
+  const playhead = $derived.by(() => {
+    const current = playing;
+    if (!current) return { start: 0, width: 0 };
+    const span = Math.max(current.toMs - current.fromMs, 1);
+    return {
+      start: (current.fromMs / total) * 100,
+      width: (span / total) * 100,
+    };
+  });
+
+  async function loadNotes(): Promise<SynthNote[]> {
+    if (notes) return notes;
+    const body = await api.practice.sittingNotes(detail.id);
+    notes = loggedEvents(body.notes);
+    return notes;
+  }
+
+  async function play(fromMs: number, toMs: number, segmentId: number | null): Promise<void> {
+    playError = null;
+    try {
+      const all = await loadNotes();
+      const slice = segmentId === null ? all : within(all, fromMs, toMs);
+      if (slice.length === 0) {
+        playError = 'Nothing was played in this range.';
+        return;
+      }
+      playing = { fromMs, toMs, segmentId };
+      // `sounding` drops the silence before the first note, so playing a segment that
+      // begins after a pause starts immediately rather than waiting it out.
+      await player.play(sounding(slice), {
+        onDone: () => (playing = null),
+      });
+    } catch (cause) {
+      playing = null;
+      playError = cause instanceof Error ? cause.message : String(cause);
+    }
+  }
+
+  function stop(): void {
+    player.stop();
+    playing = null;
+  }
+
+  onDestroy(() => player.dispose());
 
   function offset(ms: number): string {
     return formatClock(ms / 1000);
@@ -66,6 +125,31 @@
     </button>
   </header>
 
+  <div class="row wrap transport" data-playing={playing ? 'true' : 'false'}>
+    {#if playing}
+      <button class="ghost tiny" onclick={stop}>Stop</button>
+      <span class="muted small">
+        Playing {playing.segmentId === null ? 'the whole sitting' : 'this segment'}
+      </span>
+    {:else}
+      <button
+        class="ghost tiny"
+        disabled={detail.note_count === 0}
+        onclick={() => void play(0, total, null)}
+      >
+        Play the sitting
+      </button>
+      <span class="muted small">
+        Synthesised from the logged notes — timing and touch are yours, the instrument
+        is not.
+      </span>
+    {/if}
+  </div>
+
+  {#if playError}
+    <p class="error-banner small">{playError}</p>
+  {/if}
+
   {#if detail.segments.length === 0}
     <p class="muted small">
       {detail.closed
@@ -88,6 +172,15 @@
           )}"
         ></span>
       {/each}
+      {#if playing}
+        <!-- The playhead is positioned from the *segment's* offset while a segment
+             plays, so it tracks the block it started in rather than the sitting. -->
+        <span
+          class="playhead"
+          data-playhead
+          style="left: {playhead.start}%; max-width: {playhead.width}%"
+        ></span>
+      {/if}
     </div>
 
     <ul class="segments">
@@ -159,6 +252,20 @@
                 Merge with previous
               </button>
             {/if}
+
+            <button
+              class="ghost tiny"
+              disabled={busy || segment.note_count === 0}
+              title="Hear this segment"
+              onclick={() =>
+                void play(
+                  segment.start_ms,
+                  segment.end_ms,
+                  segment.id,
+                )}
+            >
+              ▶ {segment.note_count} notes
+            </button>
           </div>
         </li>
       {/each}
@@ -198,6 +305,19 @@
   .block.labelled {
     background: var(--good);
     opacity: 0.8;
+  }
+
+  .playhead {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--ink);
+    box-shadow: 0 0 0 1px var(--surface);
+  }
+
+  .transport {
+    gap: 0.45rem;
   }
 
   .block.sight {

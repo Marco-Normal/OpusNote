@@ -29,6 +29,7 @@ from .models import (
     ResegmentRequest,
     SegmentSummary,
     SittingDetail,
+    SittingNotes,
     SittingSummary,
     SplitRequest,
     TempoSeries,
@@ -121,6 +122,17 @@ def sittings(
 @router.get("/sittings/{sitting_id}", response_model=SittingDetail)
 def sitting_detail(sitting_id: int) -> SittingDetail:
     return _handle(store.sitting_detail, sitting_id)
+
+
+@router.get("/sittings/{sitting_id}/notes", response_model=SittingNotes)
+def sitting_notes(sitting_id: int) -> SittingNotes:
+    """The notes of one sitting, for playback.
+
+    Read on demand rather than folded into the detail: this is the one payload in the
+    practice domain that grows with how long you played, and every segment edit re-reads
+    the detail without needing a single note.
+    """
+    return _handle(store.sitting_notes, sitting_id)
 
 
 @router.post("/sittings/{sitting_id}/resegment", response_model=list[SegmentSummary])

@@ -4,8 +4,10 @@ import assert from 'node:assert/strict';
 import {
   durationOf,
   forHands,
+  loggedEvents,
   playedEvents,
   sounding,
+  within,
   writtenEvents,
 } from './playback.ts';
 
@@ -123,4 +125,27 @@ test('filtering by hand keeps notes whose hand is unknown', () => {
 test('the duration covers the last release', () => {
   assert.equal(durationOf(playedEvents([played(60, 0, 0.5), played(62, 1, 0.25)], [])), 1.25);
   assert.equal(durationOf([]), 0);
+});
+
+test('a logged note needs no conversion beyond milliseconds', () => {
+  const events = loggedEvents([
+    { onset_ms: 250, duration_ms: 400, pitch: 60, velocity: 64, channel: 0 },
+  ]);
+  assert.equal(events[0].onset, 0.25);
+  assert.equal(events[0].duration, 0.4);
+  assert.equal(events[0].hand, null, 'the passive log cannot know the hand');
+});
+
+test('a segment takes the notes inside it, edges included', () => {
+  const notes = loggedEvents([
+    { onset_ms: 0, duration_ms: 100, pitch: 60, velocity: 64, channel: 0 },
+    { onset_ms: 500, duration_ms: 100, pitch: 62, velocity: 64, channel: 0 },
+    { onset_ms: 1000, duration_ms: 100, pitch: 64, velocity: 64, channel: 0 },
+  ]);
+  assert.deepEqual(
+    within(notes, 0, 500).map((note) => note.pitch),
+    [60, 62],
+    'a note exactly on the boundary belongs to the segment that ends there',
+  );
+  assert.deepEqual(within(notes, 501, 999).map((note) => note.pitch), []);
 });

@@ -34,12 +34,14 @@ from .models import (
     CalendarDay,
     EventBatch,
     IngestResult,
+    LoggedNote,
     NeglectedPiece,
     PiecePractice,
     PiecePracticeDetail,
     SegmentMetricsOut,
     SegmentSummary,
     SittingDetail,
+    SittingNotes,
     SittingSummary,
     SourceSplit,
     TempoPoint,
@@ -431,6 +433,34 @@ def sitting_detail(
             duration_s=(int(row["ended_ms"]) - int(row["started_ms"])) / 1000.0,
             closed=int(row["ended_ms"]) + settings.sitting_gap_s * 1000 < now,
             segments=segments,
+        )
+    finally:
+        conn.close()
+
+
+def sitting_notes(sitting_id: int, db_path: Path | None = None) -> SittingNotes:
+    """Every note of a sitting, in the order it was played.
+
+    The stored form is exactly what a synthesiser needs — onset, release-derived
+    duration, pitch, velocity — which is why playback is faithful to timing and touch
+    without any reconstruction.
+    """
+    conn = db.connect(db_path)
+    try:
+        sitting = conn.execute(
+            "SELECT id, started_ms FROM sittings WHERE id = ?", (sitting_id,)
+        ).fetchone()
+        if sitting is None:
+            raise NotFound(f"no sitting {sitting_id}")
+        rows = conn.execute(
+            "SELECT onset_ms, duration_ms, pitch, velocity, channel FROM note_events"
+            " WHERE sitting_id = ? ORDER BY onset_ms, pitch",
+            (sitting_id,),
+        ).fetchall()
+        return SittingNotes(
+            sitting_id=int(sitting["id"]),
+            started_ms=int(sitting["started_ms"]),
+            notes=[LoggedNote(**dict(row)) for row in rows],
         )
     finally:
         conn.close()

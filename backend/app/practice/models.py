@@ -87,6 +87,29 @@ class SegmentSummary(BaseModel):
     metrics: SegmentMetricsOut | None = None
 
 
+class LoggedNote(BaseModel):
+    """One note as it was played. Onsets are relative to the sitting's start."""
+
+    onset_ms: int
+    duration_ms: int
+    pitch: int
+    velocity: int
+    channel: int | None = None
+
+
+class SittingNotes(BaseModel):
+    """Every note of a sitting, for playback.
+
+    Separate from the detail view because it is the only heavy payload in the practice
+    domain: a four-minute sitting is a few thousand notes, and the detail is re-read
+    after every edit to a segment, which has no use for them.
+    """
+
+    sitting_id: int
+    started_ms: int
+    notes: list[LoggedNote]
+
+
 class SittingDetail(BaseModel):
     id: int
     started_at: str
