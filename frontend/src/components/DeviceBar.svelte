@@ -13,6 +13,18 @@
   let draftLatency = $state(app.latencyMs);
   let showPorts = $state(false);
 
+  /**
+   * A latency suggestion, when your own timing has consistently said so.
+   *
+   * Never applied on its own: the number corrects for the delay of a keyboard, a
+   * browser and a sound card, and silently changing what the scorer subtracts would
+   * make every past score incomparable with the next one.
+   */
+  const suggested = $derived(app.latencySuggestionMs);
+  const worthSuggesting = $derived(
+    suggested !== null && Math.abs(suggested - app.latencyMs) >= 25,
+  );
+
   // A once-a-second clock, so "last note 3 s ago" ticks without the store having to
   // tick with it.
   let nowMs = $state(Date.now());
@@ -72,6 +84,17 @@
     <button class="ghost" onclick={() => { draftLatency = app.latencyMs; showLatency = !showLatency; }}>
       Latency {app.latencyMs} ms
     </button>
+
+    {#if worthSuggesting}
+      <button
+        class="ghost tiny"
+        data-latency-suggestion={Math.round(suggested ?? 0)}
+        title="Your recent attempts are consistently early or late by this much"
+        onclick={() => app.setLatency(Math.max(0, Math.round(suggested ?? 0)))}
+      >
+        Use {Math.round(suggested ?? 0)} ms
+      </button>
+    {/if}
   </div>
 
   {#if app.midiConnected && app.midiPinned}

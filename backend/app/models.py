@@ -6,6 +6,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from .practice.capture_status import CaptureReport
+
 
 class PlayedNoteIn(BaseModel):
     """One MIDI note-on as observed by the browser."""
@@ -40,6 +42,34 @@ class RatingHistory(BaseModel):
     #: Skills that moved most in the window, for a summary line.
     biggest_gain: str | None = None
     biggest_gain_delta: float = 0.0
+
+
+class MediaStates(BaseModel):
+    present: int = 0
+    pending: int = 0
+    missing: int = 0
+
+
+class SystemStatus(BaseModel):
+    """Everything a person needs to answer "is this thing healthy?" in one screen."""
+
+    database_path: str
+    database_bytes: int
+    #: WAL and their siblings are part of what a backup has to capture.
+    wal_bytes: int = 0
+    media_dir: str
+    media: MediaStates
+    backup_dir: str
+    last_backup: str | None = None
+    last_backup_seconds: float | None = None
+    backup_count: int = 0
+    sequencer: bool
+    alsa_clients: list[str] = Field(default_factory=list)
+    capture: CaptureReport | None = None
+    last_note_ms: int | None = None
+    #: Suggested latency in ms, or None when there is not enough evidence to suggest one.
+    latency_suggestion_ms: float | None = None
+    latency_current_ms: float = 0.0
 
 
 class PerformanceDetail(BaseModel):

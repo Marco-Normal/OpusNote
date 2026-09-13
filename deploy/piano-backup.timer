@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily backup of the piano ecosystem database
+
+[Timer]
+# Just after 3am, and Persistent so a machine that was off does not skip a day.
+OnCalendar=*-*-* 03:10:00
+Persistent=true
+AccuracySec=5min
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target

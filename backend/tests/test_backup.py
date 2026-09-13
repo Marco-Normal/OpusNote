@@ -6,6 +6,9 @@ is tested rather than the endpoint.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from app import backup
 from app.practice import store as practice_store
 from app.practice.models import EventBatch, WireNote
@@ -241,3 +244,41 @@ def test_the_export_offers_itself_as_a_download(client) -> None:
 def test_the_document_reports_that_media_files_are_not_in_it(client) -> None:
     document = client.get("/api/backup/export").json()
     assert any("media" in note for note in document["notes"])
+
+
+def test_a_backup_is_written_and_rotated(tmp_path, fresh_db, client) -> None:
+    """The directory keeps the newest N, and names by date so a re-run replaces."""
+    _populate(client)
+    first = backup.write_backup(out_dir=tmp_path, keep=2)
+    assert first.exists()
+    assert first.name.startswith("piano-ecosystem-")
+    document = json.loads(first.read_text())
+    assert document["counts"]["pieces"] == 1, "a backup is a full export"
+
+    # Same day again: one file, not two.
+    again = backup.write_backup(out_dir=tmp_path, keep=2)
+    assert again == first
+    assert len(list(tmp_path.glob("piano-ecosystem-*.json"))) == 1
+
+
+def test_rotation_keeps_the_newest(tmp_path, fresh_db) -> None:
+    from datetime import datetime
+
+    for day in range(1, 5):
+        backup.write_backup(
+            out_dir=tmp_path, keep=2, now=datetime(2026, 9, day)
+        )
+    kept = sorted(path.name for path in tmp_path.glob("piano-ecosystem-*.json"))
+    assert kept == ["piano-ecosystem-2026-09-03.json", "piano-ecosystem-2026-09-04.json"]
+    assert backup.latest_backup(tmp_path).name == "piano-ecosystem-2026-09-04.json"
+
+
+def test_latest_backup_is_none_when_there_are_no_backups(tmp_path) -> None:
+    assert backup.latest_backup(tmp_path) is None
+
+
+def test_the_cli_writes_a_backup(tmp_path, fresh_db, capsys) -> None:
+    assert backup.main(["--out", str(tmp_path), "--keep", "3"]) == 0
+    printed = capsys.readouterr().out.strip()
+    assert printed.endswith(".json")
+    assert Path(printed).exists()

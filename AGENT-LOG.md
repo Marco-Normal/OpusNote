@@ -533,3 +533,24 @@ Contract note for the other side: the only new stored artefact is `rating_events
 the two new routes are read-only. `PerformanceDetail.expected_notes` uses `onset_s` and
 `duration_q` (the notation's own units) while `played_notes` uses `onset`/`duration` in
 seconds — the same asymmetry the score endpoint has, deliberately.
+
+## 2026-09-12 — sight-reading agent — Phase 12 landed (ops polish)
+
+- **Nightly rotating backup.** `python -m app.backup [--out DIR] [--keep N]` writes one
+  dated JSON export and prunes the rest; `deploy/piano-backup.{service,timer}` runs it at
+  03:10 with `Persistent=true`, and the installer writes a first backup immediately so
+  the job is never merely assumed to work. New settings: `SRT_BACKUP_DIR`,
+  `SRT_BACKUP_KEEP`.
+- **`GET /api/status/system`** — database size and WAL, media states, backups kept and
+  the newest one's age, sequencer presence, ALSA clients, capture heartbeat, and a
+  latency suggestion. One read, cross-domain, so it lives in the composition root next
+  to `/api/practice-suggestions` rather than making any domain import the others.
+- **`store.onset_bias_ms`** — median timing bias over the last twelve attempts, needing
+  three before it answers. It *suggests*; the device bar offers "Use N ms" and never
+  applies it, because changing what the scorer subtracts would make past scores
+  incomparable with future ones.
+
+Small production change worth noting: the status route passes its backup directory to
+`backup.latest_backup(dir)` explicitly instead of letting the helper resolve settings
+itself. Two places reading the same configuration independently is how a panel ends up
+reporting a directory nothing writes to.

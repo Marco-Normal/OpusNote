@@ -112,6 +112,10 @@ class Settings:
     #: only trusts the client's declared size is not a cap, so it is enforced while
     #: writing rather than only on the way in.
     max_upload_mb: int = _env_int("SRT_MAX_UPLOAD_MB", 512)
+    #: Nightly JSON exports. `deploy/` installs a systemd timer that writes here.
+    backup_dir: Path = _env_path("SRT_BACKUP_DIR", _default_data_dir() / "backups")
+    #: How many daily backups to keep before the oldest is removed.
+    backup_keep: int = _env_int("SRT_BACKUP_KEEP", 14)
 
     @property
     def weights(self) -> dict[str, float]:

@@ -1566,6 +1566,20 @@ def scenario_practice_log(browser) -> None:
         "re-segmenting discarded the labels it warned about",
     )
 
+    # --- installation health ---
+    health = page.locator("[data-system-status]")
+    check(health.count() == 1, "the Log view reports the installation's health")
+    text = health.inner_text()
+    check("Database" in text and "MB" in text, f"including the database size ({text[:60]!r})")
+    check(
+        "Backups" in text,
+        "and how many backups are kept, which is the thing you only miss once",
+    )
+    check(
+        "Piano visible to ALSA" in text,
+        "and whether the server can see the piano through ALSA at all",
+    )
+
     # --- export and restore ---
     backup_path = DEFAULT_DB.parent / "e2e-backup.json"
     document = page.evaluate(

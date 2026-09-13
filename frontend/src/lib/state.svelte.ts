@@ -147,6 +147,12 @@ class AppState {
 
   /** What the server can tell us about this machine and this request. */
   host = $state<HostInfo | null>(null);
+  /**
+   * A latency this machine's own timing history suggests, in ms, or null.
+   *
+   * Suggested, never applied: see DeviceBar.
+   */
+  latencySuggestionMs = $state<number | null>(null);
 
   profile = $state<Profile | null>(null);
   apiOnline = $state<boolean | null>(null);
@@ -193,6 +199,12 @@ class AppState {
         this.host = await api.host();
       } catch {
         // Only used to explain the deployment; never block the app on it.
+      }
+      try {
+        const status = await api.systemStatus();
+        this.latencySuggestionMs = status.latency_suggestion_ms;
+      } catch {
+        // Health reporting is a nicety; the app works without it.
       }
     } catch (error) {
       this.apiOnline = false;

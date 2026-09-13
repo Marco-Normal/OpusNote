@@ -117,7 +117,25 @@ cat > /etc/piano-ecosystem.env <<ENV
 SRT_DB_PATH=$DATA_DIR/piano.db
 SRT_MEDIA_DIR=$DATA_DIR/media
 SRT_LEGACY_DB=/home/$SERVICE_USER/.local/share/piano-progress/piano.db
+SRT_BACKUP_DIR=$DATA_DIR/backups
+SRT_BACKUP_KEEP=14
 ENV
+
+echo "==> Backups"
+install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" "$DATA_DIR/backups"
+# The database is the only copy of everything, and a nightly export is the cheapest
+# insurance there is. It is a JSON document, so it survives a schema change.
+sed -e "s|^User=.*|User=$SERVICE_USER|" \
+    -e "s|^Group=.*|Group=$SERVICE_GROUP|" \
+    -e "s|/opt/piano-ecosystem|$APP_DIR|g" \
+    "$APP_DIR/deploy/piano-backup.service" > /etc/systemd/system/piano-backup.service
+install -m 644 "$APP_DIR/deploy/piano-backup.timer" /etc/systemd/system/piano-backup.timer
+systemctl daemon-reload
+systemctl enable --now piano-backup.timer
+echo "    nightly at 03:10, keeping $DATA_DIR/backups (14 files)"
+sudo -u "$SERVICE_USER" "$APP_DIR/backend/.venv/bin/python" -m app.backup >/dev/null 2>&1 \
+  && echo "    first backup written" \
+  || echo "    warning: could not write a first backup; check the service log" 
 
 echo "==> systemd unit"
 sed -e "s|^User=.*|User=$SERVICE_USER|" \

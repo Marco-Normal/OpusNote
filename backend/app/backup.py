@@ -16,8 +16,10 @@ would be the same silent loss from the other direction.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Literal, Mapping
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -166,6 +168,69 @@ def import_document(
         "counts": {name: conn.execute(f"SELECT COUNT(*) FROM {name}").fetchone()[0]
                    for name in sorted(known)},
     }
+
+
+def write_backup(
+    *,
+    out_dir: Path | None = None,
+    keep: int | None = None,
+    db_path: Path | None = None,
+    now: datetime | None = None,
+) -> Path:
+    """Write one dated export and prune the oldest beyond `keep`.
+
+    Named by date rather than by time: a nightly job that runs twice, or a manual run
+    on the same day, should replace the day's file rather than grow a directory of
+    near-identical copies — and "the backup from the 3rd" is what a person looks for.
+    """
+    from .config import settings as app_settings
+
+    directory = Path(out_dir or app_settings.backup_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    stamp = (now or datetime.now()).strftime("%Y-%m-%d")
+    target = directory / f"piano-ecosystem-{stamp}.json"
+
+    conn = db.connect(db_path)
+    try:
+        document = export_document(conn)
+    finally:
+        conn.close()
+    target.write_text(json.dumps(document, indent=1))
+
+    limit = max(1, int(keep if keep is not None else app_settings.backup_keep))
+    # Newest first by name, which is chronological because the name is a date.
+    existing = sorted(directory.glob("piano-ecosystem-*.json"), reverse=True)
+    for stale in existing[limit:]:
+        stale.unlink(missing_ok=True)
+    return target
+
+
+def latest_backup(out_dir: Path | None = None) -> Path | None:
+    from .config import settings as app_settings
+
+    directory = Path(out_dir or app_settings.backup_dir)
+    try:
+        files = sorted(directory.glob("piano-ecosystem-*.json"), reverse=True)
+    except OSError:
+        return None
+    return files[0] if files else None
+
+
+def main(argv: list[str] | None = None) -> int:
+    """`python -m app.backup` — what the systemd timer runs."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Write a JSON export of the whole database.")
+    parser.add_argument("--out", type=Path, default=None, help="directory to write into")
+    parser.add_argument("--keep", type=int, default=None, help="how many to keep")
+    args = parser.parse_args(argv)
+    path = write_backup(out_dir=args.out, keep=args.keep)
+    print(path)
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover - exercised through main()
+    raise SystemExit(main())
 
 
 # --------------------------------------------------------------------------

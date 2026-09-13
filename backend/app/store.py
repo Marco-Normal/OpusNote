@@ -180,6 +180,36 @@ def rating_series(conn, user_id: int, *, days: int = 90) -> dict[str, list[dict[
     return out
 
 
+def onset_bias_ms(conn, user_id: int, *, limit: int = 12) -> float | None:
+    """Median of your recent timing bias, in milliseconds.
+
+    Positive means you consistently play late relative to the count-in, which is what a
+    latency setting exists to compensate for. Read from stored feedback rather than
+    re-scored, and a median so one fumbled attempt cannot move the suggestion.
+    """
+    import statistics
+
+    rows = conn.execute(
+        "SELECT analysis_json FROM performances WHERE user_id = ? AND analysis_json IS NOT NULL"
+        " ORDER BY performed_at DESC, id DESC LIMIT ?",
+        (user_id, limit),
+    ).fetchall()
+    per_attempt: list[float] = []
+    for row in rows:
+        analysis = json_load(row["analysis_json"], {}) or {}
+        errors = [
+            float(item["onset_error_s"])
+            for item in analysis.get("feedback", [])
+            if item.get("onset_error_s") is not None
+        ]
+        if len(errors) >= 3:
+            per_attempt.append(statistics.median(errors) * 1000)
+    if len(per_attempt) < 3:
+        # Three attempts is the least that can be called a habit rather than a day.
+        return None
+    return round(statistics.median(per_attempt), 1)
+
+
 def recent_target_skills(conn, user_id: int, limit: int = 3) -> list[str]:
     rows = conn.execute(
         """

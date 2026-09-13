@@ -169,6 +169,20 @@ measured at its release. In the passive log the two hands cannot be separated: t
 piano sends them on one MIDI channel, and that is all that is stored. A scored attempt
 can separate them, because the exercise knows which hand each note is.
 
+### Keeping it healthy
+
+- **Nightly backups.** `python -m app.backup` writes `piano-ecosystem-<date>.json` into
+  `SRT_BACKUP_DIR` and keeps the newest `SRT_BACKUP_KEEP` (14 by default); the installer
+  enables a systemd timer at 03:10 with `Persistent=true`. Run it by hand any time —
+  it is the same code the *Download backup* button uses.
+- **A System panel** in the Log tab: database size and WAL, recordings present, pending
+  or missing, backups kept and how old the newest is, whether ALSA's sequencer is there,
+  and which clients it can see — which is how you tell "the piano is off" from "the
+  kernel module is missing".
+- **Latency is suggested, never changed behind your back.** After a few attempts the
+  device bar offers *Use N ms* when your own timing has been consistently early or late.
+  Accepting it is your click, because it changes what the scorer subtracts.
+
 ### Export and backup
 
 **Log → Export & backup** downloads one JSON document containing every table:
@@ -485,4 +499,6 @@ Environment variables, all optional:
 | `SRT_RESTART_GAP_MS` | `3000` | Mid-segment silence counted as a restart |
 | `SRT_ATTACK_WINDOW_MS` | `50` | Notes closer than this are one attack, for tempo |
 | `SRT_MAX_UPLOAD_MB` | `512` | Largest recording accepted by the upload endpoint |
+| `SRT_BACKUP_DIR` | `<data dir>/backups` | Where the nightly JSON exports are written |
+| `SRT_BACKUP_KEEP` | `14` | How many daily backups to keep |
 | `SRT_API_TARGET` | `http://127.0.0.1:8000` | Proxy target for the dev server |

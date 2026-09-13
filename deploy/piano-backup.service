@@ -1,0 +1,13 @@
+[Unit]
+Description=Nightly JSON backup of the piano ecosystem database
+Documentation=file:///opt/piano-ecosystem/docs/DEPLOYMENT.md
+After=piano-ecosystem.service
+
+[Service]
+Type=oneshot
+# The installer rewrites User, Group and every /opt/piano-ecosystem path.
+User=piano
+Group=piano
+WorkingDirectory=/opt/piano-ecosystem/backend
+EnvironmentFile=-/etc/piano-ecosystem.env
+ExecStart=/opt/piano-ecosystem/backend/.venv/bin/python -m app.backup

@@ -7,7 +7,9 @@ generator, scorer, and adaptive engine can all be replaced behind it.
 
 from __future__ import annotations
 
+import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Iterator
 
 from fastapi import Depends, FastAPI, HTTPException, Query
@@ -16,21 +18,23 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlite3 import Connection
 
-from . import services, store
+from . import backup, services, store
 from .backup import router as backup_router
 from .config import settings
 from .db import init_db
 from .hostinfo import require_loopback, router as hostinfo_router
 from .models import (
     ExerciseOut,
-    RatingPoint,
-    SkillRatingSeries,
     HealthOut,
+    MediaStates,
     PerformanceDetail,
     ProfileOut,
     RatingHistory,
+    RatingPoint,
     ScoreRequest,
     SkillOut,
+    SkillRatingSeries,
+    SystemStatus,
 )
 from .practice.api import router as practice_router
 from .repertoire.api import router as repertoire_router
@@ -287,6 +291,53 @@ def practice_suggestions(conn: Connection = Depends(get_conn)) -> JSONResponse:
             }
             for item in suggestions
         ]
+    )
+
+
+@app.get("/api/status/system", response_model=SystemStatus)
+def system_status(conn: Connection = Depends(get_conn)) -> SystemStatus:
+    """The health of the installation, in one read.
+
+    Cross-domain on purpose, so it lives in the composition root like
+    `/api/practice-suggestions`: it reports a fact about each domain rather than
+    belonging to one, and putting it in any of them would make that domain import the
+    others.
+    """
+    from . import hostinfo
+    from .practice import capture_status
+    from .repertoire import store as repertoire_store
+
+    db_path = settings.db_path
+    wal = Path(str(db_path) + "-wal")
+    # The directory comes from here rather than from the helper's own default, so the
+    # route reports the same place it is configured to write to.
+    latest = backup.latest_backup(settings.backup_dir)
+    backups = (
+        sorted(settings.backup_dir.glob("piano-ecosystem-*.json"))
+        if settings.backup_dir.exists()
+        else []
+    )
+    last_note = conn.execute("SELECT MAX(ended_ms) AS last_ms FROM sittings").fetchone()
+    return SystemStatus(
+        database_path=str(db_path),
+        database_bytes=db_path.stat().st_size if db_path.exists() else 0,
+        wal_bytes=wal.stat().st_size if wal.exists() else 0,
+        media_dir=str(settings.media_dir),
+        media=MediaStates(**repertoire_store.media_state_counts(conn)),
+        backup_dir=str(settings.backup_dir),
+        last_backup=latest.name if latest else None,
+        last_backup_seconds=(
+            round(time.time() - latest.stat().st_mtime, 1) if latest else None
+        ),
+        backup_count=len(backups),
+        sequencer=hostinfo.sequencer_available(),
+        alsa_clients=hostinfo.alsa_clients(),
+        capture=capture_status.snapshot(),
+        last_note_ms=(
+            int(last_note["last_ms"]) if last_note and last_note["last_ms"] is not None else None
+        ),
+        latency_suggestion_ms=store.onset_bias_ms(conn, current_user_id()),
+        latency_current_ms=0.0,
     )
 
 

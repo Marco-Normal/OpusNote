@@ -249,3 +249,74 @@ def test_the_status_reports_the_last_stored_note(client) -> None:
         )
     )
     assert client.get("/api/practice/status").json()["last_note_ms"] == 1_700_011_800_300
+
+
+# --- installation health (Phase 12) ---------------------------------------
+
+
+def test_the_system_status_reports_what_a_health_panel_needs(client) -> None:
+    body = client.get("/api/status/system").json()
+    assert body["database_bytes"] > 0, "the database exists and has a size"
+    assert body["media"] == {"present": 0, "pending": 0, "missing": 0}
+    assert body["backup_dir"]
+    assert body["last_backup"] is None, "no backups written in a fresh test"
+    assert isinstance(body["sequencer"], bool)
+    assert isinstance(body["alsa_clients"], list)
+    assert body["latency_suggestion_ms"] is None, "no attempts yet, so nothing to suggest"
+
+
+def test_the_status_reports_the_newest_backup(tmp_path, fresh_db, client) -> None:
+    from datetime import datetime
+
+    from app import backup
+
+    backup.write_backup(out_dir=tmp_path, keep=5, now=datetime(2026, 9, 1))
+    backup.write_backup(out_dir=tmp_path, keep=5, now=datetime(2026, 9, 2))
+
+    import dataclasses
+
+    import app.main as main_module
+    from app.config import settings as real_settings
+
+    original = main_module.settings
+    main_module.settings = dataclasses.replace(real_settings, backup_dir=tmp_path)
+    try:
+        body = client.get("/api/status/system").json()
+    finally:
+        main_module.settings = original
+    assert body["last_backup"] == "piano-ecosystem-2026-09-02.json"
+    assert body["backup_count"] == 2
+    assert body["last_backup_seconds"] is not None
+
+
+def test_a_latency_suggestion_needs_evidence(client) -> None:
+    """Three attempts, or it is a bad day rather than a habit."""
+    from app import store
+
+    assert client.get("/api/status/system").json()["latency_suggestion_ms"] is None
+
+    exercise = None
+    for index in range(3):
+        exercise = client.get("/api/exercise/next").json()
+        notes = [
+            {
+                "pitch": note["pitch"],
+                # Consistently 60 ms late, which is what a latency setting compensates.
+                "onset": note["onset_s"] + 0.06,
+                "duration": 0.3,
+                "velocity": 70,
+                "channel": 0,
+            }
+            for note in exercise["expected_notes"]
+        ]
+        client.post(
+            "/api/score", json={"exercise_id": exercise["exercise_id"], "notes": notes}
+        )
+
+    conn = __import__("app.db", fromlist=["connect"]).connect()
+    try:
+        bias = store.onset_bias_ms(conn, 1)
+    finally:
+        conn.close()
+    assert bias is not None
+    assert 30 < bias < 120, f"a consistent 60 ms lag should be visible (got {bias})"

@@ -36,6 +36,7 @@ import type {
   SittingDetail,
   SittingNotes,
   SittingSummary,
+  SystemStatus,
   SkillInfo,
   Stats,
   TempoSeries,
@@ -161,6 +162,9 @@ export const api = {
   }) => request<ScoreResult>('/score', { method: 'POST', body: JSON.stringify(payload) }),
 
   stats: () => request<Stats>('/stats'),
+
+  /** Database size, media states, backup age, sequencer, capture. */
+  systemStatus: () => request<SystemStatus>('/status/system'),
 
   /** Every rating change in the window, grouped by skill. */
   progressRatings: (days = 90) => request<RatingHistory>(`/progress/ratings?days=${days}`),

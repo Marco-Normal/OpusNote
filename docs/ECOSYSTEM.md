@@ -665,7 +665,25 @@ practice (both still on the list below). The half of the app that makes effort v
 - **Week in review** in the Log tab: minutes over the last seven days, workouts and
   streak, the most improved skill, and the most neglected piece.
 
-### Phase 12 — planned (ops polish)
+### Phase 12 — landed (ops polish)
+
+- **A nightly rotating backup.** `python -m app.backup` writes one dated JSON export
+  per day and keeps the newest `SRT_BACKUP_KEEP` (14). A systemd timer runs it at 03:10
+  with `Persistent=true`, so a notebook that was off does not silently skip a day, and
+  the installer writes the first one immediately — an unexercised backup is a file
+  nobody has proved works. Named by *date*, so a second run on the same day replaces
+  the day's file instead of growing a directory of near-identical copies.
+- **A health panel** (`GET /api/status/system`, in the Log tab): database size and WAL,
+  recordings present/pending/missing, backups kept and the age of the newest, whether
+  the sequencer is present, which ALSA clients are visible — and therefore whether the
+  server can see the piano at all — plus the capture heartbeat.
+- **A latency suggestion, never a latency change.** `store.onset_bias_ms` takes the
+  median bias of the last twelve attempts (and needs three before it will speak), and
+  the device bar offers "Use N ms". It is never applied on its own: the number corrects
+  for the delay of a keyboard, a browser and a sound card, and silently changing what
+  the scorer subtracts would make every past score incomparable with the next one.
+
+### Originally planned as Phase 12 (ops polish)
 
 A nightly rotating JSON backup (a systemd timer reusing the export), a health panel
 (database size, media present/pending/missing, last backup age, sequencer, capture

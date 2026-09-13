@@ -153,6 +153,25 @@ export interface PerformanceDetail {
   by_hand: Record<string, { total: number; accuracy: number }>;
 }
 
+/** The health of the installation, as the server sees it. */
+export interface SystemStatus {
+  database_path: string;
+  database_bytes: number;
+  wal_bytes: number;
+  media_dir: string;
+  media: { present: number; pending: number; missing: number };
+  backup_dir: string;
+  last_backup: string | null;
+  last_backup_seconds: number | null;
+  backup_count: number;
+  sequencer: boolean;
+  alsa_clients: string[];
+  capture: CaptureStatus | null;
+  last_note_ms: number | null;
+  latency_suggestion_ms: number | null;
+  latency_current_ms: number;
+}
+
 export interface SkillInfo {
   slug: string;
   name: string;
