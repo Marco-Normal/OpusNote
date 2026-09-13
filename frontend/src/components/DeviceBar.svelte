@@ -140,6 +140,31 @@
           {app.piano.present}/{app.piano.total} samples — try again
         </span>
       {/if}
+      <button
+        class="ghost tiny"
+        data-test-sound
+        disabled={app.testingSound}
+        title="Play a short chord through the instrument above"
+        onclick={() => void app.testSound()}
+      >
+        {app.testingSound ? 'Playing…' : 'Test'}
+      </button>
+      {#if app.audioState !== 'running'}
+        <!-- The one fact that explains silence with no error: a suspended audio
+             context plays nothing and reports nothing. -->
+        <span
+          class="pill warn"
+          data-audio-state={app.audioState}
+          title="A browser may only start audio after a click on the page"
+        >
+          audio {app.audioState}
+        </span>
+      {:else}
+        <span class="muted small mono" data-audio-state="running">audio ok</span>
+      {/if}
+      {#if app.soundError}
+        <span class="pill bad" data-sound-error={app.soundError}>{app.soundError}</span>
+      {/if}
       {#if app.sampleState === 'loading'}
         <span class="muted small" data-sample-loading>loading samples…</span>
       {/if}

@@ -204,6 +204,12 @@ from this machine from then on: install it from the device bar (*Install (2 MB, 
 and nothing at play time touches the network. Salamander Grand Piano V3 by Alexander
 Holm, [CC BY 3.0](https://archive.org/details/SalamanderGrandPianoV3).
 
+There is a **Test** button next to the instrument choice: it plays a short chord through
+whatever is selected, which separates "the app is not playing" from "this machine is not
+making sound". The pill beside it reports the browser's audio state — `suspended` means
+the browser is waiting for a click, `audio ok` means the app is playing into a machine
+whose speakers, sound server or tab-mute setting is somebody else's problem.
+
 Two naming schemes meet at the sampler and are not interchangeable: the files use `Ds4`
 (a `#` in a URL starts a fragment, so `D#4.mp3` would fetch `D`), while a note name needs
 `D#4`. Getting that wrong leaves the sampled piano silent and quietly falls back to the

@@ -2160,6 +2160,34 @@ def scenario_playback(browser) -> None:
             page.locator("[data-sample-error]").count() == 0,
             "and reports no sample error",
         )
+
+        # Loading the samples is not the same as being able to *play* them: the audio
+        # context has to be running, and it was not — the sampled-piano branch of the
+        # player returned before it ever called `Tone.start()`, so the instrument was
+        # silent with no error anywhere.
+        click_button(page, "Test")
+        page.wait_for_timeout(600)
+        check(
+            page.get_attribute("[data-audio-state]", "data-audio-state") == "running",
+            f"and the browser's audio is running ({page.get_attribute('[data-audio-state]', 'data-audio-state')})",
+        )
+        check(
+            page.locator("[data-sound-error]").count() == 0,
+            "with nothing reported as failed",
+        )
+
+        # The synthesiser takes the same route, and must not be worse off for it.
+        page.select_option("#instrument", "synth")
+        click_button(page, "Test")
+        page.wait_for_timeout(600)
+        check(
+            page.get_attribute("[data-audio-state]", "data-audio-state") == "running",
+            "and the synthesiser plays through a running context too",
+        )
+        check(
+            page.locator("[data-sound-error]").count() == 0,
+            "with nothing reported as failed there either",
+        )
         page.select_option("#instrument", "midi")
     else:
         # Without the samples installed this scenario cannot check the instrument, and

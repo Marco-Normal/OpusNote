@@ -9,7 +9,7 @@ import { api } from './api';
 import { CaptureClient, type CaptureStatus } from './capture';
 import { MidiInput, type MidiDeviceInfo, type MidiOutputInfo } from './midi';
 import { fingerprint, type PortSnapshot } from './midiDevice';
-import { PianoPlayer, sharedPlayer, type Instrument } from './pianoPlayer';
+import { PianoPlayer, sharedPlayer, unlockOnFirstGesture, type Instrument } from './pianoPlayer';
 import type { AppView, HostInfo, PianoStatus, Profile, Workout } from './types';
 
 const LATENCY_STORAGE_KEY = 'srt.latencyMs';
@@ -144,6 +144,30 @@ class AppState {
   pianoError = $state<string | null>(null);
   /** 'unused' | 'loading' | 'ready' | 'failed' | 'absent' — the *player's* answer. */
   sampleState = $state<'unused' | 'loading' | 'ready' | 'failed' | 'absent'>('unused');
+  /**
+   * What the browser's audio context is doing.
+   *
+   * The one fact that was missing when "no sound" had no explanation: a suspended
+   * context plays nothing and reports nothing, and it looks exactly like a broken
+   * instrument or a muted machine.
+   */
+  audioState = $state('suspended');
+  testingSound = $state(false);
+  soundError = $state<string | null>(null);
+
+  /** Play a short chord through the chosen instrument. */
+  async testSound(): Promise<void> {
+    this.testingSound = true;
+    this.soundError = null;
+    try {
+      await this.player.playTest();
+    } catch (cause) {
+      this.soundError = cause instanceof Error ? cause.message : String(cause);
+    } finally {
+      this.testingSound = false;
+      this.audioState = this.player.audioState;
+    }
+  }
 
   readonly capture = new CaptureClient(
     this.midi,
@@ -162,9 +186,16 @@ class AppState {
    */
   constructor() {
     this.player.setInstrument(this.instrument);
+    // The audio context may only be started by a gesture, so it is started by the
+    // first one — not by a play handler, which fetches the notes first and by then has
+    // no gesture left to spend.
+    unlockOnFirstGesture();
     this.player.onSample = (state, error) => {
       this.sampleState = state;
       this.pianoError = error;
+    };
+    this.player.onAudio = (state) => {
+      this.audioState = state;
     };
     void this.refreshPiano();
   }

@@ -46,6 +46,8 @@ export interface PlayOptions {
   until?: number;
   onProgress?: (handle: PlaybackHandle) => void;
   onDone?: () => void;
+  /** Something that stopped the sound happening, in words worth showing. */
+  onError?: (message: string) => void;
 }
 
 /** What the player needs from a MIDI output, so it can be faked in a test. */
@@ -97,6 +99,8 @@ export class PianoPlayer {
    * not decode look installed right up until it failed.
    */
   onSample: ((state: 'loading' | 'ready' | 'failed', error: string | null) => void) | null = null;
+  /** Told what the audio context is doing, which is otherwise invisible. */
+  onAudio: ((state: string) => void) | null = null;
   /**
    * Pitch to the moment its note-off is due, in `performance.now()` terms.
    *
@@ -142,6 +146,47 @@ export class PianoPlayer {
   /** Where MIDI playback goes. Null means there is no piano to play. */
   setMidiSink(sink: MidiSink | null): void {
     this.sink = sink;
+  }
+
+  /**
+   * Start the browser's audio, which only a gesture is allowed to do.
+   *
+   * Called from the click *before* anything is awaited, and again before every
+   * Tone-based playback. The second call is free when the context is already
+   * running; the first is what makes it running at all, because by the time a play
+   * handler has fetched the notes the gesture that started it is over.
+   */
+  async unlock(): Promise<boolean> {
+    try {
+      await Tone.start();
+      const state = Tone.getContext().state;
+      this.onAudio?.(state);
+      return state === 'running';
+    } catch {
+      this.onAudio?.('unavailable');
+      return false;
+    }
+  }
+
+  /** What the browser's audio context is doing: 'running', 'suspended', … */
+  get audioState(): string {
+    try {
+      return Tone.getContext().state;
+    } catch {
+      return 'unavailable';
+    }
+  }
+
+  /** A short chord through the chosen instrument, to answer "is this working?". */
+  async playTest(): Promise<void> {
+    const notes: SynthNote[] = [60, 64, 67].map((pitch, index) => ({
+      pitch,
+      onset: index * 0.09,
+      duration: 0.9,
+      velocity: 0.75,
+      hand: null,
+    }));
+    await this.play(notes);
   }
 
   /**
@@ -205,6 +250,20 @@ export class PianoPlayer {
       return;
     }
 
+    // Everything below plays through the browser's audio, so the context has to be
+    // running first — and it was not: the sampled-piano branch returned before this
+    // point, so choosing the samples meant playing through a suspended context and
+    // hearing nothing at all, with no error anywhere.
+    const running = await this.unlock();
+    if (!running) {
+      this.playing = false;
+      options.onError?.(
+        'the browser would not start audio. Click once anywhere in the page and try again.',
+      );
+      options.onDone?.();
+      return;
+    }
+
     if (this.instrument === 'piano') {
       const ready = this.pianoReady || (await this.loadPiano());
       if (ready) {
@@ -215,15 +274,6 @@ export class PianoPlayer {
       // than leaving the button doing nothing.
     }
 
-    try {
-      await Tone.start();
-    } catch {
-      // No audio in this browser or context. Failing silently is right: the caller
-      // has nothing useful to tell the user about a sound that did not happen.
-      this.playing = false;
-      options.onDone?.();
-      return;
-    }
     this.playThrough(this.synthVoice(), material, options);
   }
 
@@ -423,6 +473,24 @@ export class PianoPlayer {
 }
 
 let shared: PianoPlayer | null = null;
+
+/**
+ * Resume the audio context on the first gesture anywhere in the page.
+ *
+ * The alternative — starting it inside a play handler — is unreliable, because those
+ * handlers fetch the notes before they reach the player, and by then the gesture that
+ * began them is over. One listener, removed after it fires.
+ */
+export function unlockOnFirstGesture(): void {
+  if (typeof window === 'undefined') return;
+  const resume = () => {
+    void sharedPlayer().unlock();
+    window.removeEventListener('pointerdown', resume);
+    window.removeEventListener('keydown', resume);
+  };
+  window.addEventListener('pointerdown', resume);
+  window.addEventListener('keydown', resume);
+}
 
 /**
  * The one player. Every caller shares it, so there is exactly one thing making

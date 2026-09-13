@@ -27,6 +27,7 @@
   let hearRight = $state(true);
   let hearLeft = $state(true);
   let progress = $state(0);
+  let problem = $state<string | null>(null);
 
   const hands = $derived(
     [hearRight ? 'RH' : null, hearLeft ? 'LH' : null].filter(Boolean) as Hand[],
@@ -42,6 +43,9 @@
     await player.play(notes, {
       onProgress: (handle) => {
         progress = handle.total > 0 ? Math.min(1, handle.elapsed / handle.total) : 0;
+      },
+      onError: (message) => {
+        problem = message;
       },
       onDone: () => {
         playing = null;
@@ -83,6 +87,9 @@
   {/if}
   <span class="muted small">{caption}</span>
 </div>
+{#if problem}
+  <p class="error-banner small">{problem}</p>
+{/if}
 
 <style>
   .hearing {

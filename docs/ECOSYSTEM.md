@@ -859,7 +859,17 @@ about a field nobody could identify.
   segment in two. `parseClock` accepts `5412`, `1:30:12` or `m:ss`, and a half-typed
   value is refused rather than read as something plausible.
 
-**The sampled piano did not play at all**, and the reason is worth writing down: the
+**The sampled piano never started the audio context.** The `piano` branch of `play()`
+returned before reaching `Tone.start()`, so the instrument played through a *suspended*
+context: silent, and reporting nothing. Only the synth branch started it, and even that
+did so *after* `await loadPiano()`/`loadNotes()` — by which point the click that began
+the playback is over. Now the context is resumed for every Tone-based instrument, and
+separately on the first gesture anywhere in the page (`unlockOnFirstGesture`), which is
+where a browser allows it. The device bar reports the context state and has a **Test**
+button, because "no sound" with no explanation is the worst possible failure — and in
+this case the app had been producing it in three different ways at once.
+
+**The sampled piano did not play at all either**, and the reason is worth writing down: the
 files are spelled with an `s` (`Ds4.mp3`) because a `#` in a URL starts a fragment, while
 a note name needs the `#` (`D#4`) because that is what a music library parses — Tone's own
 pattern accepts `#`, `b` and `x`, and not `s`. The sampler's `urls` map was keyed on the

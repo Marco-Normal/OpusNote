@@ -152,6 +152,9 @@
         onProgress: (handle) => {
           position = handle.elapsed * 1000;
         },
+        onError: (message) => {
+          playError = message;
+        },
         onDone: () => {
           playing = null;
         },
