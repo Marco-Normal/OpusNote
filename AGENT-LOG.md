@@ -435,3 +435,40 @@ notebook a DHCP reservation so the IP stops moving, and the two traps — MIDI o
 works on the notebook over `http://localhost:8000` (an IP is not a secure context, so
 Chrome refuses MIDI and the app correctly reports itself as remote), and Mint ships
 `ufw` installed but inactive, so port 8000 may need opening.
+
+## 2026-09-12 — sight-reading agent — the empty library had no way to add a piece
+
+Reported by the user on the notebook: no way to add repertoire. They were right, and it
+was a first-run dead end rather than a missing menu. The **New piece** button and the
+piece editor both lived inside the *non-empty* branch of the Repertoire view, so with
+an empty library — which is what a fresh machine has, and the notebook is one — the
+only control offered was *Import from piano-progress*, useless on a machine that never
+ran that app. The library was therefore unaddable from the UI until something else put
+a row in it.
+
+Fixed by lifting the editor out of the branch so it renders in both states and adding
+**New piece** to the empty panel ("Or start from scratch:"), next to the import. The
+e2e now covers the first run explicitly: empty library → create a piece *and its
+composer inline* → listed → delete → empty again, before the import flow it already
+tested. Nothing about the Rust app is involved at runtime; the importer reads its
+database once, and only on the machine that has it.
+
+## 2026-09-12 — sight-reading agent — the streak was reading UTC days as local days
+
+Found by accident, while re-running the suite after the empty-library fix: two tests
+failed that had passed an hour earlier. The clock had crossed midnight UTC while local
+time was 22:39 (UTC-3), which is the whole bug.
+
+`performances.performed_at` is stored UTC, and `_streak_days` took the first ten
+characters of that string as "the day" while comparing against `date.today()` — the
+*local* day. At UTC-3, anything played after 21:00 local is already tomorrow in UTC, so
+the Progress view reported a broken streak every evening (and the tempo-progress chart
+grouped those sessions under the wrong date). Fixed with `_local_day(timestamp)`, which
+parses the stored value as UTC and converts it to this machine's timezone — legitimate
+because the app runs on the piano machine, so the server's zone *is* the player's.
+
+Two regression tests, one of which does not depend on the time of day: a fixed zone
+(`Pacific/Kiritimati`, UTC+14) where a 20:00 UTC timestamp must land on the next local
+day. The practice-side streak test was also sending `tz_offset_minutes=0` while the
+analytics compare against the server's local today; it now sends this machine's offset,
+which is what a browser in the same room sends.

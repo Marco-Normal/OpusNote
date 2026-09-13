@@ -1033,6 +1033,44 @@ def scenario_repertoire(browser) -> None:
     click_button(page, "Repertoire")
     page.wait_for_selector(".panel", timeout=20_000)
 
+    # First run, before any import: an empty library must still offer a way to add
+    # something. It did not — the only control was "import from piano-progress", which
+    # is useless on a machine that never ran that app — so this is the check that the
+    # dead end stays fixed.
+    page.wait_for_selector("text=The library is empty", timeout=20_000)
+    click_button(page, "New piece")
+    page.wait_for_selector(".editor", timeout=10_000)
+    page.fill('.editor input[placeholder="Intermezzo"]', "First piece")
+    page.fill('.editor input[placeholder="A Major"]', "C Major")
+    page.fill('.editor input[placeholder="Late Intermediate"]', "Beginner")
+    # Creating a composer inline is the other half of a first run: with an empty
+    # library there is nothing to pick from.
+    page.select_option('.editor select', "__new__")
+    page.fill('.editor input[placeholder="Brahms"]', "E2E Composer")
+    with page.expect_response(
+        lambda r: r.url.endswith("/api/repertoire/pieces") and r.request.method == "POST"
+    ):
+        click_button(page, "Add piece")
+    page.wait_for_function(
+        "() => document.querySelector('.detail-title')?.textContent?.includes('First piece')",
+        timeout=10_000,
+    )
+    check(True, "a piece — and its composer — can be created on an empty library")
+    check(
+        page.locator(".row-piece", has_text="First piece").count() == 1,
+        "and it is listed",
+    )
+    page.screenshot(path=str(SHOTS / "16-first-piece.png"), full_page=True)
+
+    # Put the library back to empty for the import below.
+    click_button(page, "Delete")
+    with page.expect_response(
+        lambda r: "/api/repertoire/pieces/" in r.url and r.request.method == "DELETE"
+    ):
+        click_button(page, "Delete for good")
+    page.wait_for_selector("text=The library is empty", timeout=20_000)
+    check(True, "and deleting it returns to the empty state")
+
     with page.expect_response(lambda r: "/api/repertoire/import" in r.url) as caught:
         click_button(page, "Import from piano-progress")
     report = caught.value.json()

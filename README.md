@@ -96,6 +96,19 @@ So:
 - If a length genuinely cannot fit even at minimum zoom, the app says so and
   offers a shorter one. It never leaves you with a score that scrolls.
 
+### Adding to the library
+
+**Repertoire** tab, top right: **New piece**. The editor takes a title, opus, key,
+difficulty, status and a description, and it can create a **composer** inline
+(*+ new composer…* in the composer list), so a fresh install needs nothing else. From
+a piece's detail you can add journal entries, edit it, upload a recording and delete
+it. All of it works from any machine on the LAN except deleting, which is piano-machine
+only (see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)).
+
+Starting empty is a supported path: with no pieces at all, the Repertoire tab offers
+both *Import from piano-progress* (if that database is on this machine) and **New
+piece**.
+
 ### Practice log
 
 Everything you play is logged without pressing anything, once a MIDI device is

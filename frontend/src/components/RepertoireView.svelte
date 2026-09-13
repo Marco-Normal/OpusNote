@@ -283,6 +283,17 @@
     <div class="error-banner">{error}</div>
   {/if}
 
+  {#if editing}
+    {#key editing === 'new' ? 'new' : editing.id}
+      <PieceEditor
+        piece={editing === 'new' ? null : editing}
+        {composers}
+        onSaved={(saved) => void afterWrite(saved.id)}
+        onCancel={() => (editing = null)}
+      />
+    {/key}
+  {/if}
+
   {#if loading && !status}
     <p class="muted small">Loading the library…</p>
   {:else if status?.pieces === 0}
@@ -309,6 +320,11 @@
           <code>SRT_LEGACY_DB</code> if yours lives elsewhere.
         </p>
       {/if}
+
+      <div class="row wrap start-fresh">
+        <span class="muted small">Or start from scratch:</span>
+        <button class="primary" onclick={() => (editing = 'new')}>New piece</button>
+      </div>
 
       {#if importReport}
         <div class="report">
@@ -350,17 +366,6 @@
       <span class="muted small">{visible.length} shown</span>
       <button class="primary" onclick={() => (editing = 'new')}>New piece</button>
     </div>
-
-    {#if editing}
-      {#key editing === 'new' ? 'new' : editing.id}
-        <PieceEditor
-          piece={editing === 'new' ? null : editing}
-          {composers}
-          onSaved={(saved) => void afterWrite(saved.id)}
-          onCancel={() => (editing = null)}
-        />
-      {/key}
-    {/if}
 
     <div class="split" class:with-detail={detail !== null}>
       <div class="list">
@@ -914,6 +919,12 @@
     flex-direction: column;
     gap: 0.3rem;
     margin-bottom: 0.3rem;
+  }
+
+  .start-fresh {
+    border-top: 1px solid var(--line);
+    padding-top: 0.6rem;
+    margin-top: 0.2rem;
   }
 
   .recordings {

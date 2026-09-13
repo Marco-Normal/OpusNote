@@ -33,8 +33,24 @@ def record(offsets: list[int], *, source: str = "web_midi"):
     return _record(BASE_MS, offsets, source=source)
 
 
+def server_offset_minutes() -> int:
+    """The UTC offset of the machine running the tests.
+
+    A browser sends its own offset, and the practice domain stores the *client's*
+    calendar day while the analytics compare against the server's today. On the
+    single-host deployment those are the same timezone by definition, so a test that
+    hard-codes 0 is only correct for the part of the day where the UTC and local dates
+    agree — which is exactly the trap that made this helper wrong for three hours a
+    day at UTC-3.
+    """
+    from datetime import datetime
+
+    offset = datetime.now().astimezone().utcoffset()
+    return int(offset.total_seconds() // 60) if offset else 0
+
+
 def record_now(offsets: list[int], *, source: str = "web_midi"):
-    """Record notes relative to now.
+    """Record notes relative to now, as this machine's browser would.
 
     The windowed analytics — calendar, time per piece, source split — only see
     the last `days`, so a test that checks them against 2023 data would be
@@ -42,13 +58,13 @@ def record_now(offsets: list[int], *, source: str = "web_midi"):
     """
     import time
 
-    return _record(int(time.time() * 1000), offsets, source=source)
+    return _record(int(time.time() * 1000), offsets, source=source, tz=server_offset_minutes())
 
 
-def _record(base_ms: int, offsets: list[int], *, source: str):
+def _record(base_ms: int, offsets: list[int], *, source: str, tz: int = 0):
     return store.ingest(
         EventBatch(
-            tz_offset_minutes=0,
+            tz_offset_minutes=tz,
             source=source,
             events=[
                 WireNote(
@@ -335,7 +351,7 @@ def test_the_streak_counts_consecutive_practice_days(client) -> None:
     for offset in (0, day, 2 * day):
         store.ingest(
             EventBatch(
-                tz_offset_minutes=0,
+                tz_offset_minutes=server_offset_minutes(),
                 events=[
                     WireNote(
                         epoch_ms=now_ms - offset,
@@ -359,7 +375,7 @@ def test_a_streak_survives_a_day_that_has_not_been_practised_yet(client) -> None
     now_ms = int(time.time() * 1000)
     store.ingest(
         EventBatch(
-            tz_offset_minutes=0,
+            tz_offset_minutes=server_offset_minutes(),
             events=[
                 WireNote(
                     epoch_ms=now_ms - 86_400_000,

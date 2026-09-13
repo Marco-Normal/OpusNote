@@ -6,6 +6,10 @@ the generator, the scorer, the Elo updates, and the persistence layer together.
 
 from __future__ import annotations
 
+import os
+import time as time_module
+from datetime import date, datetime, timezone
+
 import pytest
 
 from app import store
@@ -368,6 +372,37 @@ def test_calibration_converges_faster_than_normal_practice(client):
 # --------------------------------------------------------------------------
 # Stats
 # --------------------------------------------------------------------------
+
+
+def test_a_stored_timestamp_belongs_to_a_local_day():
+    """Regression: the streak took the UTC day and compared it with the local one.
+
+    Timestamps are stored UTC, so slicing ten characters is only the right day for
+    part of the clock. At UTC-3 anything played after 21:00 local is already tomorrow
+    in UTC, and the Progress view reported a broken streak every evening.
+    """
+    from app.services import _local_day
+
+    now_utc = datetime.now(timezone.utc).isoformat(sep=" ")
+    assert _local_day(now_utc) == date.today().isoformat()
+
+
+def test_a_utc_day_is_not_a_local_day():
+    """Deterministic, in a zone where the two dates differ at that hour."""
+    from app.services import _local_day
+
+    previous = os.environ.get("TZ")
+    os.environ["TZ"] = "Pacific/Kiritimati"  # UTC+14
+    time_module.tzset()
+    try:
+        assert _local_day("2026-09-12 20:00:00") == "2026-09-13"
+        assert _local_day("2026-09-12 05:00:00") == "2026-09-12"
+    finally:
+        if previous is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = previous
+        time_module.tzset()
 
 
 def test_stats_summarise_progress(client):

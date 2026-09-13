@@ -8,7 +8,7 @@ so it can be exercised from tests without spinning up a server.
 from __future__ import annotations
 
 import statistics
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Any, Mapping, Sequence
 
 from .adaptive import elo as elo_mod
@@ -329,8 +329,27 @@ def _next_hint(conn, user_id: int, target_skill: str | None, passed: bool, *, co
 # --------------------------------------------------------------------------
 
 
+def _local_day(timestamp: str) -> str:
+    """The calendar day a stored timestamp belongs to, in this machine's timezone.
+
+    Timestamps are stored UTC, so slicing the first ten characters gives a *UTC* day —
+    which is the wrong day for every evening session east of Greenwich and every
+    early-morning one west of it. At UTC-3, anything played after 21:00 local is
+    already tomorrow in UTC, so the streak counted that day as missed and the tempo
+    chart shifted a day. The app runs on the piano machine, so "this machine's
+    timezone" is the player's timezone.
+    """
+    try:
+        moment = datetime.fromisoformat(str(timestamp).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return str(timestamp)[:10]
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone().date().isoformat()
+
+
 def _streak_days(timestamps: Sequence[str]) -> int:
-    days = sorted({timestamp[:10] for timestamp in timestamps if timestamp}, reverse=True)
+    days = sorted({_local_day(timestamp) for timestamp in timestamps if timestamp}, reverse=True)
     if not days:
         return 0
     streak = 0
@@ -422,7 +441,7 @@ def build_stats(conn, user_id: int, *, config: Settings | None = None) -> dict[s
     for row in history_rows:
         if (row["pitch_accuracy"] or 0) < 80:
             continue
-        day = str(row["performed_at"])[:10]
+        day = _local_day(row["performed_at"])
         best_by_day[day] = max(best_by_day.get(day, 0.0), float(row["tempo_bpm"] or 0))
     for day in sorted(best_by_day):
         tempo_progress.append({"date": day, "tempo_bpm": best_by_day[day]})
