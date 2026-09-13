@@ -8,7 +8,7 @@
    * — including the wandering between exercises.
    */
   import { app } from '../lib/state.svelte';
-  import { formatClock } from '../lib/types';
+  import { formatClock } from '../lib/clock';
 
   let elapsed = $state(0);
 

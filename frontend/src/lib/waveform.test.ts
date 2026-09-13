@@ -4,7 +4,6 @@ import assert from 'node:assert/strict';
 import {
   MIN_LOOP_S,
   clampToLoop,
-  formatClock,
   peaksFrom,
   placeMarker,
   ratioToTime,
@@ -95,14 +94,6 @@ test('playback inside the loop is left alone', () => {
   assert.equal(clampToLoop(6, 5, 9), 6);
   assert.equal(clampToLoop(5, 5, 9), 5);
   assert.equal(clampToLoop(8.999, 5, 9), 8.999);
-});
-
-test('a clock reads in minutes and tenths', () => {
-  assert.equal(formatClock(3.44), '0:03.4');
-  assert.equal(formatClock(63.4), '1:03.4');
-  assert.equal(formatClock(600), '10:00.0');
-  assert.equal(formatClock(-1), '0:00.0');
-  assert.equal(formatClock(Number.NaN), '0:00.0');
 });
 
 test('markers can be set one at a time, in either order', () => {

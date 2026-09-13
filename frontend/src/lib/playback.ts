@@ -146,6 +146,36 @@ export function durationOf(notes: readonly SynthNote[]): number {
   return notes.reduce((end, note) => Math.max(end, note.onset + note.duration), 0);
 }
 
+/** The first onset, or 0 when there is nothing. */
+export function firstOnset(notes: readonly SynthNote[]): number {
+  return notes.reduce((first, note) => Math.min(first, note.onset), Infinity) === Infinity
+    ? 0
+    : notes.reduce((first, note) => Math.min(first, note.onset), Infinity);
+}
+
+/**
+ * The notes from `seconds` onwards, rebased so that `seconds` becomes zero.
+ *
+ * This is what makes seeking possible: the player schedules from now, so every
+ * onset has to be relative to the moment playback starts, while the interface still
+ * thinks in positions in the sitting.
+ *
+ * A note that was already sounding at `seconds` is kept, shortened to the part that
+ * is left — the alternative is to drop it, which makes seeking into the middle of a
+ * held chord sound like a mistake in the recording.
+ */
+export function fromTime(notes: readonly SynthNote[], seconds: number): SynthNote[] {
+  const from = Number.isFinite(seconds) ? Math.max(0, seconds) : 0;
+  const out: SynthNote[] = [];
+  for (const note of notes) {
+    const end = note.onset + note.duration;
+    if (end <= from) continue;
+    const onset = Math.max(0, note.onset - from);
+    out.push({ ...note, onset, duration: Math.max(0.05, end - from - onset) });
+  }
+  return out;
+}
+
 /** A pedal move as stored: CC64, where 64 and above is "down". */
 export interface PedalPoint {
   onset_ms: number;

@@ -459,6 +459,29 @@ export interface SegmentSummary {
   candidates: SegmentCandidate[];
 }
 
+/** Whether a real sampled piano is installed, and where it came from. */
+export interface PianoStatus {
+  available: boolean;
+  present: number;
+  total: number;
+  /** The sampled note names, so URLs are built from the backend's list. */
+  notes: string[];
+  bytes: number;
+  directory: string;
+  source: string;
+  licence: string;
+  attribution_url: string;
+}
+
+export interface PianoDownloadReport {
+  downloaded: number;
+  skipped: number;
+  failed: number;
+  bytes: number;
+  errors: string[];
+  status: PianoStatus;
+}
+
 /** How the matcher does on this library, measured by hiding one label at a time. */
 export interface IdentificationQuality {
   labelled: number;
@@ -687,14 +710,3 @@ export function formatMinutes(minutes: number): string {
   return rest === 0 ? `${hours} h` : `${hours} h ${rest} min`;
 }
 
-/** Seconds as a practice-log duration: 95 -> "1:35", 3800 -> "1:03:20". */
-export function formatClock(seconds: number): string {
-  const total = Math.max(0, Math.round(seconds));
-  const hours = Math.floor(total / 3600);
-  const minutes = Math.floor((total % 3600) / 60);
-  const rest = total % 60;
-  if (hours > 0) {
-    return `${hours}:${String(minutes).padStart(2, '0')}:${String(rest).padStart(2, '0')}`;
-  }
-  return `${minutes}:${String(rest).padStart(2, '0')}`;
-}

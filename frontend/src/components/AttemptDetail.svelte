@@ -7,7 +7,8 @@
    * exists so a row in the history can be *heard* rather than only counted.
    */
   import { playedEvents, sounding, writtenEvents } from '../lib/playback';
-  import { formatClock, type PerformanceDetail } from '../lib/types';
+  import type { PerformanceDetail } from '../lib/types';
+  import { formatClock } from '../lib/clock';
   import HearIt from './HearIt.svelte';
 
   interface Props {

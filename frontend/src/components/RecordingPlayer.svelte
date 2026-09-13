@@ -15,13 +15,13 @@
     MAX_WAVEFORM_BYTES,
     PEAK_COLUMNS,
     clampToLoop,
-    formatClock,
     peaksFrom,
     placeMarker,
     type Loop,
     type Peaks,
   } from '../lib/waveform';
   import Waveform from './Waveform.svelte';
+  import { formatClock } from '../lib/clock';
 
   interface Props {
     recording: Recording;

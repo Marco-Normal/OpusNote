@@ -142,6 +142,7 @@ Two independent signals, both visible from any machine in the Log tab:
 | --- | --- |
 | `~/.local/share/piano-ecosystem/piano.db` | Every table: library, journal, media rows, sittings, note events, **pedal events**, segments, workouts, ratings |
 | `~/.local/share/piano-ecosystem/media/` | Recordings (`.ogg`/`.mp4`) and scores (`.pdf`/`.musicxml`), named by content hash |
+| `~/.local/share/piano-ecosystem/piano/` | The one-time sampled piano, 30 mp3s, 2 MB, served at `/piano/…` |
 
 Scores live in the same directory as recordings. They are small — a PDF or a
 MusicXML file is kilobytes next to a recording's megabytes — so they are not what
@@ -218,6 +219,8 @@ re-run while you still use the old apps.
 | Capture shows "Not reaching the API — retrying" | The backend is down or on another port. Batches are held and resent; nothing is lost until the tab closes. |
 | A recording reads *pending* | Its row came across but the file has not been copied. Import with copying on, or copy `media/`. |
 | The waveform says the recording is too large to decode | Over 64 MB. It plays normally; only the picture is declined, because decoding expands the whole file into raw samples in the browser. |
+| Playback comes out of the wrong thing | The device bar's *Playback* chooses between the piano itself (MIDI out), the sampled piano and the synthesiser. *Through the piano* appears only when an output is present and is chosen by device fingerprint, not by port order. |
+| A note hangs on the piano after stopping | It should not: Stop sends note-off and then all-notes-off on every channel, twice. If one still hangs, the piano is holding a note the app never sent — press its own panic/reset, and note which note it was. |
 | The matcher fills in a piece you did not play | It is marked *guessed* and one click from being corrected; "Not this" removes it. Loosening or tightening `SRT_AUTOTAG_MIN_MARGIN` (default 0.10) trades how often it writes a label unasked against how often that label is right. |
 | Nothing is ever recognised | Fewer than two segments are tagged by hand, or every match is too close to call. Tag a few by hand — they are the reference — and the *Recognising what you played* panel will say which it is. |
 | Two tabs open | Each tab captures; the same notes would be logged twice. Keep one. |

@@ -10,7 +10,6 @@
   import { api } from '../lib/api';
   import { app } from '../lib/state.svelte';
   import {
-    formatClock,
     formatMinutes,
     type AnalyticsSummary,
     type IdentificationQuality,
@@ -26,6 +25,7 @@
   import CaptureBar from './CaptureBar.svelte';
   import SegmentTimeline from './SegmentTimeline.svelte';
   import SittingList from './SittingList.svelte';
+  import { formatClock } from '../lib/clock';
 
   let summary = $state<AnalyticsSummary | null>(null);
   let week = $state<RatingHistory | null>(null);

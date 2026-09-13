@@ -7,9 +7,10 @@
 
 import { api } from './api';
 import { CaptureClient, type CaptureStatus } from './capture';
-import { MidiInput, type MidiDeviceInfo } from './midi';
+import { MidiInput, type MidiDeviceInfo, type MidiOutputInfo } from './midi';
 import { fingerprint, type PortSnapshot } from './midiDevice';
-import type { AppView, HostInfo, Profile, Workout } from './types';
+import { PianoPlayer, sharedPlayer, type Instrument } from './pianoPlayer';
+import type { AppView, HostInfo, PianoStatus, Profile, Workout } from './types';
 
 const LATENCY_STORAGE_KEY = 'srt.latencyMs';
 const BARS_STORAGE_KEY = 'srt.bars';
@@ -123,6 +124,23 @@ class AppState {
    * reaches one page, and the log is supposed to record practice without anyone
    * remembering to open a tab. Capture is therefore on whenever the device is.
    */
+  /**
+   * Playing back, through whichever instrument is chosen.
+   *
+   * A single shared player, wired to the MIDI output here: the choice of instrument
+   * belongs to the application rather than to whichever component happens to have a
+   * play button, and two players sounding at once was a real bug.
+   */
+  readonly player = sharedPlayer();
+
+  /** Outputs we could play through — in practice, the piano. */
+  outputs = $state<MidiOutputInfo[]>([]);
+  /** 'midi' through the piano, 'piano' sampled, 'synth' built in. */
+  instrument = $state<Instrument>(PianoPlayer.rememberedInstrument() ?? 'midi');
+  /** Whether the one-time sample download has been done, and its licence. */
+  piano = $state<PianoStatus | null>(null);
+  downloadingPiano = $state(false);
+
   readonly capture = new CaptureClient(
     this.midi,
     () => (this.workout?.running ? 'sight_reading' : 'web_midi'),
@@ -130,6 +148,47 @@ class AppState {
       this.captureStatus = status;
     },
   );
+
+  /**
+   * Push the stored instrument into the player.
+   *
+   * The state is the source of truth, but the player is an ordinary object with its
+   * own field — so a remembered choice that is never sent to it leaves playback on
+   * the player's default, which is how "through the piano" ended up sending nothing.
+   */
+  constructor() {
+    this.player.setInstrument(this.instrument);
+  }
+
+  async refreshPiano(): Promise<void> {
+    try {
+      this.piano = await api.audio.pianoStatus();
+    } catch {
+      this.piano = null;
+    }
+  }
+
+  /**
+   * Fetch the sampled piano once, then serve it from our own host.
+   *
+   * Synchronous on the server and slow enough to notice, so the interface says it is
+   * downloading rather than looking frozen.
+   */
+  async downloadPiano(): Promise<void> {
+    this.downloadingPiano = true;
+    try {
+      await api.audio.downloadPiano();
+      await this.refreshPiano();
+      if (this.piano?.available) this.setInstrument('piano');
+    } finally {
+      this.downloadingPiano = false;
+    }
+  }
+
+  setInstrument(instrument: Instrument): void {
+    this.instrument = instrument;
+    this.player.setInstrument(instrument);
+  }
 
   captureEnabled = $state(readCapture());
   captureStatus = $state<CaptureStatus>({
@@ -284,6 +343,16 @@ class AppState {
         this.ports = ports;
         this.midiActiveId = this.midi.activeId;
         this.midiPinned = this.midi.hasPin;
+      });
+      this.midi.onOutputs((outputs) => {
+        this.outputs = outputs;
+      });
+      // Playback through the piano is wired once, here: the player is shared and the
+      // output can appear or vanish with the device, so the sink asks each time
+      // rather than holding a port reference that may be gone.
+      this.player.setMidiSink({
+        send: (bytes, timestamp) => this.midi.send(bytes, timestamp),
+        available: () => this.midiConnected && this.midi.hasOutput,
       });
       this.midi.onDevices((next) => {
         this.devices = next;

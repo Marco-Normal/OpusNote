@@ -18,6 +18,8 @@ import type {
   PieceDetail,
   PiecePracticeDetail,
   PerformanceDetail,
+  PianoDownloadReport,
+  PianoStatus,
   PieceSummary,
   PracticeImportReport,
   PracticeSource,
@@ -269,6 +271,15 @@ export const api = {
 
     /** Where a media row's bytes are served from, for an <audio>/<iframe>/fetch. */
     mediaUrl: (mediaId: number) => `/api/repertoire/media/${mediaId}/file`,
+  },
+
+  audio: {
+    /** Is the sampled piano installed, and what is its licence? */
+    pianoStatus: () => request<PianoStatus>('/audio/piano'),
+
+    /** Fetch it once (about 2 MB). Safe to re-run: existing files are skipped. */
+    downloadPiano: () =>
+      request<PianoDownloadReport>('/audio/piano', { method: 'POST' }),
   },
 
   practice: {

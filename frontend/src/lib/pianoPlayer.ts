@@ -1,56 +1,198 @@
 /**
- * Playing notes back through a synthesiser.
+ * Making sound: the piano, a sampled piano, or a synthesiser.
  *
- * Not the piano. The app ships no samples, and pretending otherwise in the interface
- * would be worse than saying so: what this reproduces faithfully is *timing and
- * touch* — onsets, release-derived durations and velocities all come from what was
- * actually played — and what it cannot reproduce is the instrument.
+ * Three instruments, because they answer three different situations:
  *
- * Tone is already a dependency for the count-in click, and the audio-context unlock
- * problem is already solved there; this reuses the same idea rather than adding a
- * second audio stack.
+ * - **`midi`** sends the notes to the *piano itself*, through a Web MIDI output.
+ *   This is the only one that is actually a piano, and it is the default wherever a
+ *   piano is connected — which on the piano machine is always.
+ * - **`piano`** is the Salamander Grand Piano, downloaded once and served by our own
+ *   backend. Real samples, works on a viewer with no piano attached.
+ * - **`synth`** is built from Tone's oscillators and always available, including
+ *   before the one-time download. It is an FM approximation, not a piano, and the
+ *   interface says so rather than pretending.
+ *
+ * **One player for the whole app.** Every component used to construct its own, so
+ * two of them (a results panel and a history row, say) could sound at once and
+ * neither Stop button knew about the other. `sharedPlayer()` is the only instance;
+ * starting anything stops whatever was playing.
+ *
+ * **Stop has to stop.** `triggerAttackRelease` schedules notes on the audio clock,
+ * and releasing the voices does nothing about a note scheduled for four seconds'
+ * time — which is exactly the bug where Stop appeared to be ignored. Playback is
+ * scheduled as a `Tone.Part` and cancelled on stop; MIDI output is handed out in a
+ * short rolling window, so at most a few hundred milliseconds of notes can be in
+ * flight, and a second all-notes-off is sent after that window has passed.
  */
 
 import * as Tone from 'tone';
 
-import type { SynthNote } from './playback';
+import { fromTime, type SynthNote } from './playback';
+
+export type Instrument = 'midi' | 'piano' | 'synth';
 
 export interface PlaybackHandle {
-  /** Seconds since playback started. */
+  /** Seconds from the start of the *source* material, offset included. */
   elapsed: number;
+  /** Length of the whole source material, in seconds. */
   total: number;
 }
 
-export interface PlaybackOptions {
+export interface PlayOptions {
+  /** Where in the source material to begin, in seconds. */
+  from?: number;
+  /** Stop when the source timeline reaches this, in seconds. */
+  until?: number;
   onProgress?: (handle: PlaybackHandle) => void;
   onDone?: () => void;
 }
 
-/** A little air before the first note, so the very first attack is not clipped. */
+/** What the player needs from a MIDI output, so it can be faked in a test. */
+export interface MidiSink {
+  send(bytes: number[], timestamp?: number): void;
+  available(): boolean;
+}
+
 const LEAD_IN_S = 0.12;
 
+/** How far ahead MIDI notes are queued, and how often the queue is refilled. */
+const MIDI_WINDOW_MS = 400;
+const MIDI_PUMP_MS = 150;
+
+/** Sent after the scheduling window has drained, to catch anything already handed
+ * to the MIDI stack: a queued note-on cannot be recalled, only followed by silence. */
+const MIDI_FLUSH_MS = MIDI_WINDOW_MS + 150;
+
+const PREFERENCE_KEY = 'srt.instrument';
+
 export class PianoPlayer {
-  private synth: Tone.PolySynth<Tone.Synth> | null = null;
+  private synth: Tone.PolySynth<Tone.FMSynth> | null = null;
+  private piano: Tone.Sampler | null = null;
+  private part: Tone.Part<{ time: number; note: SynthNote }> | null = null;
   private frame: number | null = null;
   private startedAt = 0;
+  private offset = 0;
   private total = 0;
+  private end = Infinity;
   private playing = false;
+
+  private sink: MidiSink | null = null;
+  /** True while playback is going out over MIDI, so a stop knows to silence it. */
+  private midiActive = false;
+  private queue: SynthNote[] = [];
+  private queueIndex = 0;
+  private pump: ReturnType<typeof setInterval> | null = null;
+  private flush: ReturnType<typeof setTimeout> | null = null;
+
+  private instrument: Instrument = 'synth';
+  private pianoReady = false;
+  /**
+   * Pitch to the moment its note-off is due, in `performance.now()` terms.
+   *
+   * Kept so a stop can turn off exactly what is still sounding. A timer per note
+   * would be the obvious alternative and would mean thousands of pending timers for
+   * a long sitting, most of them for notes that stopped hours ago.
+   */
+  private readonly sounding = new Map<number, number>();
 
   get isPlaying(): boolean {
     return this.playing;
   }
 
+  /** Where playback has reached, in source seconds. */
+  get position(): number {
+    if (!this.playing) return this.offset;
+    return Math.min(this.total, this.offset + (performance.now() - this.startedAt) / 1000);
+  }
+
+  get current(): Instrument {
+    return this.instrument;
+  }
+
+  setInstrument(instrument: Instrument): void {
+    this.instrument = instrument;
+    try {
+      localStorage.setItem(PREFERENCE_KEY, instrument);
+    } catch {
+      // A browser with storage disabled is not a reason to stop playing.
+    }
+  }
+
+  /** The remembered choice, or null when the player has never chosen. */
+  static rememberedInstrument(): Instrument | null {
+    try {
+      const stored = localStorage.getItem(PREFERENCE_KEY);
+      return stored === 'midi' || stored === 'piano' || stored === 'synth' ? stored : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Where MIDI playback goes. Null means there is no piano to play. */
+  setMidiSink(sink: MidiSink | null): void {
+    this.sink = sink;
+  }
+
   /**
-   * Play a set of notes, replacing anything already playing.
+   * Load the sampled piano, if it is installed.
    *
-   * The audio context is started here rather than on load: browsers refuse to start
-   * one without a gesture, and every caller of this is a button.
+   * The note names come from the backend that serves the samples, so there is one
+   * list of them rather than a copy here that drifts from the one on disk.
    */
-  async play(notes: readonly SynthNote[], options: PlaybackOptions = {}): Promise<void> {
+  async loadPiano(baseUrl = '/piano/'): Promise<boolean> {
+    if (this.pianoReady) return true;
+    try {
+      const response = await fetch('/api/audio/piano');
+      if (!response.ok) throw new Error(`status ${response.status}`);
+      const status = (await response.json()) as { available: boolean; notes?: string[] };
+      if (!status.available) throw new Error('the samples are not installed');
+      const urls: Record<string, string> = {};
+      for (const note of status.notes ?? []) urls[note] = `${note}.mp3`;
+      if (Object.keys(urls).length === 0) throw new Error('no samples listed');
+      const sampler = new Tone.Sampler({ urls, baseUrl, release: 1.2 }).toDestination();
+      sampler.volume.value = -6;
+      await Tone.loaded();
+      this.piano = sampler;
+      this.pianoReady = true;
+      return true;
+    } catch {
+      // A missing or half-installed sample set must not take playback down: the
+      // synthesiser is still there, and the interface offers the download.
+      this.piano = null;
+      this.pianoReady = false;
+      return false;
+    }
+  }
+
+  async play(notes: readonly SynthNote[], options: PlayOptions = {}): Promise<void> {
     this.stop();
-    if (notes.length === 0) {
+    const offset = Math.max(0, options.from ?? 0);
+    const total = notes.reduce((end, note) => Math.max(end, note.onset + note.duration), 0);
+    const end = Math.min(options.until ?? Infinity, total);
+    const material = fromTime(notes, offset).filter((note) => note.onset + offset < end);
+
+    this.offset = offset;
+    this.total = total;
+    this.end = end;
+    if (material.length === 0) {
+      options.onProgress?.({ elapsed: total, total });
       options.onDone?.();
       return;
+    }
+
+    if (this.instrument === 'midi' && this.sink?.available()) {
+      this.playMidi(material, options);
+      return;
+    }
+
+    if (this.instrument === 'piano') {
+      const ready = this.pianoReady || (await this.loadPiano());
+      if (ready) {
+        this.playThrough(this.piano as Tone.Sampler, material, options);
+        return;
+      }
+      // The samples were not installed after all: fall through to the synth rather
+      // than leaving the button doing nothing.
     }
 
     try {
@@ -58,36 +200,11 @@ export class PianoPlayer {
     } catch {
       // No audio in this browser or context. Failing silently is right: the caller
       // has nothing useful to tell the user about a sound that did not happen.
+      this.playing = false;
       options.onDone?.();
       return;
     }
-
-    if (!this.synth) {
-      this.synth = new Tone.PolySynth(Tone.Synth, {
-        // A short, bright envelope: recognisably not a piano, but the attack is
-        // crisp enough that timing differences are audible, which is the point.
-        oscillator: { type: 'triangle' },
-        envelope: { attack: 0.005, decay: 0.18, sustain: 0.25, release: 0.35 },
-      }).toDestination();
-      this.synth.maxPolyphony = 48;
-      this.synth.volume.value = -8;
-    }
-
-    const start = Tone.now() + LEAD_IN_S;
-    this.total = notes.reduce((end, note) => Math.max(end, note.onset + note.duration), 0);
-    for (const note of notes) {
-      this.synth.triggerAttackRelease(
-        Tone.Frequency(note.pitch, 'midi').toFrequency(),
-        Math.max(0.05, note.duration),
-        start + note.onset,
-        Math.min(1, Math.max(0.05, note.velocity)),
-      );
-    }
-
-    this.startedAt = start;
-    this.playing = true;
-    this.report(options, 0);
-    this.tick(options);
+    this.playThrough(this.synthVoice(), material, options);
   }
 
   stop(): void {
@@ -95,27 +212,164 @@ export class PianoPlayer {
       cancelAnimationFrame(this.frame);
       this.frame = null;
     }
-    if (this.playing) {
-      this.synth?.releaseAll();
+    if (this.pump !== null) {
+      clearInterval(this.pump);
+      this.pump = null;
     }
+    if (this.flush !== null) {
+      clearTimeout(this.flush);
+      this.flush = null;
+    }
+    // Cancelling the part is what actually stops: `releaseAll` only releases voices
+    // that are sounding *now*, while a `Tone.Part` holds every note scheduled for
+    // later — which is why Stop used to look broken.
+    if (this.part) {
+      this.part.stop();
+      this.part.cancel();
+      this.part.dispose();
+      this.part = null;
+    }
+    this.synth?.releaseAll();
+    this.piano?.releaseAll();
+    this.queue = [];
+    this.queueIndex = 0;
+    this.silenceMidi();
     this.playing = false;
   }
 
-  /** Release the audio resources entirely, for a component being torn down. */
+  /** Release the audio resources entirely, for a page being torn down. */
   dispose(): void {
     this.stop();
     this.synth?.dispose();
     this.synth = null;
+    this.piano?.dispose();
+    this.piano = null;
+    this.pianoReady = false;
   }
 
-  private tick(options: PlaybackOptions): void {
+  // ------------------------------------------------------------------
+  // Scheduling
+  // ------------------------------------------------------------------
+
+  private playThrough(
+    instrument: Tone.Sampler | Tone.PolySynth<Tone.FMSynth>,
+    material: SynthNote[],
+    options: PlayOptions,
+  ): void {
+    const start = Tone.now() + LEAD_IN_S;
+    this.part = new Tone.Part((time, value) => {
+      const note = value.note;
+      instrument.triggerAttackRelease(
+        Tone.Frequency(note.pitch, 'midi').toFrequency(),
+        Math.max(0.05, note.duration),
+        time,
+        note.velocity,
+      );
+    }, material.map((note) => ({ time: note.onset, note })));
+    this.part.start(start);
+
+    this.startedAt = performance.now();
+    this.playing = true;
+    this.report(options, 0);
+    this.tick(options);
+  }
+
+  private playMidi(material: SynthNote[], options: PlayOptions): void {
+    this.queue = material;
+    this.queueIndex = 0;
+    this.midiActive = true;
+    this.startedAt = performance.now();
+    this.playing = true;
+
+    // A rolling window rather than one note per timer: `send` takes a timestamp, so
+    // the MIDI stack schedules accurately, and only a fraction of a second of notes
+    // is ever in flight — which is also what makes Stop able to cut it off.
+    this.pumpQueue();
+    this.pump = setInterval(() => this.pumpQueue(), MIDI_PUMP_MS);
+    this.report(options, 0);
+    this.tick(options);
+  }
+
+  private pumpQueue(): void {
+    if (!this.sink) return;
+    this.pruneSounding();
+    const horizonMs = performance.now() - this.startedAt + MIDI_WINDOW_MS;
+    while (this.queueIndex < this.queue.length) {
+      const note = this.queue[this.queueIndex];
+      if (note.onset * 1000 > horizonMs) break;
+      this.queueIndex += 1;
+      this.sendMidi(note);
+    }
+  }
+
+  private sendMidi(note: SynthNote): void {
+    const sink = this.sink;
+    if (!sink) return;
+    const channel = 0;
+    const on = this.startedAt + note.onset * 1000;
+    const off = on + Math.max(50, note.duration * 1000);
+    const velocity = Math.max(1, Math.min(127, Math.round(note.velocity * 127)));
+    sink.send([0x90 | channel, note.pitch, velocity], on);
+    sink.send([0x80 | channel, note.pitch, 0], off);
+    this.sounding.set(note.pitch, off);
+  }
+
+  /** Forget the notes whose release has already gone by. */
+  private pruneSounding(): void {
+    const now = performance.now();
+    for (const [pitch, off] of [...this.sounding]) {
+      if (off <= now) this.sounding.delete(pitch);
+    }
+  }
+
+  /**
+   * Leave the instrument silent.
+   *
+   * Notes are turned off explicitly rather than relying on all-notes-off alone: a
+   * controller message is only as good as the instrument's handling of it, and a
+   * note left hanging on a real piano is the worst outcome this class can produce.
+   * The trailing all-notes-off catches anything the *next* window had already
+   * queued, which is a note-on that cannot be recalled from the MIDI stack.
+   */
+  private silenceMidi(): void {
+    const sink = this.sink;
+    if (!sink || !this.midiActive) return;
+    this.midiActive = false;
+
+    // Explicit note-offs for what is still sounding, because a controller message is
+    // only as good as the instrument's handling of it — and a note left hanging on a
+    // real piano is the worst thing this class can do.
+    for (const pitch of this.sounding.keys()) {
+      sink.send([0x80, pitch, 0]);
+    }
+    this.sounding.clear();
+
+    // The sweep runs *unconditionally*, including when nothing is sounding: notes
+    // were handed to the MIDI stack with timestamps up to a window ahead, and those
+    // have not happened yet. Returning early when the map was empty — which is the
+    // normal case, because a short note has already finished by the time anyone
+    // reaches for Stop — is what left queued notes still to play.
+    const sweep = () => {
+      for (let channel = 0; channel < 16; channel += 1) {
+        sink.send([0xb0 | channel, 123, 0]); // all notes off
+        sink.send([0xb0 | channel, 120, 0]); // all sound off
+      }
+    };
+    sweep();
+    // And again after the window has drained, to catch what was already queued.
+    this.flush = setTimeout(() => {
+      sweep();
+      this.flush = null;
+    }, MIDI_FLUSH_MS);
+  }
+
+  private tick(options: PlayOptions): void {
     this.frame = requestAnimationFrame(() => {
-      const elapsed = Tone.now() - this.startedAt;
-      this.report(options, Math.max(0, elapsed));
-      if (elapsed >= this.total) {
-        this.frame = null;
-        this.playing = false;
-        this.report(options, this.total);
+      const elapsed = this.position;
+      this.report(options, elapsed);
+      if (elapsed >= this.end) {
+        this.stop();
+        this.report(options, this.end);
         options.onDone?.();
         return;
       }
@@ -123,7 +377,38 @@ export class PianoPlayer {
     });
   }
 
-  private report(options: PlaybackOptions, elapsed: number): void {
+  private report(options: PlayOptions, elapsed: number): void {
     options.onProgress?.({ elapsed, total: this.total });
   }
+
+  private synthVoice(): Tone.PolySynth<Tone.FMSynth> {
+    if (!this.synth) {
+      // An FM voice with a piano's shape rather than a pad's: a click of attack, a
+      // long decay to almost nothing, and a bright transient that fades faster than
+      // the fundamental. Not a piano — the sample set is for that — but it stops
+      // sounding like a string section holding a chord.
+      this.synth = new Tone.PolySynth(Tone.FMSynth, {
+        harmonicity: 2.5,
+        modulationIndex: 5,
+        oscillator: { type: 'sine' },
+        envelope: { attack: 0.003, decay: 1.4, sustain: 0.03, release: 0.9 },
+        modulation: { type: 'sine' },
+        modulationEnvelope: { attack: 0.003, decay: 0.3, sustain: 0, release: 0.3 },
+      }).toDestination();
+      this.synth.maxPolyphony = 48;
+      this.synth.volume.value = -10;
+    }
+    return this.synth;
+  }
+}
+
+let shared: PianoPlayer | null = null;
+
+/**
+ * The one player. Every caller shares it, so there is exactly one thing making
+ * sound and exactly one Stop that stops it.
+ */
+export function sharedPlayer(): PianoPlayer {
+  if (!shared) shared = new PianoPlayer();
+  return shared;
 }

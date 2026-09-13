@@ -97,14 +97,6 @@ export function clampToLoop(
   return currentTime < start || currentTime >= end ? start : currentTime;
 }
 
-/** `m:ss.s`, for a marker readout. */
-export function formatClock(seconds: number): string {
-  const total = Number.isFinite(seconds) ? Math.max(0, seconds) : 0;
-  const minutes = Math.floor(total / 60);
-  const rest = total - minutes * 60;
-  return `${minutes}:${rest.toFixed(1).padStart(4, '0')}`;
-}
-
 export interface Loop {
   start: number | null;
   end: number | null;

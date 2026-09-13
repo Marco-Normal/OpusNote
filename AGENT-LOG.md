@@ -746,3 +746,54 @@ Impact on the other side: none. `practice-logger/` and `piano-progress/` are unt
 One new table (`identification_outcomes`) that only this app writes, picked up
 automatically by the JSON backup; and the `segments.candidates` field is additive on the
 wire, so an older client ignores it.
+
+## 2026-09-13 — sight-reading agent — Phase 15: playback you can navigate, and a real piano
+
+Scope: `frontend/src/lib/{pianoPlayer,midi,playback,clock,pianoRoll}.ts`,
+`frontend/src/components/{SegmentTimeline,HearIt,DeviceBar,PianoRoll}.svelte`,
+`frontend/src/lib/{state.svelte,api,types}.ts`, `frontend/src/lib/{clock,pianoRoll}.test.ts`,
+`backend/app/piano.py` (new), `backend/app/{config,main}.py`,
+`backend/tests/test_piano.py` (new), `backend/tests/conftest.py`,
+`backend/tools/e2e_browser.py`, and the docs.
+
+Did (all four from the user's report, plus the question):
+
+- **Two things played at once, and Stop did not stop.** Every component built its own
+  `PianoPlayer`; there is now one shared instance. `releaseAll()` only releases voices
+  sounding *now*, while `triggerAttackRelease` had already scheduled notes seconds ahead
+  — playback is a `Tone.Part` that is cancelled, and MIDI output goes out in a rolling
+  window so at most 400 ms is in flight. Verified against the simulated piano: note-off
+  for the sounding note, an all-notes-off sweep on all 16 channels, a second sweep after
+  the window drains.
+- **Play through the piano itself.** `midi.ts` now tracks outputs; the sink chooses one
+  by matching the *input's* device fingerprint, so "the piano you play is the piano you
+  hear" needs no configuration. Three instruments in the device bar.
+- **A real sampled piano, downloaded once.** `@tonejs/piano` was rejected after
+  inspection: 15 kB, no samples, fetches from a CDN at play time. `app/piano.py` fetches
+  the 30 Salamander files itself (2.0 MB measured, minor thirds, A0–C8), atomically and
+  idempotently, served from this host at `/piano/…`. The first probe of the sharp names
+  was wrong — `D#4.mp3` is a 404 HTML page, `Ds4.mp3` is the sample — so the set was
+  measured, not assumed. Licence attribution travels in the status payload and is shown
+  where the download is offered.
+- **Seeking into a long sitting.** The strip is a transport: click to play from there,
+  arrow keys, ±30 s jumps, a position readout. `fromTime()` rebases notes for a start
+  offset and keeps a note still sounding, shortened, rather than dropping it.
+- **Falling notes**, with the geometry in a pure module — which caught a sign error that
+  a `max(sliver, …)` had been hiding, so every rectangle was a hairline.
+- **The field nobody could identify** (*Split at*) is labelled and shows a clock; it is
+  the position at which *Split here* cuts the segment.
+
+Two bugs found by writing the checks:
+
+- The sitting's notes were cached per *component*, so choosing a second sitting played
+  the first one's notes. Now keyed on the sitting id.
+- The store's remembered instrument was never pushed into the player, so "through the
+  piano" sent nothing until the select was touched.
+
+Harness: the strip's playhead is now shown while playing even at zero (a sitting whose
+first note is at 0:00 was hiding it), and the rating-curve check waits for its panel
+instead of racing it.
+
+Impact on the other side: none. `practice-logger/` and `piano-progress/` untouched; the
+new files are the 30 samples under `<data dir>/piano/`, which the JSON backup does not
+include — they are re-downloadable in two seconds, and `docs/DEPLOYMENT.md` says so.

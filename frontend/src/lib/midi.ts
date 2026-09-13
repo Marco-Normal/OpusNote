@@ -13,6 +13,7 @@ import {
   PortActivity,
   chooseActive,
   fingerprint,
+  looksSilent,
   type DevicePort,
   type PortSnapshot,
 } from './midiDevice';
@@ -22,6 +23,9 @@ export interface MidiDeviceInfo {
   name: string;
   manufacturer: string;
 }
+
+/** An output we could play through — in practice, the piano itself. */
+export type MidiOutputInfo = MidiDeviceInfo;
 
 export interface RawMidiEvent {
   /** Seconds relative to the recording anchor, filled in by the recorder. */
@@ -67,6 +71,7 @@ type MonitorOnHandler = (note: MonitorNote) => void;
 type MonitorOffHandler = (note: MonitorRelease) => void;
 type PedalHandler = (pedal: MonitorPedal) => void;
 type PortsHandler = (ports: PortSnapshot[]) => void;
+type OutputsHandler = (outputs: MidiOutputInfo[]) => void;
 
 interface NoteState {
   onset: number;
@@ -84,6 +89,16 @@ export class MidiInput {
    * Picking one by position is a coin toss.
    */
   private readonly inputs = new Map<string, MIDIInput>();
+  /**
+   * Every output, for playing *through the piano*.
+   *
+   * The same instrument that sends notes can receive them: on the piano machine the
+   * best available piano sound is the piano, and sending the notes to it costs
+   * nothing and sounds like the real thing.
+   */
+  private readonly outputs = new Map<string, MIDIOutput>();
+  /** Which output playback uses. Null means the first usable one. */
+  private chosenOutputId: string | null = null;
   /** Cross-port echo suppression. */
   private readonly gate = new NoteGate();
   /** Which port has actually carried notes. */
@@ -120,6 +135,7 @@ export class MidiInput {
   private monitorOffHandlers = new Set<MonitorOffHandler>();
   private pedalHandlers = new Set<PedalHandler>();
   private portsHandlers = new Set<PortsHandler>();
+  private outputsHandlers = new Set<OutputsHandler>();
 
   static isSupported(): boolean {
     return typeof navigator !== 'undefined' && 'requestMIDIAccess' in navigator;
@@ -167,7 +183,100 @@ export class MidiInput {
       this.inputs.delete(portId);
       this.activity.forget(portId);
     }
+
+    // Outputs, symmetrically: a piano switched on later has to become available for
+    // playback without a reload, exactly as it becomes available for input.
+    const liveOutputs = new Set<string>();
+    this.access?.outputs.forEach((output) => {
+      liveOutputs.add(output.id);
+      this.outputs.set(output.id, output);
+    });
+    for (const portId of [...this.outputs.keys()]) {
+      if (!liveOutputs.has(portId)) this.outputs.delete(portId);
+    }
+    if (this.chosenOutputId !== null && !this.outputs.has(this.chosenOutputId)) {
+      this.chosenOutputId = null;
+    }
+    this.emitOutputs();
+
     this.emitPorts(true);
+  }
+
+  listOutputs(): MidiOutputInfo[] {
+    return [...this.outputs.values()].map((output) => ({
+      id: output.id,
+      name: output.name ?? 'Unnamed MIDI output',
+      manufacturer: output.manufacturer ?? '',
+    }));
+  }
+
+  /**
+   * The output to play through: the chosen one, else one that matches the keyboard
+   * we are listening to, else the first that looks like a real device.
+   *
+   * Matching by fingerprint is what makes "the piano you play is the piano you hear"
+   * true without asking: one USB device presents itself as an input and an output
+   * with the same name, and ALSA's `Midi Through` presents itself as both and
+   * carries nothing.
+   */
+  chooseOutput(): MidiOutputInfo | null {
+    const all = this.listOutputs();
+    if (all.length === 0) return null;
+    if (this.chosenOutputId !== null) {
+      const chosen = all.find((output) => output.id === this.chosenOutputId);
+      if (chosen) return chosen;
+    }
+    const active = this.activeId;
+    if (active !== null) {
+      const name = this.listDevices().find((input) => input.id === active);
+      if (name) {
+        const wanted = fingerprint(name);
+        const match = all.find((output) => fingerprint(output) === wanted);
+        if (match) return match;
+      }
+    }
+    return all.find((output) => !looksSilent(output)) ?? all[0];
+  }
+
+  /** Pin playback to one output, or `null` for the automatic choice. */
+  pinOutput(id: string | null): void {
+    this.chosenOutputId = id;
+    this.emitOutputs();
+  }
+
+  get outputId(): string | null {
+    return this.chooseOutput()?.id ?? null;
+  }
+
+  get hasOutput(): boolean {
+    return this.outputs.size > 0;
+  }
+
+  /** Send bytes to the chosen output. Unused channels are the caller's business. */
+  send(bytes: number[], timestamp?: number): boolean {
+    const chosen = this.chooseOutput();
+    if (!chosen) return false;
+    const output = this.outputs.get(chosen.id);
+    if (!output) return false;
+    try {
+      if (timestamp === undefined) output.send(bytes);
+      else output.send(bytes, timestamp);
+      return true;
+    } catch {
+      // A port that vanished between the choice and the send. Dropping the message
+      // is right: there is nothing to retry it to.
+      return false;
+    }
+  }
+
+  onOutputs(handler: OutputsHandler): () => void {
+    this.outputsHandlers.add(handler);
+    return () => this.outputsHandlers.delete(handler);
+  }
+
+  private emitOutputs(): void {
+    const outputs = this.listOutputs();
+    this.outputsHandlers.forEach((handler) => handler(outputs));
   }
 
   listDevices(): MidiDeviceInfo[] {

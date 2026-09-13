@@ -21,6 +21,11 @@ os.environ["SRT_LEGACY_DB"] = str(_TMP_ROOT / "legacy-piano.db")
 # Deliberately NOT the legacy media directory: "copied into our library" and
 # "still only in the old app's directory" must be distinguishable in tests.
 os.environ["SRT_MEDIA_DIR"] = str(_TMP_ROOT / "ecosystem-media")
+# The sampled piano is served by a static mount created when the app is imported,
+# so its directory has to be redirected *before* that import — and it has to be a
+# path this suite can write to, both so a test can install samples and so a test
+# run never downloads 2 MB into the real data directory.
+os.environ["SRT_PIANO_DIR"] = str(_TMP_ROOT / "piano")
 
 import pytest  # noqa: E402
 
@@ -42,7 +47,7 @@ def _wipe() -> None:
     # Wipe the media directories too. A "fresh" database whose media directory
     # still holds files from the previous test is not fresh, and it silently
     # turns "not copied yet" into "already copied".
-    for name in ("ecosystem-media", "media"):
+    for name in ("ecosystem-media", "media", "piano"):
         shutil.rmtree(_TMP_ROOT / name, ignore_errors=True)
 
 

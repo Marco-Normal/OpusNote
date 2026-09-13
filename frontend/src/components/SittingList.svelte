@@ -6,7 +6,8 @@
    * started and how long it lasted — the two things you cannot get from a note
    * count.
    */
-  import { formatClock, type SittingSummary } from '../lib/types';
+  import { type SittingSummary } from '../lib/types';
+  import { formatClock } from '../lib/clock';
 
   interface Props {
     sittings: SittingSummary[];

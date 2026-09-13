@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlite3 import Connection
 
-from . import backup, services, store
+from . import backup, piano, services, store
 from .backup import router as backup_router
 from .config import settings
 from .db import init_db
@@ -410,6 +410,12 @@ def performance_detail(
 @app.get("/api/stats")
 def stats(conn: Connection = Depends(get_conn)) -> JSONResponse:
     return JSONResponse(services.build_stats(conn, current_user_id()))
+
+
+app.include_router(piano.router)
+# Before `mount_frontend`, which is a catch-all at `/`: a mount registered after it
+# is unreachable.
+piano.mount_samples(app)
 
 
 def mount_frontend() -> None:

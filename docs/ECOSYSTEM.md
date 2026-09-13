@@ -5,7 +5,7 @@ Rust app" premise of
 [`INTEGRATION-practice-logger.md`](./INTEGRATION-practice-logger.md), which
 remains accurate about *what exists today* but is no longer the destination.
 
-Status: **decided; Phases 1-12 and 13 are landed.** See §9 and §10 for what each one
+Status: **decided; Phases 1-13 and 15 are landed.** See §9 and §10 for what each one
 delivered.
 
 ---
@@ -816,6 +816,53 @@ Plus a waveform with an A/B loop for recordings (peaks decoded client-side; mark
 the database so they are visible from any machine), sustain pedal captured at last
 (CC64 is parsed and dropped today), and the self-similarity auto-tagging that the
 original design specified but never built.
+
+### Phase 15 — landed (playback you can navigate, and a real piano)
+
+Four things found by using Phase 10's playback on a real sitting, plus one question
+about a field nobody could identify.
+
+- **Two things could sound at once, and Stop did not stop.** Every component built its
+  own `PianoPlayer`, so a results panel and a history row could play over each other and
+  neither Stop button knew about the other — and `releaseAll()` only releases voices
+  sounding *now*, while `triggerAttackRelease` had already scheduled notes for seconds
+  ahead. There is now one shared player, playback is a `Tone.Part` that is cancelled on
+  stop, and MIDI output is handed out in a rolling window so at most a fraction of a
+  second is in flight. **Stop means stop** is checked in the browser suite against a
+  simulated piano: a note-off for the note still sounding, an all-notes-off sweep on
+  every channel, and a second sweep after the window drains — because a note-on already
+  given to the MIDI stack can be followed by silence but not recalled.
+- **Play through the piano itself.** Web MIDI exposes outputs too, so the best available
+  piano sound is the piano: notes go to the PX-870 over MIDI, chosen automatically by
+  matching the output's device fingerprint to the input we listen to. Three instruments
+  in the device bar — through the piano, the sampled Salamander piano, or the built-in FM
+  voice — with the synthesiser as the fallback whenever the others are unavailable.
+- **The sampled piano is a one-time 2 MB download.** `@tonejs/piano` was rejected: it
+  ships no samples and fetches 30 MB from a CDN at play time, which a LAN piano machine
+  cannot rely on. Instead `app/piano.py` fetches the 30 Salamander files (measured: 2.0
+  MB, all reachable, minor thirds from A0 to C8) once, writes them atomically beside the
+  data, and serves them from this host at `/piano/…`. Attribution travels in the status
+  payload and is shown next to the button, because a credit that lives only in a README
+  is not really a credit.
+- **Seeking into a long sitting.** The timeline strip is a transport: click anywhere to
+  play from there, arrow keys move by five seconds, `« 30 s` / `30 s »` jump, and a
+  position readout shows where you are. Playing a range with a start position is a new
+  capability in the player — `fromTime()` rebases the notes and a note still sounding at
+  the seek point is kept, shortened, rather than dropped.
+- **Falling notes.** `PianoRoll.svelte` draws a keyboard with the notes falling onto it,
+  driven by the same playhead. The geometry is a pure module (`pianoRoll.ts`) because
+  the direction notes fall is exactly the thing that is miserable to debug on a canvas —
+  and doing it that way caught a sign error that a `max(sliver, …)` had been hiding, so
+  every note was drawn as a hairline.
+- **The field nobody could identify.** *Split at* is now labelled and shows a clock
+  rather than a count of seconds: it is the position at which *Split here* cuts the
+  segment in two. `parseClock` accepts `5412`, `1:30:12` or `m:ss`, and a half-typed
+  value is refused rather than read as something plausible.
+
+One real bug came out of writing the browser scenario: the sitting's notes were cached
+per *component* rather than per sitting, so choosing a second sitting played the first
+one's notes. The cache is keyed on the sitting id now, and the scenario uses pitches no
+other sitting plays so a stale cache cannot pass by accident.
 
 ### Phase 14 — planned (musical content)
 

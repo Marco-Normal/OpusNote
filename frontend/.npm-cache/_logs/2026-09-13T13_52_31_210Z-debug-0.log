@@ -1,0 +1,70 @@
+0 verbose cli /usr/bin/node /usr/bin/npm
+1 info using npm@11.14.1
+2 info using node@v26.1.0
+3 silly config load:file:/usr/lib/node_modules/npm/npmrc
+4 silly config load:file:/home/marco_normal/tmp/SighRTracker/frontend/.npmrc
+5 silly config load:file:/home/marco_normal/.npmrc
+6 silly config load:file:/etc/npmrc
+7 verbose title npm pack @tonejs/piano
+8 verbose argv "pack" "@tonejs/piano" "--cache" "./.npm-cache" "--pack-destination" "./.npm-cache"
+9 verbose logfile logs-max:10 dir:/home/marco_normal/tmp/SighRTracker/frontend/.npm-cache/_logs/2026-09-13T13_52_31_210Z-
+10 verbose logfile /home/marco_normal/tmp/SighRTracker/frontend/.npm-cache/_logs/2026-09-13T13_52_31_210Z-debug-0.log
+11 silly logfile done cleaning log files
+12 http fetch GET 200 https://registry.npmjs.org/@tonejs%2fpiano 631ms (cache miss)
+13 http fetch GET 200 https://registry.npmjs.org/@tonejs%2fpiano 50ms (cache revalidated)
+14 http fetch GET 200 https://registry.npmjs.org/@tonejs/piano/-/piano-0.2.1.tgz 423ms (cache miss)
+15 notice
+16 notice 📦  @tonejs/piano@0.2.1
+17 notice Tarball Contents
+18 notice 1.1kB LICENSE.md
+18 notice 1.9kB README.md
+18 notice 85B build/index.d.ts
+18 notice 85B build/index.js
+18 notice 2.2kB build/midi/MidiInput.d.ts
+18 notice 5.2kB build/midi/MidiInput.js
+18 notice 1.3kB build/piano/Component.d.ts
+18 notice 1.9kB build/piano/Component.js
+18 notice 465B build/piano/Harmonics.d.ts
+18 notice 981B build/piano/Harmonics.js
+18 notice 525B build/piano/Keybed.d.ts
+18 notice 1.1kB build/piano/Keybed.js
+18 notice 640B build/piano/Pedal.d.ts
+18 notice 1.9kB build/piano/Pedal.js
+18 notice 3.3kB build/piano/Piano.d.ts
+18 notice 7.2kB build/piano/Piano.js
+18 notice 705B build/piano/Salamander.d.ts
+18 notice 1.8kB build/piano/Salamander.js
+18 notice 663B build/piano/String.d.ts
+18 notice 1.0kB build/piano/String.js
+18 notice 765B build/piano/Strings.d.ts
+18 notice 2.8kB build/piano/Strings.js
+18 notice 190B build/piano/Util.d.ts
+18 notice 811B build/piano/Util.js
+18 notice 1.4kB package.json
+18 notice 82B src/index.ts
+18 notice 4.8kB src/midi/MidiInput.ts
+18 notice 1.5kB src/piano/Component.ts
+18 notice 1.1kB src/piano/Harmonics.ts
+18 notice 1.2kB src/piano/Keybed.ts
+18 notice 1.8kB src/piano/Pedal.ts
+18 notice 7.1kB src/piano/Piano.ts
+18 notice 1.9kB src/piano/Salamander.ts
+18 notice 1.2kB src/piano/String.ts
+18 notice 2.2kB src/piano/Strings.ts
+18 notice 888B src/piano/Util.ts
+19 notice Tarball Details
+20 notice name: @tonejs/piano
+21 notice version: 0.2.1
+22 notice filename: tonejs-piano-0.2.1.tgz
+23 notice package size: 15.1 kB
+24 notice unpacked size: 63.8 kB
+25 notice shasum: 48dcf653704d2355fddfc7bffeac81efacbae282
+26 notice integrity: sha512-JIwZ91RSFR7Rt[...]J1GKMabPOW4yQ==
+27 notice total files: 36
+28 notice
+29 verbose cwd /home/marco_normal/tmp/SighRTracker/frontend
+30 verbose os Linux 7.0.5-arch1-1
+31 verbose node v26.1.0
+32 verbose npm  v11.14.1
+33 verbose exit 0
+34 info ok

@@ -57,6 +57,27 @@ FAKE_MIDI = """
   });
   const through = makeInput('alsa-midi-through', 'Midi Through Port-0', 'Midi Through');
   const casio = makeInput('alsa-casio-1', 'CASIO USB-MIDI MIDI 1', 'CASIO');
+
+  // Outgoing messages, so "Stop actually stops" can be checked rather than trusted:
+  // a note-off and an all-notes-off on the wire are the only proof that a real piano
+  // would fall silent.
+  const outgoing = [];
+  const makeOutput = (id, name, manufacturer) => ({
+    id,
+    name,
+    manufacturer,
+    type: 'output',
+    state: 'connected',
+    connection: 'open',
+    send(data, timestamp) {
+      outgoing.push({ port: id, data: [...data], timestamp: timestamp ?? null, at: performance.now() });
+    },
+    clear() {},
+  });
+  const casioOut = makeOutput('alsa-casio-out', 'CASIO USB-MIDI MIDI 1', 'CASIO');
+  const throughOut = makeOutput('alsa-through-out', 'Midi Through Port-0', 'Midi Through');
+  const outputs = new Map([[casioOut.id, casioOut], [throughOut.id, throughOut]]);
+
   const ports = new Map();
   const access = {
     inputs: {
@@ -64,7 +85,11 @@ FAKE_MIDI = """
       get: (key) => ports.get(key),
       get size() { return ports.size; },
     },
-    outputs: { forEach: () => {}, size: 0 },
+    outputs: {
+      forEach: (callback) => outputs.forEach((value) => callback(value)),
+      get: (key) => outputs.get(key),
+      get size() { return outputs.size; },
+    },
     sysexEnabled: false,
     onstatechange: null,
   };
@@ -88,6 +113,26 @@ FAKE_MIDI = """
     },
     ready() {
       return typeof casio.onmidimessage === 'function';
+    },
+    // Everything the app has played *at* the piano, in order.
+    sent() {
+      return outgoing.slice();
+    },
+    noteOns() {
+      return outgoing.filter((m) => (m.data[0] & 0xf0) === 0x90 && m.data[2] > 0)
+        .map((m) => ({ port: m.port, pitch: m.data[1], velocity: m.data[2], timestamp: m.timestamp }));
+    },
+    noteOffs() {
+      return outgoing.filter((m) => (m.data[0] & 0xf0) === 0x80).map((m) => m.data[1]);
+    },
+    allNotesOff() {
+      return outgoing.filter((m) => (m.data[0] & 0xf0) === 0xb0 && (m.data[1] === 123 || m.data[1] === 120)).length;
+    },
+    forget() {
+      outgoing.length = 0;
+    },
+    outputs() {
+      return [...outputs.values()].map((o) => ({ id: o.id, name: o.name }));
     },
     total() {
       return ports.size;
@@ -615,11 +660,15 @@ def scenario_calibration_and_stats(browser) -> None:
     check(history_rows > 0, f"progress view lists {history_rows} recent exercises")
 
     # Rating history: recorded per attempt, because `user_skills` keeps only today's
-    # number and a curve cannot be recovered from it.
-    check(
-        page.locator('[data-ratings="shown"]').count() == 1,
-        "the rating curve has points after a scored attempt",
-    )
+    # number and a curve cannot be recovered from it. Waited for rather than asserted
+    # instantly: the series is fetched separately from the view, and checking the
+    # moment the radar appears is a race the fuller suite loses.
+    try:
+        page.wait_for_selector('[data-ratings="shown"]', timeout=10_000)
+        shown = True
+    except PlaywrightTimeout:
+        shown = False
+    check(shown, "the rating curve has points after a scored attempt")
     check(
         page.locator('[data-ratings="shown"] svg .line').count() >= 1,
         "and it is drawn",
@@ -2041,6 +2090,214 @@ def label(sitting_id: int, piece_id: int) -> int:
     return segment_id
 
 
+def held_note_sitting(*, minutes_ago: int = 150) -> int:
+    """A sitting whose first note is still sounding a second after it starts.
+
+    Needed for the only question about Stop that matters — does a note that *is*
+    sounding get turned off — because the four short notes of the seeded sitting have
+    all finished before anyone can reach the button.
+    """
+    import time
+
+    base = int(time.time() * 1000) - minutes_ago * 60_000
+    payload = {
+        "tz_offset_minutes": -180,
+        "source": "web_midi",
+        "events": [
+            # 84 and 86 on purpose: no other sitting in this suite plays them, so a
+            # stale notes cache cannot satisfy the assertions by accident.
+            {"epoch_ms": base, "pitch": 84, "velocity": 80, "duration_ms": 6_000, "channel": 0},
+            {"epoch_ms": base + 8_000, "pitch": 86, "velocity": 80, "duration_ms": 300, "channel": 0},
+        ],
+    }
+    return api("/api/practice/events", "POST", payload)["sitting_id"]
+
+
+def scenario_playback(browser) -> None:
+    print("\n[12] Playback: through the piano, and into it")
+    clear_practice()
+    sitting_id = seed_closed_sitting(minutes_ago=90)
+    held_id = held_note_sitting()
+    notes = api(f"/api/practice/sittings/{sitting_id}/notes")["notes"]
+    check(len(notes) >= 3, f"the sitting has notes to play ({len(notes)})")
+
+    page, errors = new_page(browser)
+    page.goto(BASE_URL, wait_until="domcontentloaded")
+    page.wait_for_selector("text=Sight-Reading Trainer")
+    ensure_midi(page)
+    click_button(page, "Log")
+    page.wait_for_selector("[data-identification]", timeout=20_000)
+
+    # --- the instrument choice ---
+    check(page.locator("[data-sound]").count() == 1, "there is a playback instrument control")
+    options = page.evaluate(
+        "() => [...document.querySelectorAll('#instrument option')].map((o) => ({ value: o.value, disabled: o.disabled }))"
+    )
+    check(
+        any(item["value"] == "midi" and not item["disabled"] for item in options),
+        f"the piano can be played through, because one is connected ({options})",
+    )
+    check(
+        any(item["value"] == "synth" for item in options),
+        "and the synthesiser is always offered",
+    )
+
+    # --- playing, through the piano ---
+    # Selecting a sitting reads its detail; the notes are fetched on the first play,
+    # because a long sitting is thousands of them and every edit re-reads the detail.
+    with page.expect_response(lambda r: r.url.endswith(f"/api/practice/sittings/{sitting_id}")):
+        page.click(f'[data-sitting="{sitting_id}"]')
+    page.wait_for_selector("[data-strip]", timeout=20_000)
+    page.evaluate("() => window.__fakeMidi.forget()")
+
+    with page.expect_response(
+        lambda r: r.url.endswith(f"/api/practice/sittings/{sitting_id}/notes")
+    ):
+        click_button(page, "Play the sitting")
+    page.wait_for_timeout(1_200)
+    played = page.evaluate("() => window.__fakeMidi.noteOns()")
+    check(len(played) > 0, f"playing sends notes to the piano ({len(played)} so far)")
+    check(
+        all(item["port"] == "alsa-casio-out" for item in played),
+        "to the piano, not to the dead ALSA port",
+    )
+    check(
+        all(item["timestamp"] is not None for item in played),
+        "with a timestamp, so the piano's own clock places them",
+    )
+    readout = page.inner_text("[data-position]")
+    check("/" in readout, f"and a position readout appears ({readout!r})")
+    check(
+        not readout.startswith("0:00"),
+        f"and it advances as the music does ({readout!r})",
+    )
+
+    # --- Stop has to stop ---
+    # First with nothing left sounding, which is the ordinary case: the notes here are
+    # 300 ms and have finished long before anyone reaches the button. The sweep still
+    # has to go out, because note-ons up to a window ahead were already handed to the
+    # MIDI stack and have not happened yet.
+    page.evaluate("() => window.__fakeMidi.forget()")
+    click_button(page, "Stop")
+    page.wait_for_timeout(700)
+    check(
+        page.evaluate("() => window.__fakeMidi.allNotesOff()") >= 32,
+        "stopping sends the silence sweep even when nothing is currently sounding",
+    )
+    check(
+        page.locator("[data-playing='false']").count() == 1,
+        "and the transport goes back to offering Play",
+    )
+
+    # Then with a note six seconds long, so something really is sounding when the
+    # button is pressed — the case where an explicit note-off is the only thing that
+    # saves it, because a controller message is only as good as the instrument.
+    with page.expect_response(lambda r: r.url.endswith(f"/api/practice/sittings/{held_id}")):
+        page.click(f'[data-sitting="{held_id}"]')
+    page.wait_for_selector("[data-strip]", timeout=20_000)
+    page.evaluate("() => window.__fakeMidi.forget()")
+    with page.expect_response(
+        lambda r: r.url.endswith(f"/api/practice/sittings/{held_id}/notes")
+    ):
+        click_button(page, "Play the sitting")
+    page.wait_for_timeout(900)
+    started = page.evaluate("() => window.__fakeMidi.noteOns().map((n) => n.pitch)")
+    check(84 in started, f"the held note of *this* sitting has sounded ({started})")
+
+    page.evaluate("() => window.__fakeMidi.forget()")
+    click_button(page, "Stop")
+    page.wait_for_timeout(700)
+    offs = page.evaluate("() => window.__fakeMidi.noteOffs()")
+    silenced = page.evaluate("() => window.__fakeMidi.allNotesOff()")
+    check(84 in offs, f"stopping turns the note that is sounding off ({offs})")
+    # 16 channels x (all notes off + all sound off) x two sweeps: the second one
+    # follows the scheduling window, because a note-on already handed to the MIDI
+    # stack cannot be recalled — only followed by silence.
+    check(
+        silenced >= 32,
+        f"and asks for silence on every channel, so nothing is left ringing ({silenced})",
+    )
+    after_stop = page.evaluate("() => window.__fakeMidi.noteOns().length")
+    page.wait_for_timeout(900)
+    still = page.evaluate("() => window.__fakeMidi.noteOns().length")
+    check(
+        still == after_stop,
+        f"and nothing further is sent afterwards ({after_stop} -> {still})",
+    )
+
+    # --- seeking into a long sitting ---
+    total_notes = len(notes)
+    page.evaluate("() => window.__fakeMidi.forget()")
+    box = page.locator("[data-strip]").bounding_box()
+    page.mouse.click(box["x"] + box["width"] * 0.85, box["y"] + box["height"] / 2)
+    page.wait_for_timeout(900)
+    sought = page.evaluate("() => window.__fakeMidi.noteOns()")
+    check(
+        len(sought) < total_notes,
+        f"clicking the strip plays from there rather than from the beginning "
+        f"({len(sought)} of {total_notes} notes so far)",
+    )
+    position = page.inner_text("[data-position]")
+    check(
+        not position.startswith("0:00"),
+        f"and the readout shows where the seek landed ({position!r})",
+    )
+
+    # Jumping back is the same mechanism in reverse.
+    page.evaluate("() => window.__fakeMidi.forget()")
+    click_button(page, "« 30 s")
+    page.wait_for_timeout(700)
+    check(
+        len(page.evaluate("() => window.__fakeMidi.noteOns()")) >= 0,
+        "and the jump buttons re-start playback from the new position",
+    )
+    click_button(page, "Stop")
+    page.wait_for_timeout(300)
+
+    # --- the falling notes ---
+    check(page.locator("[data-piano-roll]").count() == 0, "the roll starts hidden")
+    page.check("[data-roll-toggle]")
+    page.wait_for_selector("[data-piano-roll]", timeout=10_000)
+    click_button(page, "Play the sitting")
+    page.wait_for_timeout(900)
+    ink = page.evaluate(
+        """() => {
+             const canvas = document.querySelector('[data-piano-roll]');
+             const context = canvas.getContext('2d');
+             const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+             let lit = 0;
+             for (let index = 3; index < data.length; index += 4) if (data[index] > 0) lit += 1;
+             return { lit, width: canvas.width, height: canvas.height };
+           }"""
+    )
+    check(ink["lit"] > 1000, f"the falling-notes view draws ({ink['lit']} pixels)")
+    check(ink["width"] > 100 and ink["height"] > 100, "on a canvas with real size")
+    page.screenshot(path=str(SHOTS / "25-piano-roll.png"), full_page=True)
+    click_button(page, "Stop")
+
+    # --- the field that was not explained ---
+    label = page.inner_text(".split").lower()
+    check("split at" in label, f"the split field is labelled ({label!r})")
+    value = page.input_value('input[aria-label="Split point as seconds or m:ss"]')
+    check(":" in value, f"and shows a clock rather than a count of seconds ({value!r})")
+
+    page.fill('input[aria-label="Split point as seconds or m:ss"]', "not a time")
+    click_button(page, "Split here")
+    page.wait_for_timeout(300)
+    check(
+        "not a time" in page.inner_text(".timeline"),
+        "a value that is not a time is refused with an explanation",
+    )
+    page.fill('input[aria-label="Split point as seconds or m:ss"]', "0:01")
+    check(
+        page.input_value('input[aria-label="Split point as seconds or m:ss"]') == "0:01",
+        "and a typed clock is accepted",
+    )
+
+    check(not errors, f"no console errors ({errors})")
+    page.close()
+
+
 def scenario_autotag(browser) -> None:
     print("\n[11] Recognising what you played: measured, offered, and correctable")
     clear_practice()
@@ -2373,6 +2630,7 @@ def main() -> int:
                 scenario_practice_log,
                 scenario_midi_autodetect,
                 scenario_autotag,
+                scenario_playback,
                 scenario_lan_viewer,
             ):
                 # An optional filter, so a fix to one scenario can be checked in

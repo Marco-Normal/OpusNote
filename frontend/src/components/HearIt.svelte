@@ -6,8 +6,7 @@
    * the history — and they differ only in where the notes come from. Keeping one owner
    * means the handle/progress/stop behaviour cannot drift between them.
    */
-  import { onDestroy } from 'svelte';
-  import { PianoPlayer } from '../lib/pianoPlayer';
+  import { app } from '../lib/state.svelte';
   import { forHands, type Hand, type SynthNote } from '../lib/playback';
 
   interface Props {
@@ -21,7 +20,9 @@
 
   let { attempt, written, caption = 'Synthesised, not the piano — but the timing and touch are yours.' }: Props = $props();
 
-  const player = new PianoPlayer();
+  // The one shared player: two of these panels on one page used to be able to sound
+  // at the same time, and neither Stop button knew about the other.
+  const player = app.player;
   let playing = $state<'mine' | 'written' | null>(null);
   let hearRight = $state(true);
   let hearLeft = $state(true);
@@ -55,7 +56,9 @@
     progress = 0;
   }
 
-  onDestroy(() => player.dispose());
+  // Nothing is disposed: the player outlives this panel. Leaving the view is handled
+  // by stopping, or a click on Progress would leave notes ringing over the next page.
+  $effect(() => () => player.stop());
 </script>
 
 <div class="row wrap hearing" data-playing={playing ?? 'false'}>

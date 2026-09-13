@@ -136,7 +136,9 @@ moved.
   pieces, and the sitting timeline where you tag a segment with a piece, split a
   boundary the silence detector got wrong, merge two it split, or re-segment.
   Re-segmenting is the only destructive action and asks first when segments carry
-  labels.
+  labels. Each segment row has two fields: the **piece** it was, and **Split at** — a
+  position to cut the segment in two, typed as a clock (`1:30:12`) or in seconds
+  (`5412`), which is what the *Split here* button then does.
 - **Workouts** are declared, not inferred: *Start workout* in the banner, play,
   *Finish workout*. Everything inside the window is labelled sight-reading rather
   than mistaken for ordinary practice, and a finished workout links to the sitting
@@ -182,18 +184,43 @@ Two players, because there are two things worth hearing:
   the one that teaches something — a hesitation or a wrong note you only saw as a
   colour becomes audible.
 - **In the Log tab**, a sitting or a single segment can be played back from the notes
-  themselves, with a playhead crossing the segment strip. Notes are fetched on demand
-  (a long sitting is thousands of them) and a segment starts immediately rather than
-  waiting out the silence that preceded it.
+  themselves. **Click anywhere on the timeline strip to start from there** — a two-hour
+  sitting is unusable if the only way in is the beginning — and `« 30 s` / `30 s »` move
+  the playhead without losing the range you were playing. The position readout shows
+  where you are, and notes are fetched on demand (a long sitting is thousands of them).
+  A segment starts at its first note rather than waiting out the silence before it.
 
-Both are a synthesiser, not the piano: the app ships no samples, and saying so is
-better than the alternative. What is faithful is *timing and touch* — every onset,
-duration and velocity is the one your playing produced, because a note's length is
-measured at its release — and, in the log, **the sustain pedal**: CC64 is stored as it
-arrived and each note is held to the pedal-up that covers its release, so a pedalled
-chord rings on instead of stopping dead. In the passive log the two hands cannot be
-separated: the piano sends them on one MIDI channel, and that is all that is stored. A
-scored attempt can separate them, because the exercise knows which hand each note is.
+**Which instrument** is chosen in the device bar, and there are three because they suit
+three situations:
+
+| | What it is | When |
+| --- | --- | --- |
+| *Through the piano* | The notes go out of a MIDI **output** to the PX-870 itself | Wherever a piano is connected — the piano machine, always. The only genuinely real piano sound, and it costs nothing |
+| *Sampled piano* | The Salamander Grand Piano (a Yamaha C5), 30 samples, CC BY 3.0 | A viewer with no piano attached, or when you would rather not hear the room |
+| *Synthesiser* | An FM voice built from Tone's oscillators | Before the samples are installed, and as the fallback when nothing else is available |
+
+The sampled piano is a **one-time 2 MB download**, fetched by the backend and served
+from this machine from then on: install it from the device bar (*Install (2 MB, once)*),
+and nothing at play time touches the network. Salamander Grand Piano V3 by Alexander
+Holm, [CC BY 3.0](https://archive.org/details/SalamanderGrandPianoV3).
+
+**Falling notes.** Tick *Falling notes* in the sitting transport for a piano-roll view —
+a keyboard along the bottom, the notes you played falling onto it, held notes drawn as
+long as they sound. It follows the playhead, so it is also a way to *see* a hesitation
+that is hard to hear.
+
+**Stop means stop.** There is one player for the whole app, so nothing can play over the
+top of anything else, and stopping cancels the notes that were scheduled but had not
+sounded yet — as well as sending note-off and all-notes-off to the piano, so nothing is
+left hanging on the instrument.
+
+What is faithful is *timing and touch* — every onset, duration and velocity is the one
+your playing produced, because a note's length is measured at its release — and, in the
+log, **the sustain pedal**: CC64 is stored as it arrived and each note is held to the
+pedal-up that covers its release, so a pedalled chord rings on instead of stopping dead.
+In the passive log the two hands cannot be separated: the piano sends them on one MIDI
+channel, and that is all that is stored. A scored attempt can separate them, because the
+exercise knows which hand each note is.
 
 ### Keeping it healthy
 
@@ -299,13 +326,15 @@ script runs, so the real MIDI input path — status-byte decoding, input
 selection, onset measurement against the count-in anchor — is exercised rather
 than stubbed. It plays a perfect performance (expecting 100/100), an all-wrong
 performance, a silent one, and walks a calibration rung, asserting on the
-rendered notation, the results panel, and the progress view. Eleven scenarios in
+rendered notation, the results panel, and the progress view. Twelve scenarios in
 all: they cover the sight-reading loop, the Repertoire library (import, edit,
 scores, upload, stream, playback, the waveform and its A/B loop), the practice log
 (passive capture, the pedal, a workout, tagging, splitting, merging,
 re-segmenting, a backup round trip), MIDI auto-detection, the LAN viewer — and
-recognising a drilled passage, including the case where the matcher is sure and
-wrong, which is the one that matters.
+recognising a drilled passage (including the case where the matcher is sure and
+wrong, which is the one that matters), and playback — that notes reach the piano's
+MIDI output, that Stop silences them, that clicking the strip seeks, and that the
+falling-notes view draws.
 
 ---
 
@@ -539,6 +568,7 @@ Environment variables, all optional:
 | `SRT_AUTOTAG_NEIGHBOURS` | `6` | How many of your closest tagged segments count as evidence |
 | `SRT_AUTOTAG_TRAINING_LIMIT` | `600` | How many of your most recent tagged segments the matcher compares against |
 | `SRT_MAX_UPLOAD_MB` | `512` | Largest recording accepted by the upload endpoint |
+| `SRT_PIANO_DIR` | `<data dir>/piano` | Where the one-time sampled piano is kept, and served from |
 | `SRT_BACKUP_DIR` | `<data dir>/backups` | Where the nightly JSON exports are written |
 | `SRT_BACKUP_KEEP` | `14` | How many daily backups to keep |
 | `SRT_API_TARGET` | `http://127.0.0.1:8000` | Proxy target for the dev server |

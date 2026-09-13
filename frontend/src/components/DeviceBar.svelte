@@ -7,11 +7,24 @@
    * port that exists and never works. That was the device list that made the app
    * look broken, so the interface now answers the question directly.
    */
+  import { onMount } from 'svelte';
   import { app } from '../lib/state.svelte';
 
   let showLatency = $state(false);
   let draftLatency = $state(app.latencyMs);
   let showPorts = $state(false);
+
+  /**
+   * What playback comes out of.
+   *
+   * Three answers, because they suit three situations: the piano itself when one is
+   * connected (the only genuinely real piano sound), the sampled piano when it has
+   * been downloaded, and the built-in synthesiser otherwise. The choice lives here
+   * rather than in the Log view because it applies to every play button in the app.
+   */
+  onMount(() => {
+    void app.refreshPiano();
+  });
 
   /**
    * A latency suggestion, when your own timing has consistently said so.
@@ -84,6 +97,45 @@
     <button class="ghost" onclick={() => { draftLatency = app.latencyMs; showLatency = !showLatency; }}>
       Latency {app.latencyMs} ms
     </button>
+
+    <span class="row sound" data-sound data-instrument={app.instrument}>
+      <label class="muted small" for="instrument">Playback</label>
+      <!-- Explicit value and onchange rather than `bind:`, so the choice goes through
+           the store: the store also tells the shared player and remembers it. -->
+      <select
+        id="instrument"
+        value={app.instrument}
+        onchange={(event) => {
+          const value = (event.currentTarget as HTMLSelectElement).value;
+          if (value === 'midi' || value === 'piano' || value === 'synth') {
+            app.setInstrument(value);
+          }
+        }}
+      >
+        <option value="midi" disabled={app.outputs.length === 0}>
+          Through the piano{app.outputs.length === 0 ? ' (none connected)' : ''}
+        </option>
+        <option value="piano" disabled={!app.piano?.available}>
+          Sampled piano{app.piano?.available ? '' : ' (not installed)'}
+        </option>
+        <option value="synth">Synthesiser</option>
+      </select>
+      {#if app.instrument === 'piano' && !app.piano?.available}
+        <button
+          class="ghost tiny"
+          data-install-piano
+          disabled={app.downloadingPiano}
+          onclick={() => void app.downloadPiano()}
+        >
+          {app.downloadingPiano ? 'Downloading…' : 'Install (2 MB, once)'}
+        </button>
+      {/if}
+      {#if app.instrument === 'piano' && app.piano && !app.piano.available && app.piano.present > 0}
+        <span class="muted small">
+          {app.piano.present}/{app.piano.total} samples — try again
+        </span>
+      {/if}
+    </span>
 
     {#if worthSuggesting}
       <button

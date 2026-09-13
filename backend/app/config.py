@@ -48,6 +48,10 @@ class Settings:
     #: Where recordings live. Content-hashed file names, matching the Rust app,
     #: so an imported recording keeps working without renaming anything.
     media_dir: Path = _env_path("SRT_MEDIA_DIR", _default_data_dir() / "media")
+    #: The sampled piano, downloaded once by `POST /api/audio/piano` and served
+    #: from `/piano/...`. Kept with the data rather than in the build, because it is
+    #: fetched at runtime and must survive a redeploy.
+    piano_dir: Path = _env_path("SRT_PIANO_DIR", _default_data_dir() / "piano")
     #: The legacy `piano-progress` database, read once by the importer. Never written.
     legacy_db: Path = _env_path(
         "SRT_LEGACY_DB", Path.home() / ".local" / "share" / "piano-progress" / "piano.db"

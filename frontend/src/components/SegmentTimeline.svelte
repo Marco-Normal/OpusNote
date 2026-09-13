@@ -6,12 +6,17 @@
    * deliberate edit: tag a segment, split a boundary the silence detector got
    * wrong, merge two it split, or throw the boundaries away and start again.
    */
-  import { onDestroy } from 'svelte';
   import { api } from '../lib/api';
-  import { PianoPlayer } from '../lib/pianoPlayer';
-  import { loggedEvents, sounding, sustained, within, type SynthNote } from '../lib/playback';
+  import { app } from '../lib/state.svelte';
+  import PianoRoll from './PianoRoll.svelte';
   import {
-    formatClock,
+    loggedEvents,
+    sustained,
+    within,
+    type SynthNote,
+  } from '../lib/playback';
+  import { formatClock, parseClock } from '../lib/clock';
+  import {
     type PieceSummary,
     type SegmentSummary,
     type SittingDetail,
@@ -51,37 +56,81 @@
 
   const total = $derived(Math.max(detail.duration_s * 1000, 1));
 
-  const player = new PianoPlayer();
+  /**
+   * The one shared player, so a Stop here also stops whatever else was sounding and
+   * nothing can play over the top of anything else.
+   */
+  const player = app.player;
   /** Which range is sounding, in sitting-relative milliseconds, or null. */
   let playing = $state<{ fromMs: number; toMs: number; segmentId: number | null } | null>(null);
+  /** Where the playhead is, in milliseconds, whether or not anything is playing. */
+  let position = $state(0);
   let playError = $state<string | null>(null);
+  let showRoll = $state(false);
   // Notes are fetched on the first play rather than with the detail: a long sitting is
   // thousands of notes, and every segment edit re-reads the detail without needing one.
-  let notes: SynthNote[] | null = null;
+  /**
+   * The sitting's notes, tagged with the sitting they came from.
+   *
+   * `$state` because the falling-notes view reads it from the template. Tagged with
+   * the id because this component is reused when you pick another sitting: a cache
+   * that was not keyed on it played the *previous* sitting's notes — a real bug, and
+   * one that only shows up on the second sitting you listen to.
+   */
+  let notes = $state<{ sittingId: number; list: SynthNote[] } | null>(null);
 
-  // A segment's playhead is positioned from the segment's own offset while it plays,
-  // so it tracks the block it started in rather than jumping to the sitting's start.
-  const playhead = $derived.by(() => {
-    const current = playing;
-    if (!current) return { start: 0, width: 0 };
-    const span = Math.max(current.toMs - current.fromMs, 1);
-    return {
-      start: (current.fromMs / total) * 100,
-      width: (span / total) * 100,
-    };
+  /**
+   * Where the playhead sits, as a fraction of the sitting.
+   *
+   * From the *reported position* rather than from the range being played, so seeking
+   * into the middle of a two-hour sitting draws the line where you actually are.
+   */
+  const playhead = $derived({
+    at: Math.min(100, (position / total) * 100),
+    span: playing
+      ? Math.max(0, ((playing.toMs - playing.fromMs) / total) * 100)
+      : 0,
   });
 
+  /** What is sounding, as a range of the sitting, for highlighting the strip. */
+  const soundingRange = $derived(
+    playing
+      ? {
+          left: (playing.fromMs / total) * 100,
+          width: Math.max(0.6, ((playing.toMs - playing.fromMs) / total) * 100),
+        }
+      : null,
+  );
+
   async function loadNotes(): Promise<SynthNote[]> {
-    if (notes) return notes;
+    if (notes !== null && notes.sittingId === detail.id) return notes.list;
     const body = await api.practice.sittingNotes(detail.id);
     // The pedal is applied to the whole sitting before any range is taken: a note
     // released under the pedal at the end of one segment must still be sounding
     // where the next one begins, and slicing first would cut that off.
-    notes = sustained(loggedEvents(body.notes), body.pedals ?? []);
-    return notes;
+    const list = sustained(loggedEvents(body.notes), body.pedals ?? []);
+    notes = { sittingId: detail.id, list };
+    return list;
   }
 
-  async function play(fromMs: number, toMs: number, segmentId: number | null): Promise<void> {
+  /** The loaded notes for the sitting on screen, or none if they are not loaded. */
+  const loadedNotes = $derived(notes !== null && notes.sittingId === detail.id ? notes.list : []);
+
+  /**
+   * Play a range, optionally from a point inside it.
+   *
+   * `startAtMs` is what makes a two-hour sitting usable: the playhead starts where
+   * you clicked, and the player skips everything before it. Without a start, the
+   * playback begins at the first note *in the range* rather than at the range's
+   * boundary — a segment's leading silence can be twenty seconds long, and waiting
+   * it out is not what "play this segment" means.
+   */
+  async function play(
+    fromMs: number,
+    toMs: number,
+    segmentId: number | null,
+    startAtMs?: number,
+  ): Promise<void> {
     playError = null;
     try {
       const all = await loadNotes();
@@ -90,11 +139,22 @@
         playError = 'Nothing was played in this range.';
         return;
       }
+      const firstNoteMs = Math.min(...slice.map((note) => note.onset * 1000));
+      const start = Math.min(
+        Math.max(startAtMs ?? Math.max(fromMs, firstNoteMs), fromMs),
+        Math.max(fromMs, toMs - 1),
+      );
       playing = { fromMs, toMs, segmentId };
-      // `sounding` drops the silence before the first note, so playing a segment that
-      // begins after a pause starts immediately rather than waiting it out.
-      await player.play(sounding(slice), {
-        onDone: () => (playing = null),
+      position = start;
+      await player.play(all, {
+        from: start / 1000,
+        until: toMs / 1000,
+        onProgress: (handle) => {
+          position = handle.elapsed * 1000;
+        },
+        onDone: () => {
+          playing = null;
+        },
       });
     } catch (cause) {
       playing = null;
@@ -102,26 +162,58 @@
     }
   }
 
+  /** Start playing from a click anywhere on the strip. */
+  function seekTo(event: MouseEvent): void {
+    const strip = event.currentTarget as HTMLElement;
+    const bounds = strip.getBoundingClientRect();
+    if (bounds.width <= 0) return;
+    const ratio = Math.min(1, Math.max(0, (event.clientX - bounds.left) / bounds.width));
+    void play(0, total, null, ratio * total);
+  }
+
+  /** Move the playhead by a fixed step, keeping whatever range was being played. */
+  function jump(bySeconds: number): void {
+    const target = Math.min(total, Math.max(0, position + bySeconds * 1000));
+    void play(playing?.fromMs ?? 0, playing?.toMs ?? total, playing?.segmentId ?? null, target);
+  }
+
   function stop(): void {
     player.stop();
     playing = null;
   }
 
-  onDestroy(() => player.dispose());
+  // The shared player outlives this component, so nothing is disposed here: only
+  // the sound it is making is stopped, or a tab change would leave notes ringing.
+  $effect(() => () => player.stop());
 
   function offset(ms: number): string {
     return formatClock(ms / 1000);
   }
 
+  /**
+   * The split point, shown as a clock rather than as a number of seconds.
+   *
+   * A two-hour sitting is 7200 seconds, and "5412.5" is not a position anybody can
+   * picture. The field accepts either ("5412.5" or "1:30:12"), so a value that came
+   * from here round-trips through `parseClock`.
+   */
   function midpoint(segmentId: number, startMs: number, endMs: number): string {
-    return splitAt[segmentId] ?? ((startMs + endMs) / 2000).toFixed(1);
+    return splitAt[segmentId] ?? formatClock((startMs + endMs) / 2000);
+  }
+
+  function splitPointMs(segmentId: number, startMs: number, endMs: number): number | null {
+    const raw = splitAt[segmentId] ?? formatClock((startMs + endMs) / 2000);
+    const seconds = parseClock(raw);
+    return seconds === null ? null : Math.round(seconds * 1000);
   }
 
   function submitSplit(segmentId: number, startMs: number, endMs: number): void {
-    const raw = splitAt[segmentId] ?? ((startMs + endMs) / 2000).toFixed(1);
-    const seconds = Number(raw);
-    if (!Number.isFinite(seconds)) return;
-    onsplit(segmentId, Math.round(seconds * 1000));
+    const at = splitPointMs(segmentId, startMs, endMs);
+    if (at === null) {
+      playError = 'That is not a time. Use seconds (5412) or a clock (1:30:12).';
+      return;
+    }
+    onsplit(segmentId, at);
   }
 
   const labelled = $derived(detail.segments.filter((segment) => segment.piece_id !== null).length);
@@ -152,9 +244,9 @@
 
   <div class="row wrap transport" data-playing={playing ? 'true' : 'false'}>
     {#if playing}
-      <button class="ghost tiny" onclick={stop}>Stop</button>
+      <button class="ghost tiny" data-stop onclick={stop}>Stop</button>
       <span class="muted small">
-        Playing {playing.segmentId === null ? 'the whole sitting' : 'this segment'}
+        Playing {playing.segmentId === null ? 'the sitting' : 'this segment'}
       </span>
     {:else}
       <button
@@ -164,12 +256,41 @@
       >
         Play the sitting
       </button>
-      <span class="muted small">
-        Synthesised from the logged notes — timing and touch are yours, the instrument
-        is not.
-      </span>
     {/if}
+
+    <span class="row jump">
+      <button class="ghost tiny" disabled={detail.note_count === 0} onclick={() => jump(-30)}>
+        « 30 s
+      </button>
+      <button class="ghost tiny" disabled={detail.note_count === 0} onclick={() => jump(30)}>
+        30 s »
+      </button>
+    </span>
+
+    <span class="pill mono" data-position>{formatClock(position / 1000)} / {formatClock(detail.duration_s)}</span>
+
+    <label class="row toggle">
+      <input type="checkbox" bind:checked={showRoll} data-roll-toggle />
+      Falling notes
+    </label>
+
+    <span class="muted small">
+      Click anywhere on the strip to start from there. Played through
+      {app.instrument === 'midi'
+        ? 'the piano itself'
+        : app.instrument === 'piano'
+          ? 'the sampled piano'
+          : 'the synthesiser'}
+      — timing and touch are yours.
+    </span>
   </div>
+
+  {#if showRoll}
+    <PianoRoll notes={loadedNotes} position={position / 1000} />
+    {#if loadedNotes.length === 0}
+      <p class="muted small">The notes load with the first playback.</p>
+    {/if}
+  {/if}
 
   {#if playError}
     <p class="error-banner small">{playError}</p>
@@ -182,7 +303,23 @@
         : 'Boundaries appear once this sitting has been quiet for five minutes.'}
     </p>
   {:else}
-    <div class="strip" role="img" aria-label="Segment timeline">
+    <!-- A slider, not a picture: the strip is the sitting's transport, so it takes
+         focus and the arrow keys move the playhead the way the pointer does. -->
+    <div
+      class="strip"
+      role="slider"
+      tabindex="0"
+      aria-label="Sitting timeline — click or press the arrow keys to play from a point"
+      aria-valuemin="0"
+      aria-valuemax={Math.round(detail.duration_s)}
+      aria-valuenow={Math.round(position / 1000)}
+      data-strip
+      onclick={seekTo}
+      onkeydown={(event) => {
+        if (event.key === 'ArrowRight') jump(5);
+        if (event.key === 'ArrowLeft') jump(-5);
+      }}
+    >
       {#each detail.segments as segment (segment.id)}
         <span
           class="block"
@@ -194,17 +331,21 @@
           )}%"
           title="{segment.piece_title ?? 'unidentified'} · {formatClock(
             (segment.end_ms - segment.start_ms) / 1000,
-          )}"
+          )} · click to play from here"
         ></span>
       {/each}
-      {#if playing}
-        <!-- The playhead is positioned from the *segment's* offset while a segment
-             plays, so it tracks the block it started in rather than the sitting. -->
+      {#if soundingRange}
         <span
-          class="playhead"
-          data-playhead
-          style="left: {playhead.start}%; max-width: {playhead.width}%"
+          class="sounding"
+          style="left: {soundingRange.left}%; width: {soundingRange.width}%"
         ></span>
+      {/if}
+      {#if playing || position > 0}
+        <!-- Positioned from the reported position rather than from the range being
+             played, so seeking into a two-hour sitting draws the line where you are.
+             Shown while playing even at zero, because that is where a sitting whose
+             first note is at the start actually begins. -->
+        <span class="playhead" data-playhead style="left: {playhead.at}%"></span>
       {/if}
     </div>
 
@@ -293,12 +434,14 @@
             </select>
 
             <span class="row split">
+              <label class="muted small" for="split-{segment.id}">Split at</label>
               <input
-                type="number"
-                min="0"
-                step="0.1"
+                id="split-{segment.id}"
+                type="text"
+                inputmode="numeric"
                 class="mono at"
-                aria-label="Split point in seconds"
+                aria-label="Split point as seconds or m:ss"
+                title="Where to cut this segment in two — seconds from the start of the sitting, or m:ss"
                 value={midpoint(segment.id, segment.start_ms, segment.end_ms)}
                 oninput={(event) => {
                   splitAt[segment.id] = (event.currentTarget as HTMLInputElement).value;
