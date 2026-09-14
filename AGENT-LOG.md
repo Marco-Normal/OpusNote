@@ -797,3 +797,40 @@ instead of racing it.
 Impact on the other side: none. `practice-logger/` and `piano-progress/` untouched; the
 new files are the 30 samples under `<data dir>/piano/`, which the JSON backup does not
 include — they are re-downloadable in two seconds, and `docs/DEPLOYMENT.md` says so.
+
+## 2026-09-14 — sight-reading agent — Phase 16: the exercise ladder actually climbs
+
+Reported from the owner's real library: 25 attempts per skill, a rating near 800, and
+every generated exercise still level 1 and "very trivial". Diagnosed from a backup of
+the live database rather than from reading the code, which settled it in one look: 306 of
+324 `exercise_skills` rows were level 1, every `exercises.difficulty_elo` was 600, and
+the last attempts scored 96–98 with pitch accuracy 100%.
+
+Did:
+
+- **Re-anchored `SRT_ELO_BASE`, 600 → 480.** The selector aims `offset = -220` Elo below
+  the rating (a 78% success target) and a level is 100 Elo, so the practice offset costs
+  2.2 levels. At 600, level 2 did not open until a rating of 870 — 270 points of ability
+  collapsed into one level of material, and a learner rated 792 was served 600-Elo
+  material for as long as they stayed under it. 480 is the only value that satisfies
+  three constraints: the documented example (rating 1000 → Elo 780) becomes exact
+  (780 = 480 + 3 x 100), an unrated learner still starts on level 1, and it is the
+  smallest such value so every level opens 100 points above the last.
+- **One meaning for "level".** Two display paths computed a level from the rating with an
+  inline copy of the formula and disagreed with what was served: the Progress radar said
+  ~4 while the exercise on screen said level 2. Both now use the selector's level — the
+  material you are worked at — and the caption says so.
+- New tests pin the three constraints, the even spacing of the levels, the unrated
+  default, and the exact case from the backup (792 must not select level 1). Verified by
+  reverting the anchor: three of them fail at 600 and pass at 480.
+- Verified against the live data: the same nine ratings now select level 2 across the
+  board with difficulty 580, which is the design's own target for a 790 rating.
+
+Not changed, and offered to the owner instead: the *rate* of progression. K = 32 with a
+220-point offset means about 7 points an attempt and roughly one level per 10–13
+attempts. `SRT_ELO_K` and `SRT_TARGET_SUCCESS_RATE` are the knobs, and they are a
+preference rather than a bug.
+
+Impact on the other side: none. Existing ratings need no migration — the re-anchor
+raises the material a given rating selects, which is the fix, and historical
+`exercises.difficulty_elo` values keep the scale they were scored on.

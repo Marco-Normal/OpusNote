@@ -195,8 +195,9 @@
       <h3>Skill radar</h3>
       <RadarChart axes={stats.radar.map((item) => ({ slug: item.slug, name: item.name, level: item.level }))} />
       <p class="muted small">
-        Estimated level per skill, 1-10. The trainer aims each exercise just below your current
-        rating so you succeed roughly 78% of the time.
+        The level of material you are working at, 1-10 — not the level your rating
+        would imply. The trainer aims each exercise below your rating on purpose, so
+        you succeed roughly 78% of the time, which is about two levels below it.
       </p>
     </section>
 

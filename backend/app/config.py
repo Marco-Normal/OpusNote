@@ -67,7 +67,22 @@ class Settings:
 
     # --- adaptive engine --------------------------------------------------
     # Exercise Elo = elo_base + elo_per_level * (mean_level - 1)
-    elo_base: float = _env_float("SRT_ELO_BASE", 600.0)
+    #
+    # `elo_base` is the Elo of the *easiest* material, and the ladder has to start
+    # low enough that the practice offset still lands inside it. It did not: at 600
+    # with a -220 offset, level 2 was unreachable below a rating of 870, so every
+    # learner under that saw level 1 forever — 270 rating points of ability
+    # collapsed into one level of material, and the exercises never got harder.
+    #
+    # 480 is where three constraints meet, and it is the only value that satisfies
+    # all three:
+    #   * the documented example — "a rating of 1000 gets exercises around Elo 780"
+    #     — is *exactly* representable, because 780 = 480 + 3 x 100;
+    #   * an unrated learner (default_rating, 700) still starts on level 1, since
+    #     level 1 covers ratings up to 480 + 220 + 50 = 750;
+    #   * it is the smallest such value, so levels open as early as they can.
+    # The tests in `tests/test_adaptive.py` pin all three.
+    elo_base: float = _env_float("SRT_ELO_BASE", 480.0)
     elo_per_level: float = _env_float("SRT_ELO_PER_LEVEL", 100.0)
     default_rating: float = _env_float("SRT_DEFAULT_RATING", 700.0)
     elo_k: float = _env_float("SRT_ELO_K", 32.0)

@@ -157,9 +157,14 @@ def skills(conn: Connection = Depends(get_conn)) -> list[SkillOut]:
 
 
 def _level_for(rating: float) -> int:
-    from .adaptive.elo import level_for_rating
+    """The level of material this rating is worked at.
 
-    return level_for_rating(rating)
+    Not the level the rating "is": the selector aims below the rating on purpose, so
+    that is the level the player actually sees in an exercise.
+    """
+    from .adaptive.elo import selection_level
+
+    return selection_level(rating)
 
 
 @app.get("/api/exercise/next", response_model=ExerciseOut)

@@ -128,6 +128,52 @@ def test_a_strong_dimension_is_still_honoured():
     assert plan.levels["texture"] >= 3, plan.levels
 
 
+def _first_rating_for_level(level: int) -> int | None:
+    """The lowest rating whose served level is ``level``, by asking the engine."""
+    for rating in range(0, 4001):
+        if elo.selection_level(float(rating)) == level:
+            return rating
+    return None
+
+
+def test_no_level_swallows_a_wide_band_of_ratings():
+    """Regression, from a real library: at the old anchor a learner rated 792 was
+    served level 1 and had been for 25 attempts, because level 2 did not open until
+    870. A level that covers 270 points of ability is a level that never changes."""
+    opens = {level: _first_rating_for_level(level) for level in range(2, 11)}
+    assert all(rating is not None for rating in opens.values()), opens
+
+    gaps = [opens[level + 1] - opens[level] for level in range(2, 10)]
+    assert set(gaps) == {100}, f"every level opens 100 points above the last ({gaps})"
+    assert opens[2] <= 800, f"level 2 opens at {opens[2]}, which strands mid-range players"
+
+
+def test_a_mid_rating_is_not_stuck_on_the_easiest_material():
+    ratings = {slug: 792.0 for slug in SKILL_SLUGS}
+    plan = plan_exercise(ratings, target_skill="rhythm")
+
+    assert plan.levels["rhythm"] >= 2, plan.levels
+    # And the material served is at the design's success target, not far below it.
+    observed = elo.expected_score(792.0, plan.difficulty_elo)
+    assert 0.70 <= observed <= 0.85, observed
+
+
+def test_an_unrated_player_starts_on_the_easiest_material():
+    """We know nothing about them yet, so they get the easiest thing there is —
+    the calibration ladder is what finds out."""
+    ratings = {slug: settings.default_rating for slug in SKILL_SLUGS}
+    plan = plan_exercise(ratings, target_skill="rhythm")
+    assert plan.levels["rhythm"] == 1, plan.levels
+
+
+def test_the_documented_example_is_exact():
+    """README: "a rating of 1000 gets exercises around Elo 780". Exact on purpose:
+    a documented number that the engine only approximates is a number that drifts."""
+    ratings = {slug: 1000.0 for slug in SKILL_SLUGS}
+    plan = plan_exercise(ratings, target_skill="rhythm")
+    assert plan.difficulty_elo == pytest.approx(780.0)
+
+
 def test_plan_keeps_a_weak_user_on_easy_material():
     ratings = {slug: 620.0 for slug in SKILL_SLUGS}
     plan = plan_exercise(ratings, target_skill="intervals")

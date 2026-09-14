@@ -5,7 +5,7 @@ Rust app" premise of
 [`INTEGRATION-practice-logger.md`](./INTEGRATION-practice-logger.md), which
 remains accurate about *what exists today* but is no longer the destination.
 
-Status: **decided; Phases 1-13 and 15 are landed.** See §9 and §10 for what each one
+Status: **decided; Phases 1-13, 15 and 16 are landed.** See §9 and §10 for what each one
 delivered.
 
 ---
@@ -885,6 +885,37 @@ One real bug came out of writing the browser scenario: the sitting's notes were 
 per *component* rather than per sitting, so choosing a second sitting played the first
 one's notes. The cache is keyed on the sitting id now, and the scenario uses pitches no
 other sitting plays so a stale cache cannot pass by accident.
+
+### Phase 16 — landed (the exercise ladder actually climbs)
+
+Reported from a real library: 25 attempts per skill, a rating near 800, and every
+generated exercise still level 1 and trivial. Diagnosed from the backup rather than
+from the code path, and the data was unambiguous — 306 of 324 `exercise_skills` rows
+were level 1, every `exercises.difficulty_elo` was 600, and the recent scores were 96-98
+with pitch accuracy 100%.
+
+The cause is arithmetic in the anchor. The selector deliberately aims `offset = -220`
+Elo below the rating (for a 78% success target), and a level is 100 Elo, so the practice
+offset costs **2.2 levels**. With `elo_base = 600`, level 2 did not open until a rating
+of 870: a learner rated 792 was served 600-Elo material for as long as they stayed under
+870, and their rating could only creep up ~7 points an attempt, because Elo correctly
+says that scoring 97% on material far below you is not new evidence. The bottom of the
+ladder was a plateau, and the tests missed it because they only probed 620, 1000 and
+1600 — never the middle, which is where learners actually live.
+
+`elo_base` is now **480**, which is the only value that satisfies three constraints at
+once: the documented example ("a rating of 1000 gets exercises around Elo 780") becomes
+*exact* rather than approximate (780 = 480 + 3 × 100); an unrated learner still starts on
+level 1 (which now covers ratings up to 750); and it is the smallest such value, so every
+level opens exactly 100 points above the last. The same ratings from the backup now
+select level 2 instead of level 1, with the served difficulty at 580 — the design's own
+target for a 790 rating.
+
+Two display paths were also computing a level from the rating with an **inline copy** of
+the formula, so the radar showed the level the rating implied (~4) while the exercise on
+screen was level 2. Both now use the selector's level, which is the number the player can
+act on, and the radar says so. New tests pin the three constraints, the even spacing of
+the levels, and the exact case from the backup.
 
 ### Phase 14 — planned (musical content)
 

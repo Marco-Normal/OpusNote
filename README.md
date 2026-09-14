@@ -424,6 +424,19 @@ tunes this. A simulation in `tests/test_adaptive.py` walks a learner with a
 fixed true ability and asserts the served difficulty converges into the
 70–85% band.
 
+The other half of that arithmetic is `SRT_ELO_BASE`, the Elo of the **easiest**
+material, and it has to sit low enough that the offset still lands inside the
+ten-level ladder. It did not: at 600, level 2 was unreachable below a rating of
+870, so every learner under that was served level 1 for ever — 270 points of
+ability collapsed into one level of material, and the exercises never got
+harder. 480 is the one value that satisfies all three constraints at once:
+
+| Constraint | Why |
+| --- | --- |
+| 780 must be a level boundary | the line above is then *exact* rather than approximate: 780 = 480 + 3 × 100 |
+| an unrated learner (700) stays on level 1 | level 1 covers ratings up to 480 + 220 + 50 = 750 |
+| as early as possible otherwise | it is the smallest such value, so each level opens 100 rating points above the last |
+
 ---
 
 ## Scoring
@@ -570,6 +583,9 @@ Environment variables, all optional:
 | `SRT_MATCH_WINDOW_S` | `0.200` | Pitch matching window |
 | `SRT_CONTINUITY_WINDOW_S` | `1.500` | Window for hesitation detection |
 | `SRT_HESITATION_MS` | `500` | Extra gap that counts as a hesitation |
+| `SRT_ELO_BASE` | `480` | Elo of the easiest material — see the anchor's derivation above |
+| `SRT_ELO_PER_LEVEL` | `100` | Elo between one level and the next |
+| `SRT_DEFAULT_RATING` | `700` | Where an uncalibrated learner starts |
 | `SRT_ELO_K` | `32` | Rating step |
 | `SRT_EXERCISE_BARS` | `4` | Bars per exercise |
 | `SRT_WORKOUT_LENGTH` | `8` | Exercises in a workout |

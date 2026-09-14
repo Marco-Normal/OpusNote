@@ -313,7 +313,9 @@ def record_performance(
                 "slug": row["slug"],
                 "name": row["name"],
                 "rating": float(row["elo_rating"] or cfg.default_rating),
-                "level": elo_mod.level_for_rating(float(row["elo_rating"] or cfg.default_rating), cfg),
+                "level": elo_mod.selection_level(
+                    float(row["elo_rating"] or cfg.default_rating), cfg
+                ),
                 "attempts": int(row["attempts"] or 0),
                 "target_level": levels.get(row["slug"]),
             }
@@ -419,8 +421,13 @@ def build_stats(conn, user_id: int, *, config: Settings | None = None) -> dict[s
             "slug": row["slug"],
             "name": row["name"],
             "rating": round(float(row["elo_rating"] or cfg.default_rating), 1),
-            "level": round(
-                (float(row["elo_rating"] or cfg.default_rating) - cfg.elo_base) / cfg.elo_per_level + 1, 2
+            # The level of material this skill is *worked at*, not the level its
+            # rating would imply: the selector deliberately aims about two levels
+            # below the rating, and a radar drawn from the rating disagreed with the
+            # exercise on screen. The rating is the ability number; this is the
+            # material number, and both are shown.
+            "level": elo_mod.selection_level(
+                float(row["elo_rating"] or cfg.default_rating), cfg
             ),
             "attempts": int(row["attempts"] or 0),
             "last_practiced_at": row["last_practiced_at"],
