@@ -119,7 +119,18 @@ class Settings:
     #: thinking, and playing again is one sitting.
     sitting_gap_s: int = _env_int("SRT_SITTING_GAP_S", 300)
     #: Silence that splits a sitting into segments — one per piece attempted.
-    segment_gap_s: int = _env_int("SRT_SEGMENT_GAP_S", 20)
+    #:
+    #: Measured from a real 42-minute sitting of the owner's (18,688 notes): the
+    #: 99th-percentile gap *within* playing was 1.4 s, and only ten gaps in the
+    #: whole session exceeded 3 s. The two boundaries they drew by hand — the
+    #: changes from Hanon to Brahms and from Brahms to the Beethoven — sat on gaps
+    #: of 9.5 s and 11.7 s, which the old default of 20 s could not see. Two
+    #: within-piece pauses of 15.1 s and 15.6 s sat above them, so no single
+    #: threshold separates those six events: 8 s catches every real change and
+    #: costs about two merges, and merging a boundary is one click where splitting
+    #: one means typing a position. Erring towards more segments is therefore the
+    #: cheaper error, and the setting is here for the day that judgement changes.
+    segment_gap_s: int = _env_int("SRT_SEGMENT_GAP_S", 8)
     #: Mid-segment silence counted as a restart rather than as phrasing.
     restart_gap_ms: int = _env_int("SRT_RESTART_GAP_MS", 3000)
     #: Notes closer together than this are one attack, so a chord does not read

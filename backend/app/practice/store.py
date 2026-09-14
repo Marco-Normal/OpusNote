@@ -65,6 +65,21 @@ from .models import (
 from .sessionize import Note, sessionize
 
 
+#: How long the piano must have been silent before a disconnect closes the sitting.
+#:
+#: Two failures to avoid, and the window is between them. Too short and a USB blip
+#: during playing fragments a session; too long and switching the piano off
+#: immediately after the last chord is refused, which is exactly how a session ends —
+#: play the final chord, reach for the power switch. A second and a half is typically
+#: less than the gap to the next note when someone is playing, and more than the gap
+#: between a final chord and the hand reaching the switch.
+CLOSE_QUIET_MS = 1_500
+
+#: How far back to look for an open sitting to close. Without it, a device event
+#: days after the last note would "close" a sitting that the silence already closed.
+CLOSE_LOOKBACK_MS = 60 * 60 * 1000
+
+
 class NotFound(Exception):
     """The requested row does not exist."""
 
@@ -100,6 +115,10 @@ def _find_sitting(
         SELECT id, started_ms
         FROM sittings
         WHERE ?1 >= started_ms AND ?1 <= ended_ms + ?2
+          -- A sitting closed by hand or by the piano going away takes no more
+          -- notes: the player said they were done, and playing again is a new
+          -- sitting even if it is a minute later.
+          AND closed_ms IS NULL
         ORDER BY started_ms DESC
         LIMIT 1
         """,
@@ -224,6 +243,42 @@ def ingest(batch: EventBatch, db_path: Path | None = None) -> IngestResult:
         pedals_accepted=pedals_accepted,
         pedals_ignored=pedals_ignored,
     )
+
+
+def close_open_sitting(
+    *,
+    db_path: Path | None = None,
+    now_ms: int | None = None,
+    quiet_ms: int = CLOSE_QUIET_MS,
+) -> int | None:
+    """Close the newest open sitting, if the player has stopped.
+
+    Called when the piano goes away — switched off, unplugged — because that answers
+    "are they finished?" far sooner than waiting out the five-minute silence, and the
+    sitting appears on the dashboard immediately instead of five minutes later.
+
+    ``quiet_ms`` guards the other direction: a device event while notes are still
+    arriving is a blip (a USB hiccup, a statechange race), not the end of a session,
+    and splitting a sitting in the middle of playing would be worse than being slow.
+    Returns the sitting id that was closed, or None if there was nothing to close.
+    """
+    now = int(now_ms if now_ms is not None else time.time() * 1000)
+    with db.transaction(db_path) as conn:
+        sitting = conn.execute(
+            "SELECT id, ended_ms FROM sittings"
+            " WHERE closed_ms IS NULL AND ended_ms >= ?"
+            " ORDER BY started_ms DESC LIMIT 1",
+            (now - CLOSE_LOOKBACK_MS,),
+        ).fetchone()
+        if sitting is None:
+            return None
+        if now - int(sitting["ended_ms"]) < quiet_ms:
+            return None
+        conn.execute(
+            "UPDATE sittings SET closed_ms = ?1 WHERE id = ?2",
+            (int(sitting["ended_ms"]), int(sitting["id"])),
+        )
+        return int(sitting["id"])
 
 
 def _sitting_notes(conn: sqlite3.Connection, sitting_id: int, started_ms: int) -> list[Note]:
@@ -421,7 +476,7 @@ def ensure_segments(
     now = int(now_ms if now_ms is not None else time.time() * 1000)
     with db.transaction(db_path) as conn:
         sitting = conn.execute(
-            "SELECT id, started_ms, ended_ms, source FROM sittings WHERE id = ?",
+            "SELECT id, started_ms, ended_ms, source, closed_ms FROM sittings WHERE id = ?",
             (sitting_id,),
         ).fetchone()
         if sitting is None:
@@ -435,8 +490,10 @@ def ensure_segments(
 
         # An open sitting's boundaries would be provisional, and because stored
         # segments are never recomputed implicitly, a provisional view would be
-        # permanent.
-        if int(sitting["ended_ms"]) + settings.sitting_gap_s * 1000 >= now:
+        # permanent. A sitting closed because the piano went away is closed *now*,
+        # not five minutes from now — that is the whole point of closing it.
+        closed = sitting["closed_ms"] is not None
+        if not closed and int(sitting["ended_ms"]) + settings.sitting_gap_s * 1000 >= now:
             return []
 
         started_ms = int(sitting["started_ms"])

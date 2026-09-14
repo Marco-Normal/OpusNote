@@ -97,7 +97,10 @@ def test_a_backup_round_trips_through_a_wipe(client) -> None:
     before = document["counts"]
     assert before["pieces"] == 1
     assert before["note_events"] == 4
-    assert before["segments"] == 2
+    # Three, not two: the fixture's notes are 19.5 s and 39.7 s apart, and the
+    # segment gap is 8 s. The count is asserted because a backup that round-trips
+    # the wrong *number* of rows is the failure this test exists for.
+    assert before["segments"] == 3
     assert before["workouts"] == 1
 
     # Wipe it, the way a broken machine would: everything, not just one table.

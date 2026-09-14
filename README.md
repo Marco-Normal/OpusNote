@@ -132,6 +132,10 @@ groups notes into **sittings** by silence (five minutes closes one) and into
 segment. Nothing is recomputed behind your back: a boundary you move by hand stays
 moved.
 
+- **Segments** are cut at 8 seconds of silence, chosen by measuring a real 42-minute
+  session: the piece changes in it sat on gaps of 9.5 s and 11.7 s, while pauses *within*
+  a piece sat at 15 s — so no threshold is perfect, and this one errs towards more
+  segments because merging one is a click and splitting one means typing a position.
 - **Log** tab: today, streak, a twelve-week calendar, time per piece, neglected
   pieces, and the sitting timeline where you tag a segment with a piece, split a
   boundary the silence detector got wrong, merge two it split, or re-segment.
@@ -144,6 +148,12 @@ moved.
   than mistaken for ordinary practice, and a finished workout links to the sitting
   it happened inside. The Progress/Log views then separate "how long did I play"
   from "how much deliberate sight-reading did I do".
+- **A sitting ends when the piano does.** Switching the piano off is taken as "I am
+  done": the sitting is closed and appears in the log at once instead of five minutes
+  later, and playing again afterwards starts a new one. Turning the piano off in the
+  middle of playing is not taken as a boundary — the server waits out a second and a half
+  of silence first — so a USB hiccup does not split a session. The log also refreshes
+  itself while it is open, so nothing needs a reload.
 - **The app learns which piece you are drilling.** Tag a segment by hand and it becomes
   a reference; the next time you play something similar the timeline offers the piece it
   thinks it was, with the percentage and the arithmetic behind it. A match it is sure of
@@ -590,7 +600,7 @@ Environment variables, all optional:
 | `SRT_EXERCISE_BARS` | `4` | Bars per exercise |
 | `SRT_WORKOUT_LENGTH` | `8` | Exercises in a workout |
 | `SRT_SITTING_GAP_S` | `300` | Silence that closes a sitting |
-| `SRT_SEGMENT_GAP_S` | `20` | Silence that splits a sitting into segments |
+| `SRT_SEGMENT_GAP_S` | `8` | Silence that splits a sitting into segments — measured against a real session; see § *Practice log* |
 | `SRT_RESTART_GAP_MS` | `3000` | Mid-segment silence counted as a restart |
 | `SRT_ATTACK_WINDOW_MS` | `50` | Notes closer than this are one attack, for tempo |
 | `SRT_AUTOTAG_SCORE_AUTO` | `0.85` | Score at or above which a match is written without asking |

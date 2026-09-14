@@ -834,3 +834,41 @@ preference rather than a bug.
 Impact on the other side: none. Existing ratings need no migration — the re-anchor
 raises the material a given rating selects, which is the fix, and historical
 `exercises.difficulty_elo` values keep the scale they were scored on.
+
+## 2026-09-14 — sight-reading agent — Phase 17: a sitting ends when the piano does
+
+Three reports from using it at the instrument.
+
+Did:
+
+- **The dashboard now updates itself.** A sitting exists only once it has been quiet for
+  the sitting gap, and nothing told an open page about it, so the newest one needed a
+  reload. The Log view polls every 20 s while it is on screen, and the poll cannot move
+  the selection — it refreshes the tiles, the list and the open sitting's detail and
+  leaves the choice exactly as it was.
+- **Switching the piano off closes the sitting.** `sittings.closed_ms` (additive
+  migration), `POST /api/practice/sittings/close`, and the client reports a MIDI
+  disconnect. The server judges it: a closed sitting takes no further notes, so playing
+  again after switching off is a new sitting, and `CLOSE_QUIET_MS` (1.5 s) means a USB
+  blip mid-phrase does not split a session while reaching for the power switch after the
+  final chord still counts. The client flushes its capture buffer first, so the last
+  chord is inside the sitting before it is closed.
+- **Segmentation retuned from the owner's own session** — 8 s rather than 20 s. Their
+  42-minute sitting had piece-change gaps of 9.5 s and 11.7 s (invisible to 20 s) and
+  within-piece pauses of 15.1 s and 15.6 s, so no threshold is perfect; erring towards
+  more segments is cheaper because merging is one click and splitting means typing a
+  position.
+
+Two values were being decided in two places, and both are now one:
+
+- `practice_status` derived "open" from the clock while ingest excluded closed sittings,
+  so a closed sitting was still reported open; it now asks `_find_sitting`, the predicate
+  ingest uses.
+- The e2e assumed the sitting *list* materialises segments; only the detail read does.
+
+Verified with the browser suite against a simulated device: unplugging closes and
+segments the sitting, nothing stays open, and the poll is observed running (2 polled
+reads over 22 s) with a new sitting in the list and no reload.
+
+Impact on the other side: none. `practice-logger/` and `piano-progress/` untouched; one
+additive column on `sittings`, which the JSON backup picks up automatically.

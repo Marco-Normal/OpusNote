@@ -326,6 +326,18 @@ export const api = {
 
     sittings: (limit = 20) => request<SittingSummary[]>(`/practice/sittings?limit=${limit}`),
 
+    /**
+     * Finish the open sitting now, because the piano went away.
+     *
+     * Switching the piano off is a much sooner answer to "are they done?" than the
+     * five-minute silence, and it means the dashboard shows the sitting at once.
+     */
+    closeSitting: () =>
+      request<{ closed: boolean; sitting_id: number | null; reason: string | null }>(
+        '/practice/sittings/close',
+        { method: 'POST' },
+      ),
+
     sitting: (id: number) => request<SittingDetail>(`/practice/sittings/${id}`),
 
     /** Every note of a sitting, read on demand: the only heavy payload here. */

@@ -25,6 +25,11 @@ CREATE TABLE IF NOT EXISTS sittings (
     ended_at      TEXT NOT NULL,
     local_date    TEXT NOT NULL,         -- YYYY-MM-DD in the player's timezone
     source        TEXT NOT NULL DEFAULT 'web_midi',
+    -- Set when the sitting was closed by something other than silence: the piano
+    -- being switched off, which is a far sooner answer to "are they done?" than
+    -- waiting out the whole gap. A closed sitting takes no further notes — coming
+    -- back after switching the piano off starts a new one, deliberately.
+    closed_ms     INTEGER,
     -- The id this row had in the standalone practice-logger, or NULL. Importing
     -- matches on this rather than on the primary key, for the same reason the
     -- repertoire importer does: the two id spaces are independent, and colliding
@@ -128,6 +133,7 @@ CREATE TABLE IF NOT EXISTS segment_metrics (
 #: running it against a database created by an earlier version is safe.
 ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("sittings", "legacy_id", "INTEGER"),
+    ("sittings", "closed_ms", "INTEGER"),
     ("segments", "source", "TEXT"),
     ("segments", "workout_id", "INTEGER"),
 )

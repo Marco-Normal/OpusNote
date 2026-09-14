@@ -30,6 +30,9 @@
   let summary = $state<AnalyticsSummary | null>(null);
   let week = $state<RatingHistory | null>(null);
   let system = $state<SystemStatus | null>(null);
+  //: Long enough not to be noise, short enough that a finished sitting appears
+  //: while the player is still looking at the screen.
+  const POLL_MS = 20_000;
   let quality = $state<IdentificationQuality | null>(null);
   let matching = $state(false);
   let matchNote = $state<string | null>(null);
@@ -170,6 +173,47 @@
       void load();
     });
   });
+
+  /**
+   * Keep the dashboard current while it is on screen.
+   *
+   * A sitting is materialised — and so appears here — only once it has been quiet
+   * for the sitting gap, or as soon as the piano goes away and the client says so.
+   * Neither is an event this view otherwise hears about, so without a poll the
+   * newest sitting is invisible until the page is reloaded, which is exactly what
+   * it was doing.
+   *
+   * `keepSelection` on purpose: a poll must never move the player's attention. It
+   * refreshes the tiles, the list and the open sitting's detail, and leaves the
+   * selection exactly as it was — including none at all.
+   */
+  $effect(() => {
+    const timer = setInterval(() => {
+      void refreshQuietly();
+    }, POLL_MS);
+    return () => clearInterval(timer);
+  });
+
+  /** The poll: same reads as `load`, minus anything that touches the selection. */
+  async function refreshQuietly(): Promise<void> {
+    // Never while an edit is in flight: that path re-reads everything itself, and
+    // two overlapping reads could land out of order.
+    if (busy) return;
+    try {
+      const [nextSummary, nextSittings] = await Promise.all([
+        api.practice.summary(days),
+        api.practice.sittings(50),
+      ]);
+      summary = nextSummary;
+      sittings = nextSittings;
+      if (selectedId !== null && nextSittings.some((row) => row.id === selectedId)) {
+        detail = await api.practice.sitting(selectedId);
+      }
+    } catch {
+      // A missed poll is not worth an error banner: the next one is in a few
+      // seconds, and every explicit action still reports its own failures.
+    }
+  }
 
   $effect(() => {
     void api.repertoire

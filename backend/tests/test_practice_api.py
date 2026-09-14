@@ -555,3 +555,61 @@ def test_playback_of_a_sitting_with_no_notes_is_empty_not_an_error(client) -> No
 
 def test_notes_for_an_unknown_sitting_are_404(client) -> None:
     assert client.get("/api/practice/sittings/9999/notes").status_code == 404
+
+
+def test_the_piano_going_away_closes_the_sitting_through_the_api(client) -> None:
+    """What the client calls on a MIDI disconnect, and why the dashboard updates as
+    soon as the piano is switched off rather than five minutes later."""
+    import time
+
+    base = int(time.time() * 1000) - 10_000
+    payload = {
+        "tz_offset_minutes": 0,
+        "events": [
+            {"epoch_ms": base, "pitch": 60, "velocity": 70, "duration_ms": 200, "channel": 0},
+            {"epoch_ms": base + 500, "pitch": 62, "velocity": 70, "duration_ms": 200, "channel": 0},
+        ],
+    }
+    opened = client.post("/api/practice/events", json=payload).json()
+    sitting_id = opened["sitting_id"]
+
+    # Not yet: the sitting's own gap has not passed, so it has no segments.
+    assert client.get(f"/api/practice/sittings/{sitting_id}").json()["segments"] == []
+
+    closed = client.post("/api/practice/sittings/close")
+    assert closed.status_code == 200, closed.text
+    assert closed.json() == {"closed": True, "sitting_id": sitting_id, "reason": "closed"}
+
+    detail = client.get(f"/api/practice/sittings/{sitting_id}").json()
+    assert len(detail["segments"]) == 1, "segmented at once, not five minutes later"
+
+
+def test_closing_with_nothing_open_says_so(client) -> None:
+    body = client.post("/api/practice/sittings/close").json()
+    assert body["closed"] is False
+    assert body["reason"] == "nothing open to close"
+
+
+def test_status_is_open_only_while_a_note_would_still_join(client) -> None:
+    """"Open" is not a clock reading: it is whether the next note would join the
+    sitting, which is the question ingest asks. They disagreed as soon as a sitting
+    could be closed by the piano going away."""
+    import time
+
+    base = int(time.time() * 1000) - 10_000
+    client.post(
+        "/api/practice/events",
+        json={
+            "tz_offset_minutes": 0,
+            "events": [
+                {"epoch_ms": base, "pitch": 60, "velocity": 70, "duration_ms": 200, "channel": 0}
+            ],
+        },
+    )
+    assert client.get("/api/practice/status").json()["open_sitting"] is True
+
+    client.post("/api/practice/sittings/close")
+
+    status = client.get("/api/practice/status").json()
+    assert status["open_sitting"] is False, "closed by the device, not by the clock"
+    assert status["last_note_ms"] is not None, "and the last note is still reported"

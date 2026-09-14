@@ -1649,10 +1649,6 @@ def scenario_repertoire(browser) -> None:
         "cancelling the delete keeps the piece",
     )
 
-    check(not errors, f"no console errors ({errors})")
-    page.close()
-
-
 #: Send a short phrase straight from the simulated device.
 PLAY_PHRASE = """
 ([pitches, spacing, hold]) => {
@@ -1721,7 +1717,12 @@ def seed_closed_sitting(*, minutes_ago: int = 60) -> int:
                 "duration_ms": 300,
                 "channel": 0,
             }
-            for pitch, offset in zip((60, 64, 67, 72), (0, 500, 20_000, 60_000))
+            # Two segments, and the first one spans long enough to be worth a
+            # duration: the gaps inside it are under the 8 s segment gap, and the
+            # 60 s note is far beyond it. (Offsets of 0/500/20_000 used to make one
+            # 20 s segment at a 20 s gap; at 8 s that is two, and a "measured time"
+            # assertion would then be reading a half-second segment.)
+            for pitch, offset in zip((60, 64, 67, 72), (0, 4_000, 8_000, 60_000))
         ],
     }
     return api("/api/practice/events", "POST", payload)["sitting_id"]
@@ -1892,9 +1893,11 @@ def scenario_practice_log(browser) -> None:
     click_button(page, "Stop")
     page.wait_for_selector('[data-playing="false"]', timeout=10_000)
 
-    # Split: the silence detector's boundary was wrong, so move it by hand.
+    # Split: the silence detector's boundary was wrong, so move it by hand. Six
+    # seconds, which is inside the first segment (0-8 s) and deliberately *between*
+    # its notes, since a boundary on an onset would count that note in both halves.
     split = page.locator(".split input").first
-    split.fill("10")
+    split.fill("6")
     with page.expect_response(lambda r: r.url.endswith("/split")):
         page.get_by_role("button", name="Split here", exact=True).first.click()
     page.wait_for_selector('section.timeline[data-segments="3"]', timeout=20_000)
@@ -1909,6 +1912,7 @@ def scenario_practice_log(browser) -> None:
     # it is the only destructive path and asks for confirmation when labelled.
     with page.expect_response(lambda r: r.url.endswith("/resegment")):
         page.get_by_role("button", name=re.compile("^Re-segment")).first.click()
+    # Back to the two the silence produced in the first place.
     page.wait_for_selector('section.timeline[data-segments="2"]', timeout=20_000)
     page.wait_for_timeout(400)
     check(
@@ -1967,6 +1971,73 @@ def scenario_practice_log(browser) -> None:
         f"the restore reports what it read ({page.inner_text('.backup')[-160:]!r})",
     )
     backup_path.unlink(missing_ok=True)
+
+    # --- the piano going away ends the sitting, and the log notices by itself ---
+    # Play something, unplug the piano, and the sitting must close at once instead of
+    # waiting out the five-minute silence — and the dashboard must show it without a
+    # reload, which is the difference between pressing F5 and not.
+    play_phrase(page, [72, 74, 76])
+    page.wait_for_timeout(2_600)
+    check(api("/api/practice/status")["open_sitting"] is True, "playing opened a sitting")
+
+    newest = api("/api/practice/sittings")[0]
+    # The *detail* read is what materialises segments; the list only counts rows that
+    # already exist. So this is the read that says whether the sitting is still open.
+    open_detail = api(f"/api/practice/sittings/{newest['id']}")
+    check(
+        open_detail["segments"] == [],
+        f"which is still open, so it has no segments yet ({len(open_detail['segments'])})",
+    )
+
+    page.evaluate("() => window.__fakeMidi.unplugAll()")
+    page.wait_for_timeout(1_500)
+
+    closed_detail = api(f"/api/practice/sittings/{newest['id']}")
+    check(
+        len(closed_detail["segments"]) >= 1,
+        f"unplugging the piano closed and segmented the sitting "
+        f"({len(closed_detail['segments'])} segments)",
+    )
+    check(
+        api("/api/practice/status")["open_sitting"] is False,
+        "and nothing is left open for the next note to join",
+    )
+
+    # The dashboard refresh: the Log view is on screen with a poll running, and the
+    # newest sitting has to appear without anyone pressing F5.
+    page.evaluate(
+        """() => { window.__logPolls = 0;
+                   const original = window.fetch;
+                   window.fetch = (...args) => {
+                     const url = String(args[0]);
+                     if (url.includes('/api/practice/sittings?limit=')) window.__logPolls += 1;
+                     return original(...args);
+                   };
+                 }"""
+    )
+    # Plug it back in first: without an input port the phrase would go nowhere, and
+    # the test would be asserting about a sitting that was never created.
+    page.evaluate("() => window.__fakeMidi.plug('alsa-casio-1')")
+    page.wait_for_function("() => window.__fakeMidi.ready()", timeout=10_000)
+    play_phrase(page, [77, 79, 81])
+    page.wait_for_timeout(2_600)
+    page.evaluate("() => window.__fakeMidi.unplugAll()")
+    # The poll interval is 20 s: waiting past one tick proves the poll is running
+    # rather than that something else happened to re-read the page.
+    page.wait_for_timeout(22_000)
+
+    polls = page.evaluate("() => window.__logPolls || 0")
+    check(polls > 0, f"the dashboard refreshes itself while it is open ({polls} polled reads)")
+    newest_again = api("/api/practice/sittings")[0]
+    check(
+        newest_again["id"] != newest["id"],
+        "and the newest sitting is in the list without a reload "
+        f"({newest['id']} -> {newest_again['id']})",
+    )
+    check(
+        len(api(f"/api/practice/sittings/{newest_again['id']}")["segments"]) >= 1,
+        "closed by the disconnect like the one before it",
+    )
 
     check(not errors, f"no console errors ({errors})")
     page.close()

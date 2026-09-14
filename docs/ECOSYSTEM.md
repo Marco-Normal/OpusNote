@@ -5,7 +5,7 @@ Rust app" premise of
 [`INTEGRATION-practice-logger.md`](./INTEGRATION-practice-logger.md), which
 remains accurate about *what exists today* but is no longer the destination.
 
-Status: **decided; Phases 1-13, 15 and 16 are landed.** See §9 and §10 for what each one
+Status: **decided; Phases 1-13 and 15-17 are landed.** See §9 and §10 for what each one
 delivered.
 
 ---
@@ -885,6 +885,42 @@ One real bug came out of writing the browser scenario: the sitting's notes were 
 per *component* rather than per sitting, so choosing a second sitting played the first
 one's notes. The cache is keyed on the sitting id now, and the scenario uses pitches no
 other sitting plays so a stale cache cannot pass by accident.
+
+### Phase 17 — landed (a sitting ends when the piano does)
+
+Three things from using it at the instrument, two of them behaviours and one a measured
+retune.
+
+- **The dashboard updates itself.** A sitting only exists once it has been quiet for the
+  sitting gap, and nothing told the open page about it — so the newest sitting was
+  invisible until a reload. The Log view now polls every 20 s while it is on screen, and
+  the poll deliberately cannot move the player's attention: it refreshes the tiles, the
+  list and the open sitting's detail and leaves the selection exactly as it was.
+- **Switching the piano off ends the sitting.** A MIDI disconnect is a far sooner answer
+  to "are they done?" than five minutes of silence, and it is the difference between the
+  sitting appearing at once and appearing later. The client reports the event; the server
+  decides whether it was real, because only it can see how long the piano has been quiet
+  (`CLOSE_QUIET_MS`, 1.5 s — short enough that reaching for the power switch after the
+  final chord still counts, long enough that a USB blip mid-phrase does not split a
+  session). The client flushes its capture buffer before asking, so the last chord is in
+  the sitting before it is closed. `sittings.closed_ms` is what makes it stick: a closed
+  sitting takes no further notes, so coming back after switching off is a new sitting.
+- **Segmentation, retuned from the real thing.** A 42-minute sitting of the owner's:
+  18,688 notes, a 99th-percentile gap of 1.4 s, and exactly ten gaps over 3 s. The two
+  boundaries they drew by hand sat on gaps of **9.5 s and 11.7 s**, which the 20 s default
+  could not see, while two within-piece pauses sat at 15.1 s and 15.6 s — so no single
+  threshold separates those events. `SRT_SEGMENT_GAP_S` is now **8 s**: it catches every
+  real change and costs about two merges per session, and merging a boundary is one click
+  where splitting one means typing a position. Erring towards more segments is the cheaper
+  error, and the knob is there for the day that judgement changes.
+
+Two divergences of one kind were found while doing it — a value decided in two places:
+
+- `practice_status` computed "open" from the clock alone while ingest excluded explicitly
+  closed sittings, so a closed sitting was still reported open. It now asks
+  `_find_sitting`, the same predicate ingest uses.
+- The e2e fixture assumed the *list* endpoint's `segment_count` would materialise
+  segments; only the detail read does.
 
 ### Phase 16 — landed (the exercise ladder actually climbs)
 

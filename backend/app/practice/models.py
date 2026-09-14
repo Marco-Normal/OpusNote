@@ -368,6 +368,16 @@ class AnalyticsSummary(BaseModel):
     capture: CaptureReport | None = None
 
 
+class SittingCloseResult(BaseModel):
+    """What closing an open sitting did."""
+
+    closed: bool
+    sitting_id: int | None = None
+    #: Why nothing was closed, in words — 'nothing open', 'still playing' — so the
+    #: client can tell a blip from a genuine end without guessing.
+    reason: str | None = None
+
+
 class PracticeStatus(BaseModel):
     """What the Log section needs before anything has been recorded."""
 

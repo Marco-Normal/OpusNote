@@ -32,6 +32,7 @@ from .models import (
     PiecePracticeDetail,
     ResegmentRequest,
     SegmentSummary,
+    SittingCloseResult,
     SittingDetail,
     SittingNotes,
     SittingSummary,
@@ -79,6 +80,20 @@ def post_events(batch: EventBatch) -> IngestResult:
     return _handle(store.ingest, batch)
 
 
+@router.post("/sittings/close", response_model=SittingCloseResult)
+def close_sitting() -> SittingCloseResult:
+    """Finish the open sitting now, because the piano went away.
+
+    The player switching the piano off is a much sooner answer to "are they done?"
+    than waiting out the whole silence gap, and it is the difference between the
+    dashboard showing the sitting now and showing it five minutes from now.
+    """
+    sitting_id = _handle(store.close_open_sitting)
+    if sitting_id is None:
+        return SittingCloseResult(closed=False, reason="nothing open to close")
+    return SittingCloseResult(closed=True, sitting_id=sitting_id, reason="closed")
+
+
 @router.get("/status", response_model=PracticeStatus)
 def status(conn: sqlite3.Connection = Depends(get_conn)) -> PracticeStatus:
     """Enough to tell "nothing recorded yet" from "capture is broken"."""
@@ -89,11 +104,14 @@ def status(conn: sqlite3.Connection = Depends(get_conn)) -> PracticeStatus:
     ).fetchone()
     notes = conn.execute("SELECT COUNT(*) FROM note_events").fetchone()[0]
     last_end = totals["last_end"]
-    open_sitting = False
-    if last_end is not None:
-        open_sitting = int(last_end) + settings.sitting_gap_s * 1000 >= int(
-            time.time() * 1000
-        )
+    # "Open" means a note arriving now would join that sitting — so it is asked of the
+    # same predicate the ingest uses, rather than re-derived from the clock. The two
+    # disagreed the moment a sitting could be closed by the piano going away: this
+    # still called it open because the five minutes had not passed.
+    open_sitting = (
+        store._find_sitting(conn, int(time.time() * 1000), settings.sitting_gap_s * 1000)
+        is not None
+    )
     return PracticeStatus(
         sittings=int(totals["sittings"] or 0),
         notes=int(notes or 0),

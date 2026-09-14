@@ -273,6 +273,29 @@ class AppState {
   /** Bumped whenever a performance is recorded, so Stats can refetch. */
   revision = $state(0);
 
+  /**
+   * Tell the server the piano has gone, so it can close the open sitting.
+   *
+   * Idempotent and safe to call when nothing is open: the server answers with a
+   * reason, and the revision bump is what makes an open Log view re-read at once
+   * rather than five minutes later.
+   */
+  async finishSitting(): Promise<void> {
+    try {
+      // The last notes may still be in the capture buffer — the flush runs every two
+      // seconds, and a piano switched off right after a chord beats it. Sending them
+      // first is what stops the close from closing a sitting that does not have the
+      // final chord in it yet, and the notes from arriving afterwards to open a
+      // spurious second sitting.
+      await this.capture.flush();
+      const result = await api.practice.closeSitting();
+      if (result.closed) this.revision += 1;
+    } catch {
+      // Not worth surfacing: the next note opens a sitting anyway, and a failed
+      // close only means the silence has to do the job instead.
+    }
+  }
+
   setLatency(value: number): void {
     const clamped = Math.max(0, Math.min(500, Math.round(value)));
     this.latencyMs = clamped;
@@ -407,9 +430,14 @@ class AppState {
         available: () => this.midiConnected && this.midi.hasOutput,
       });
       this.midi.onDevices((next) => {
+        const wasConnected = this.devices.length > 0;
         this.devices = next;
         this.midiConnected = next.length > 0;
         if (next.length > 0) this.midiNeedsGesture = false;
+        // The piano going away means they have finished, and it is a far sooner
+        // answer than waiting out the silence. The server decides whether it was a
+        // real end or a blip; this only reports the event.
+        if (wasConnected && next.length === 0) void this.finishSitting();
       });
     }
     if (!options.quiet) this.midiError = null;

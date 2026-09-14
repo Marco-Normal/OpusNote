@@ -471,8 +471,85 @@ def test_resegment_missing_sitting_is_not_found(fresh_db) -> None:
 
 
 def test_the_ported_gaps_are_still_the_ported_defaults() -> None:
-    """The port must not quietly retune the thresholds the behaviour rests on."""
+    """The port must not quietly retune the thresholds the behaviour rests on.
+
+    `segment_gap_s` is the deliberate exception: 20 s was measured against a real
+    session and missed every piece change in it (they sat on 9.5 s and 11.7 s gaps),
+    so it is 8 s. It is listed here explicitly rather than dropped from the test, so
+    that the difference reads as a decision instead of as drift.
+    """
     assert settings.sitting_gap_s == 300
-    assert settings.segment_gap_s == 20
     assert settings.restart_gap_ms == 3000
     assert settings.attack_window_ms == 50
+    assert settings.segment_gap_s == 8, "deliberately retuned — see config.py"
+
+
+# --- closing a sitting because the piano went away -------------------------
+
+
+def test_a_sitting_can_be_closed_without_waiting_out_the_silence(fresh_db) -> None:
+    """Switching the piano off is a far sooner answer to "are they done?" than five
+    minutes of silence, and it is what makes the sitting appear on the dashboard."""
+    sitting_id = store.ingest(batch([0, 500, 1_000])).sitting_id
+    # Far too soon for the silence to have closed it: the gap is five minutes.
+    assert store.ensure_segments(sitting_id, now_ms=BASE_MS + 10_000) == []
+
+    # Ten seconds of quiet, which is past `close_quiet_ms` and nowhere near the
+    # five-minute silence the sitting would otherwise wait for.
+    assert store.close_open_sitting(now_ms=BASE_MS + 10_000) == sitting_id
+
+    segments = store.ensure_segments(sitting_id, now_ms=BASE_MS + 10_000)
+    assert len(segments) == 1, "closed means closed: the boundaries exist at once"
+
+
+def test_closing_takes_no_more_notes(fresh_db) -> None:
+    """A note after the piano comes back is a *new* sitting, not a continuation of
+    the one the player ended by switching off."""
+    first = store.ingest(batch([0, 500])).sitting_id
+    assert store.close_open_sitting(now_ms=BASE_MS + 10_000) == first
+
+    second = store.ingest(batch([2_000, 2_500])).sitting_id
+    assert second != first
+    assert len(store.list_sittings()) == 2
+
+
+def test_closing_while_notes_are_still_arriving_is_refused(fresh_db) -> None:
+    """A device blip mid-session — a USB hiccup, a statechange race — must not cut a
+    sitting in half. `close_quiet_ms` is the guard, and it is the reason the client
+    can report the event without judging it."""
+    import time
+
+    base = int(time.time() * 1000)
+    events = [
+        WireNote(epoch_ms=base - 500, pitch=60, velocity=70, duration_ms=200, channel=0),
+        WireNote(epoch_ms=base - 200, pitch=62, velocity=70, duration_ms=200, channel=0),
+    ]
+    sitting_id = store.ingest(EventBatch(tz_offset_minutes=0, events=events)).sitting_id
+
+    assert store.close_open_sitting(now_ms=base) is None, "still playing"
+    assert store.close_open_sitting(now_ms=base, quiet_ms=0) == sitting_id, (
+        "and the guard can be dropped when the caller knows better"
+    )
+
+
+def test_nothing_to_close_is_not_an_error(fresh_db) -> None:
+    assert store.close_open_sitting(now_ms=BASE_MS) is None
+
+    store.ingest(batch([0, 500]))
+    assert store.close_open_sitting(now_ms=BASE_MS + 10_000) is not None, (
+        "the first call closes it"
+    )
+    assert store.close_open_sitting(now_ms=BASE_MS + 10_000) is None, (
+        "and the second finds nothing open"
+    )
+
+
+def test_a_long_forgotten_sitting_is_not_closed_by_a_stray_device_event(fresh_db) -> None:
+    """The piano being plugged back in days later must not "close" a sitting that the
+    silence closed long ago — there is nothing to close by then."""
+    store.ingest(batch([0, 500]))
+    assert store.close_open_sitting(now_ms=BASE_MS + 10_000) is not None
+
+    # Days later the device reappears. The sitting is long closed, and the lookback
+    # is what stops a stray event from reaching back and touching it.
+    assert store.close_open_sitting(now_ms=BASE_MS + 3 * 24 * 60 * 60 * 1000) is None
