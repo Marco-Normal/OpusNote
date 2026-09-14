@@ -16,7 +16,10 @@ failure mode and a corpus without it would flatter the result.
 
 Nothing is graded on material it was trained on: the headline number is
 leave-one-out, and the cold-start table trains on the first few drills of each piece
-and tests on the rest, which is what the first weeks of use look like.
+and tests on the rest, which is what the first weeks of use look like. A third table
+truncates every drill to its first N notes, which is what a *shorter* segment would have
+to be recognised from — the measurement behind keeping the segment threshold where it is
+rather than cutting playing into two-bar pieces.
 
 Usage::
 
@@ -247,6 +250,16 @@ def _examples(drills: list[Drill], indices: list[int]) -> list[Example]:
     ]
 
 
+def first_notes(drill: Drill, keep: int) -> Drill:
+    """The same drill as if the player had stopped after ``keep`` notes.
+
+    A segment is however long the player played without a long pause, which is a
+    different thing from a section: this is what a *shorter* segment would have to
+    be recognised from, and it is why a very fine segmentation is not free.
+    """
+    return Drill(drill.piece_id, drill.label, drill.notes[:keep], drill.transform)
+
+
 def evaluate(
     drills: list[Drill],
     *,
@@ -402,6 +415,17 @@ def main() -> int:
     broken_down = evaluate(drills, weights=DEFAULT_WEIGHTS)
     for transform, outcome in sorted(broken_down.by_transform.items()):
         print(f"  {transform:<18} {outcome.correct_top:2d}/{outcome.total:<2d} correct")
+
+    print(
+        "\nHow much playing one segment needs, leave-one-out at the shipped weights"
+        f" (a drill is {DRILL_BARS} bars, {int(statistics.median(shapes))} notes at the median):"
+    )
+    for keep in (4, 8, 12, 16, 24, 32, None):
+        subset = drills if keep is None else [first_notes(drill, keep) for drill in drills]
+        report(
+            "whole drill" if keep is None else f"first {keep} notes",
+            evaluate(subset, weights=DEFAULT_WEIGHTS),
+        )
 
     print(f"\nWhat the sitting is already about (near-ties broken towards it):")
     for label, use_context in (("without context", False), ("with context", True)):

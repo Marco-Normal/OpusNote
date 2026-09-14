@@ -872,3 +872,30 @@ reads over 22 s) with a new sitting in the list and no reload.
 
 Impact on the other side: none. `practice-logger/` and `piano-progress/` untouched; one
 additive column on `sittings`, which the JSON backup picks up automatically.
+
+## 2026-09-14 — sight-reading agent — how fine a segment should be
+
+The owner asked whether a piece is better logged as one long segment or as many small
+ones, for identification and for statistics. Answered by measurement, and no default
+moved: the 8 s rule stands.
+
+Evidence, on the owner's own backup (the 42-minute sitting, 18,688 notes):
+
+- At 8 s that session becomes 6 segments against the 3 they labelled by hand, and the
+  three extra cuts are the sonata's own 15.6 s, 15.3 s and 26.7 s pauses. At 20 s the
+  first segment holds Exercises + Intermezzo + 10,640 sonata notes, which no single
+  label can be right about — so "one long segment per piece" is not an option either.
+- A fine threshold cannot produce two-bar chunks out of playing anyway: at 2 s the same
+  session is 20 segments with a median of 681 notes, because nobody pauses every two
+  bars. Two-bar resolution would have to come from the score, not from silence.
+- The repetition signal lives in the 3-8 s band: `restarts` counts pauses of at least
+  3 s *inside* a segment, so at a 2 s threshold that sitting reports 0 loops where 8 s
+  reports 5. Splitting finer destroys the most informative metric there is.
+- Recognition degrades with span. New table in `tools/measure_autotag.py` (first N notes
+  of each drill, leave-one-out): top-1 falls from 84.7% over a whole three-bar drill to
+  68-78% over its prefixes, and offered precision from 81.0% to 66-72%. Below
+  `autotag_min_notes` (8 notes) identification refuses outright.
+- The price is labelling prompts per hour of practice: 9-17 at 8 s against 29-46 at 2 s.
+
+Impact: no behaviour change. The measurement is now reproducible rather than remembered,
+so the threshold can be re-argued when the corpus or the matcher changes.
