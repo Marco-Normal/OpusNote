@@ -1072,3 +1072,50 @@ one constraint widened on `identification_outcomes`; no endpoint removed and no 
 changed. The JSON backup picks all of it up automatically, since the table list is read from
 `sqlite_master`. `backend/data/real-backup.json` is the owner's real practice log, refreshed
 by hand and kept out of git, for measuring against actual practice rather than a fixture.
+
+## 2026-09-16 — sight-reading agent — Slice 0 of the test strategy: the suite is graded
+
+Scope: `docs/TEST-STRATEGY.md`, `docs/PLAN-SLICE0.md`, `check.sh`,
+`backend/tools/{run_e2e.sh,e2e_browser.py,falsify.sh,falsifications/}`,
+`backend/{setup.cfg,requirements-dev.txt}`, `backend/tests/conftest.py`,
+`backend/tests/test_repertoire.py`, `pytest.ini`, `.gitignore`.
+
+Did: built the verification guardrail's first slice. The backend was already at 97% line
+coverage, so this adds almost no tests — it makes the existing ones trustworthy and measures
+whether they can fail.
+
+- **The mutation baseline exists: 10,652 mutants, 10,289 killed, 305 survived, 97.1%.**
+  `mutmut` 3.8 works with pytest 9, so the planned hand-rolled fallback was not needed. The
+  survivors concentrate exactly where the gap analysis predicted: `app.music` 199,
+  `app.config` 30, `app.skills_data` 29, `app.piano` 23, `app.main` 20. The sharpest single
+  entry is `bass_patterns.x_free_line` at 62 — the free left hand this project's own README
+  calls the harder half.
+- **Nine places where a green tick meant nothing**, found by audit and repaired: four
+  assertions that provably could not fail, four that passed while the feature was broken, and
+  a pytest test named for a check it short-circuited past.
+- **Every browser scenario now runs alone.** The database is reset between scenarios rather
+  than once per process, and the reset is checked against `sqlite_master` so a table added in
+  a later phase fails loudly.
+- **A skip is loud.** A scenario that ran nothing exits non-zero, and pytest reports
+  setup-time skips under their own separator.
+- **`./check.sh --fast` / `--full`**, and `falsify.sh` to prove a check can fail.
+
+Five findings, each invisible before this slice:
+
+1. The upload cap's while-writing check cannot run through the endpoint — FastAPI receives the
+   whole body first — so the cap protects the media directory, not the disk, and
+   `_stage_upload`'s docstring said otherwise.
+2. `tone_wav`'s "skip when ffmpeg is missing" branch had never executed; a machine without
+   ffmpeg got twelve errors, not twelve skips.
+3. `scenario_lan_viewer` was a third order-dependent scenario, not one of the two predicted.
+4. Isolation reproduced the concurrency race the audit predicted, with a mechanism:
+   `store.ingest` reads then writes, and a concurrent writer invalidates the WAL snapshot,
+   which `busy_timeout` does not retry. Reproduced, not yet fixed — Slice 5.
+5. `falsify.sh`'s first version reported a successful falsification of a check it never ran.
+
+Two audit findings were rejected on evidence: the after-Stop assertion is correct as written,
+and strengthening it made the scenario fail against working code.
+
+Impact on the other side: none. No app behaviour changed except one docstring and one test
+fixture. `pytest.ini` gained `--strict-markers --strict-config --timeout=120`, which no
+existing test violates.

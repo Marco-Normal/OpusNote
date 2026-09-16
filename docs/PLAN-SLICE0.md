@@ -1,5 +1,34 @@
 # Plan — Slice 0: grade the suite
 
+**Status: landed.** All eleven tasks addressed; Task 8 is deliberately partial and says so.
+
+The suite now reports its own trustworthiness instead of asserting it. Nine places where a
+green tick meant nothing are gone or repaired, every scenario runs alone, a skip is loud, and
+the first mutation score exists: **97.1%**, with the 305 survivors named and grouped.
+
+Five things were found by doing it rather than by reading it, and each was already invisible
+before:
+
+1. The upload cap's while-writing check **cannot run through the endpoint** — FastAPI has
+   already received the body — and `_stage_upload`'s docstring claimed the cap protected the
+   disk.
+2. `tone_wav`'s "skip if ffmpeg is missing" branch **had never executed**: `subprocess.run`
+   raises before the returncode is checked. A machine without ffmpeg got errors, not skips.
+3. `scenario_lan_viewer` was a **third** order-dependent scenario, not one of the two
+   predicted.
+4. Per-scenario isolation **reproduced the concurrency race** the audit had only predicted —
+   `store.ingest` reads then writes, and a concurrent writer invalidates the WAL snapshot.
+5. `falsify.sh`'s first version **reported a successful falsification of a check it never
+   ran**, because it invoked a command line as a single filename. The tool built to catch
+   green-over-nothing did exactly that.
+
+Two audit findings were rejected on evidence: the after-Stop assertion is correct as written,
+and the four mutations it suggested there would have demanded the very note-ons that must not
+arrive.
+
+**Superseded by:** slices 1-8 of [`TEST-STRATEGY.md`](./TEST-STRATEGY.md), which this
+unblocks. The mutation survivor list in §1.4 is the work queue.
+
 **Parent spec:** [`TEST-STRATEGY.md`](./TEST-STRATEGY.md) § 4, Slice 0.
 **Goal:** make the suite's own results trustworthy, and learn which of the existing 883
 tests can actually fail. No new coverage is added here; this slice makes what exists
