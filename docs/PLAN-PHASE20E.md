@@ -41,7 +41,7 @@ git status --porcelain   # must print nothing before any falsification
 ```
 
 **Compatibility boundary.** Four additive nullable `media` columns, one new read field
-(`HostInfo.segment_gap_s`), one new route and one new form field. `BACKUP_VERSION` unchanged — the
+(`PracticeStatus.segment_gap_s`), one new route and one new form field. `BACKUP_VERSION` unchanged — the
 table list is derived, and the media rows ride along as they always have. `SCHEMA_VERSION` 3 → 4, so
 an older build refuses a database with the new columns rather than misreading it. **No existing route
 changes shape, and the recording upload route is untouched**: a captured take is uploaded through the
@@ -117,7 +117,7 @@ Change Necessity:
 - Why code change is necessary: there is no `MediaRecorder` or `getUserMedia` call anywhere in
   `frontend/src`, no route that accepts a take without a piece, and no column that says where a take
   came from
-- Minimum change boundary: four `media` columns, one `HostInfo` field, one repertoire route, one
+- Minimum change boundary: four `media` columns, one `PracticeStatus` field, one repertoire route, one
   capture client with a pure cutter, the takes UI and one rate control, tests, falsifications, docs
 - Decision: code-change
 ```
@@ -125,7 +125,7 @@ Change Necessity:
 ```text
 Existence Check:
 - Proposed new surface: `media.source`/`sitting_id`/`segment_id`/`captured_start_ms`;
-  `HostInfo.segment_gap_s`; `POST /api/repertoire/takes`; `frontend/src/lib/audioCapture.ts`;
+  `PracticeStatus.segment_gap_s`; `POST /api/repertoire/takes`; `frontend/src/lib/audioCapture.ts`;
   `frontend/src/lib/audioCut.ts`; `frontend/src/components/TakeList.svelte`
 - Existing owner / reuse candidate: `repertoire/media_pipeline.py` already probes, hashes,
   transcodes and stores a recording; the upload route and `_stage_upload` already enforce the size cap
@@ -217,7 +217,7 @@ Plan Pressure Test:
 | `backend/app/models.py` | `SystemStatus` reports captured-audio bytes |
 | `backend/tests/test_migration_upgrade.py` | The frozen `media` shape |
 | `backend/tests/test_repertoire.py` | The attachment cases and the size report |
-| `frontend/src/lib/types.ts` | `HostInfo.segment_gap_s`; `Recording` gains the four fields |
+| `frontend/src/lib/types.ts` | `PracticeStatus.segment_gap_s`; `Recording` gains the four fields |
 | `frontend/src/lib/api.ts` | `uploadTake` |
 | `frontend/src/lib/state.svelte.ts` | The audio capture client, arm/stop, and the pedal action |
 | `frontend/src/components/DeviceBar.svelte` | Arm/stop and the "what will be recorded" readout |
@@ -939,7 +939,8 @@ Create `frontend/src/lib/audioCut.ts`:
 /**
  * When a take ends.
  *
- * The rule is the server's segment rule, fetched from `HostInfo` rather than repeated here: audio
+ * The rule is the server's segment rule, fetched from the practice status rather than repeated here:
+ * audio
  * cut somewhere else than the notes would disagree with them about where a passage ended, and the
  * disagreement would be invisible until somebody compared a take with its segment.
  *
@@ -1029,7 +1030,7 @@ export class AudioCaptureClient {
   constructor(
     /** The last note any port has heard, or null. The same source the gesture reads. */
     private readonly lastNoteMs: () => number | null,
-    /** The server's segment gap, in ms, from `HostInfo`. */
+    /** The server's segment gap, in ms, from the practice status. */
     private readonly segmentGapMs: () => number,
     /** Ask the server whether there is a sitting to attach to, and how to post a take. */
     private readonly upload: (blob: Blob, startedMs: number) => Promise<void>,
@@ -1703,7 +1704,7 @@ git commit -m "Phase 20e: audio takes"
 | --- | --- |
 | The machine has no microphone and the switch looks armed | `getUserMedia`'s failure is classified into *denied* and *unavailable*, both rendered, and the browser scenario asserts the ready state rather than the button. A switch that cannot record says so |
 | A take uploads while the sitting is still open and loses its segment | `sitting_at` resolves the sitting from the epoch even with no segments, `segment_at` honestly returns nothing, and the next take for that sitting links the ones still missing. Nothing depends on a background job, and a take always keeps its sitting |
-| Audio and notes disagree about where a passage ended | The client never holds the rule: `HostInfo.segment_gap_s` is the only copy, and `cut_takes_at_the_wrong_gap.sh` proves the boundary case is asserted |
+| Audio and notes disagree about where a passage ended | The client never holds the rule: `PracticeStatus.segment_gap_s` is the only copy, and `cut_takes_at_the_wrong_gap.sh` proves the boundary case is asserted |
 | The kiosk grants the microphone to everything | `AudioCaptureAllowed: false` alongside the named origins, and both are documented in the two deployment documents |
 | Captured audio grows without bound | ~14 MB an hour by construction (mono, 32 kbps, and no recording of silence). Reported in the System panel and deleted by hand; no retention policy, because a policy that deletes a take the player wanted is worse than a disk filling up slowly |
 | A duplicate take is refused as a server error | Content-addressing makes an identical take the same file, so the route returns a 409 with a reason, and the test asserts it |
