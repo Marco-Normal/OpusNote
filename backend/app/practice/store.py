@@ -29,6 +29,7 @@ from typing import Iterable, Literal, Sequence
 from .. import db
 from ..config import settings
 from . import capture_status
+from . import kinds
 from . import schema as practice_schema
 from .metrics import SegmentMetrics, segment_metrics
 from .pedal import (
@@ -60,6 +61,8 @@ from .models import (
     NeglectedPiece,
     PiecePractice,
     PiecePracticeDetail,
+    PracticeKind,
+    PracticeKindSplit,
     SegmentCandidate,
     SegmentMetricsOut,
     SegmentSummary,
@@ -346,6 +349,8 @@ def _segment_rows(conn: sqlite3.Connection, sitting_id: int) -> list[SegmentSumm
                g.workout_id,
                g.confidence,
                g.identified_by,
+               g.practice_kind,
+               g.practice_kind_basis,
                (SELECT COUNT(*) FROM note_events e
                  WHERE e.sitting_id = g.sitting_id
                    AND e.onset_ms >= g.start_ms
@@ -398,6 +403,8 @@ def _segment_rows(conn: sqlite3.Connection, sitting_id: int) -> list[SegmentSumm
                 workout_id=data["workout_id"],
                 confidence=data["confidence"],
                 identified_by=data["identified_by"],
+                practice_kind=data["practice_kind"],
+                practice_kind_basis=data["practice_kind_basis"],
                 note_count=data["note_count"],
                 metrics=metrics,
             )
@@ -499,11 +506,15 @@ def _refresh_metrics(conn: sqlite3.Connection, sitting_id: int) -> None:
                 high,
             ),
         )
-    # Drop metrics for segments that no longer exist (a merge removes one).
+    # Drop metrics whose segment no longer exists (a merge removes one).
+    #
+    # This used to read `NOT IN (SELECT id FROM segments WHERE sitting_id = ?)`, which is
+    # not "the stale rows of this sitting" but "every segment of every other sitting" —
+    # so segmenting one sitting silently emptied every earlier sitting's metrics, taking
+    # the piece tempo trend and the per-segment pedal and touch figures with it. A metric
+    # row is stale exactly when its segment is gone from the table, so that is the test.
     conn.execute(
-        "DELETE FROM segment_metrics WHERE segment_id NOT IN"
-        " (SELECT id FROM segments WHERE sitting_id = ?)",
-        (sitting_id,),
+        "DELETE FROM segment_metrics WHERE segment_id NOT IN (SELECT id FROM segments)"
     )
 
 
@@ -539,6 +550,123 @@ def _tag_from_workouts(conn: sqlite3.Connection, sitting_id: int, started_ms: in
                 " identified_by = COALESCE(identified_by, 'workout') WHERE id = ?2",
                 (best[0], segment["id"]),
             )
+
+
+def _piece_tempo_baseline(
+    conn: sqlite3.Connection, piece_id: int | None, exclude_segment_id: int
+) -> tuple[float | None, int]:
+    """The piece's own typical note rate, and how many segments it is drawn from.
+
+    Relative to the piece, never to a metronome mark: the log has no score, so there is
+    no target tempo to be slower *than*. The segment being judged is excluded so it can
+    never provide its own baseline, and the mean is named a mean rather than a median —
+    SQLite has no median and inventing one here would be a bigger claim than the data.
+
+    `piece_id` is None for a segment nobody has labelled; there is then no piece to be
+    slower than, which is a legitimate "no baseline" rather than an error.
+    """
+    if piece_id is None:
+        return None, 0
+    row = conn.execute(
+        """
+        SELECT AVG(m.median_tempo) AS typical, COUNT(*) AS n
+        FROM segments g
+        JOIN segment_metrics m ON m.segment_id = g.id
+        WHERE g.piece_id = ?1 AND g.id != ?2 AND m.median_tempo IS NOT NULL
+        """,
+        (piece_id, exclude_segment_id),
+    ).fetchone()
+    return (row["typical"], int(row["n"] or 0))
+
+
+def offer_practice_kinds(conn: sqlite3.Connection, sitting_id: int) -> int:
+    """Write an unconfirmed kind proposal on the segments that have none.
+
+    Never touches a row that already carries a kind *or* a basis, whatever they are: a
+    proposal may not overwrite a person, and that one guard is what makes re-running the
+    pass safe rather than destructive. Returns how many offers were written, which is
+    what the tests assert against.
+    """
+    rows = conn.execute(
+        """
+        SELECT g.id, g.piece_id, g.source, g.practice_kind, g.practice_kind_basis,
+               m.note_count, m.median_tempo, m.restarts
+        FROM segments g
+        LEFT JOIN segment_metrics m ON m.segment_id = g.id
+        WHERE g.sitting_id = ?
+        """,
+        (sitting_id,),
+    ).fetchall()
+    written = 0
+    for row in rows:
+        if row["practice_kind"] is not None or row["practice_kind_basis"] is not None:
+            continue
+        typical, baseline = _piece_tempo_baseline(conn, row["piece_id"], int(row["id"]))
+        offered = kinds.offer_for(
+            note_count=int(row["note_count"] or 0),
+            is_sight_reading=row["source"] == "sight_reading",
+            median_tempo=row["median_tempo"],
+            piece_typical_tempo=typical,
+            piece_baseline_segments=baseline,
+            restarts=row["restarts"],
+        )
+        if offered is None:
+            continue
+        conn.execute(
+            "UPDATE segments SET practice_kind = ?1, practice_kind_basis = 'offered'"
+            " WHERE id = ?2",
+            (offered, int(row["id"])),
+        )
+        written += 1
+    return written
+
+
+def set_practice_kind(
+    segment_id: int,
+    action: str,
+    kind: PracticeKind | None,
+    db_path: Path | None = None,
+) -> list[SegmentSummary]:
+    """Record how a segment was practised, or answer the offer about it.
+
+    The single owner of "someone has decided about the kind", the same way
+    ``_settle_label`` is the one owner of a piece decision:
+
+    * ``set`` is the player's own choice. It writes ``basis = 'manual'`` and may replace a
+      previous choice, because changing your mind is not a mistake.
+    * ``accept`` promotes a pending offer. It is refused when there is no offer, so a
+      stale button cannot manufacture one.
+    * ``decline`` clears an offer. Declining nothing is a deliberate no-op rather than a
+      409: a double-click is not an error.
+    """
+    with db.transaction(db_path) as conn:
+        row = conn.execute(
+            "SELECT id, sitting_id, practice_kind, practice_kind_basis FROM segments WHERE id = ?",
+            (segment_id,),
+        ).fetchone()
+        if row is None:
+            raise NotFound(f"no segment {segment_id}")
+
+        if action == "accept":
+            if row["practice_kind_basis"] != "offered" or row["practice_kind"] is None:
+                raise InvalidRequest("this segment has no offer to accept")
+            conn.execute(
+                "UPDATE segments SET practice_kind_basis = 'accepted' WHERE id = ?",
+                (segment_id,),
+            )
+        elif action == "decline":
+            conn.execute(
+                "UPDATE segments SET practice_kind = NULL, practice_kind_basis = NULL"
+                " WHERE id = ?",
+                (segment_id,),
+            )
+        else:
+            conn.execute(
+                "UPDATE segments SET practice_kind = ?1, practice_kind_basis = ?2"
+                " WHERE id = ?3",
+                (kind, None if kind is None else "manual", segment_id),
+            )
+        return _segment_rows(conn, int(row["sitting_id"]))
 
 
 def ensure_segments(
@@ -593,6 +721,10 @@ def ensure_segments(
         # read path that writes labels, which is deliberate — and is exactly why the
         # label is marked as inferred and is one click from being rejected.
         autotag_sitting(conn, sitting_id)
+        # Offered, never applied: the proposal is stored with basis 'offered', so it is
+        # drawn as a question and counts in nothing until someone answers it. After the
+        # matcher, because "slower than usual for this piece" needs the piece.
+        offer_practice_kinds(conn, sitting_id)
         return _segment_rows(conn, sitting_id)
 
 
@@ -752,6 +884,9 @@ def assign_piece(
             if known is None:
                 raise InvalidRequest(f"no piece {piece_id} in the library")
         _settle_label(conn, row, piece_id)
+        # A label can make a kind offer possible that was not before: "slower than usual"
+        # needs a piece. Safe to call every time — it writes only where nothing is set.
+        offer_practice_kinds(conn, int(row["sitting_id"]))
         return _segment_rows(conn, int(row["sitting_id"]))
 
 
@@ -1134,6 +1269,54 @@ def sources(conn: sqlite3.Connection, days: int) -> list[SourceSplit]:
     ]
 
 
+def kinds_breakdown(conn: sqlite3.Connection, days: int) -> list[PracticeKindSplit]:
+    """Logged minutes per practice kind, untagged included.
+
+    Two rules live in this query and both are asserted:
+
+    * the kind is taken through a CASE, so a row whose basis is ``offered`` resolves to
+      NULL and lands in the untagged bucket rather than its own. An unanswered question
+      must not be counted as a label, and it must not vanish either — a split that
+      dropped it could not be reconciled against the segments it summarises;
+    * minutes are segment minutes, not sitting minutes, because the axis is per segment.
+      The Log dashboard's ``total_minutes`` stays sitting-based and is a different number.
+    """
+    since = (_today() - timedelta(days=days - 1)).isoformat()
+    rows = conn.execute(
+        """
+        WITH per_segment AS (
+            SELECT CASE
+                       WHEN g.practice_kind_basis IN ('manual', 'accepted')
+                       THEN g.practice_kind
+                       ELSE NULL
+                   END AS kind,
+                   (g.end_ms - g.start_ms) / 60000.0 AS minutes,
+                   (SELECT COUNT(*) FROM note_events e
+                     WHERE e.sitting_id = g.sitting_id
+                       AND e.onset_ms >= g.start_ms
+                       AND e.onset_ms <= g.end_ms) AS notes
+            FROM segments g
+            JOIN sittings s ON s.id = g.sitting_id
+            WHERE s.local_date >= ?1
+        )
+        SELECT kind, SUM(minutes) AS minutes, SUM(notes) AS notes, COUNT(*) AS segments
+        FROM per_segment
+        GROUP BY kind
+        ORDER BY minutes DESC
+        """,
+        (since,),
+    ).fetchall()
+    return [
+        PracticeKindSplit(
+            kind=row["kind"],
+            minutes=round(float(row["minutes"] or 0.0), 1),
+            notes=int(row["notes"] or 0),
+            segments=int(row["segments"] or 0),
+        )
+        for row in rows
+    ]
+
+
 def streak_days(conn: sqlite3.Connection) -> int:
     """Consecutive days ending today with at least one sitting.
 
@@ -1188,6 +1371,7 @@ def summary(conn: sqlite3.Connection, days: int = 30, recent: int = 10) -> Analy
         by_piece=by_piece(conn, days),
         neglected=neglected(conn),
         sources=sources(conn, days),
+        kinds=kinds_breakdown(conn, days),
         recent=list_sittings_conn(conn, recent),
         last_note_ms=(
             int(totals["last_ms"]) if totals["last_ms"] is not None else None

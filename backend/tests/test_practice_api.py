@@ -644,3 +644,235 @@ def test_status_is_open_only_while_a_note_would_still_join(client) -> None:
     status = client.get("/api/practice/status").json()
     assert status["open_sitting"] is False, "closed by the device, not by the clock"
     assert status["last_note_ms"] is not None, "and the last note is still reported"
+
+
+# --- practice kinds (Phase 20a) --------------------------------------------
+
+
+def recent_sitting(client, offsets: list[int]) -> dict:
+    """A sitting played a minute ago and closed, so it has segments *and* is in the window.
+
+    Two constraints meet here. Stored segments are never recomputed implicitly, so a
+    sitting still inside its own silence gap has none until it is closed. And every
+    windowed analytics query starts from today, so the 2023 fixtures the store tests use
+    would be asserted as correctly *excluded* rather than counted.
+    """
+    import time
+
+    base = int(time.time() * 1000) - 60_000
+    body = client.post(
+        "/api/practice/events",
+        json={
+            "tz_offset_minutes": server_offset_minutes(),
+            "events": [
+                {
+                    "epoch_ms": base + offset,
+                    "pitch": 60 + index,
+                    "velocity": 70,
+                    "duration_ms": 300,
+                    "channel": 0,
+                }
+                for index, offset in enumerate(offsets)
+            ],
+        },
+    ).json()
+    closed = client.post("/api/practice/sittings/close")
+    assert closed.status_code == 200, closed.text
+    detail = client.get(f"/api/practice/sittings/{body['sitting_id']}").json()
+    return {"sitting_id": body["sitting_id"], "segments": detail["segments"]}
+
+
+def seed_piece(conn, title: str = "Etude") -> int:
+    piece_id = conn.execute(
+        "INSERT INTO pieces (title, status) VALUES (?, 'active')", (title,)
+    ).lastrowid
+    conn.commit()
+    return int(piece_id)
+
+
+def segment_of(client, sitting: dict, index: int = 0) -> dict:
+    """Re-read one segment through the API, which is the thing under test."""
+    detail = client.get(f"/api/practice/sittings/{sitting['sitting_id']}").json()
+    return detail["segments"][index]
+
+
+#: Attacks every 500 ms - 120 BPM, a piece's ordinary rate in the offer tests.
+FAST_OFFSETS = [0, 500, 1_000, 1_500]
+#: Attacks every 1500 ms - 40 BPM, a third of the ordinary rate.
+SLOW_OFFSETS = [0, 1_500, 3_000, 4_500]
+
+
+def a_piece_with_a_slow_offer(client, conn) -> tuple[dict, int]:
+    """Three ordinary segments give the piece a baseline; a slow one earns an offer.
+
+    The offer arrives from *labelling the piece*, not from a button: "slower than usual"
+    cannot mean anything until the app knows what usual is for that piece. That is also
+    why `offer_practice_kinds` runs when a label is written, not only at segmentation.
+    """
+    piece_id = seed_piece(conn)
+    for _ in range(3):
+        sitting = recent_sitting(client, FAST_OFFSETS)
+        client.patch(
+            f"/api/practice/segments/{segment_of(client, sitting)['id']}",
+            json={"piece_id": piece_id},
+        )
+    slow = recent_sitting(client, SLOW_OFFSETS)
+    segment_id = segment_of(client, slow)["id"]
+    response = client.patch(
+        f"/api/practice/segments/{segment_id}", json={"piece_id": piece_id}
+    )
+    assert response.status_code == 200, response.text
+    return slow, segment_id
+
+
+def test_labelling_a_piece_offers_slow_against_that_pieces_own_tempo(client, conn) -> None:
+    slow, segment_id = a_piece_with_a_slow_offer(client, conn)
+    segment = segment_of(client, slow)
+    assert segment["id"] == segment_id
+    assert (segment["practice_kind"], segment["practice_kind_basis"]) == ("slow", "offered")
+
+
+def test_an_offer_is_a_question_until_it_is_answered(client, conn) -> None:
+    """The rule the whole feature rests on, over a real offer rather than a planted one."""
+    _slow, segment_id = a_piece_with_a_slow_offer(client, conn)
+
+    offered = client.get("/api/practice/analytics/summary?days=365").json()["kinds"]
+    assert all(entry["kind"] is None for entry in offered), (
+        f"an unanswered offer must not appear as a kind ({offered})"
+    )
+
+    accepted = client.patch(
+        f"/api/practice/segments/{segment_id}/kind", json={"action": "accept"}
+    )
+    assert accepted.status_code == 200, accepted.text
+    segment = next(s for s in accepted.json() if s["id"] == segment_id)
+    assert (segment["practice_kind"], segment["practice_kind_basis"]) == ("slow", "accepted")
+
+    counted = client.get("/api/practice/analytics/summary?days=365").json()["kinds"]
+    assert "slow" in {entry["kind"] for entry in counted}
+
+
+def test_declining_clears_the_offer_so_it_cannot_linger(client, conn) -> None:
+    slow, segment_id = a_piece_with_a_slow_offer(client, conn)
+    declined = client.patch(
+        f"/api/practice/segments/{segment_id}/kind", json={"action": "decline"}
+    )
+    assert declined.status_code == 200, declined.text
+    assert segment_of(client, slow)["practice_kind"] is None
+    assert segment_of(client, slow)["practice_kind_basis"] is None
+
+
+def test_a_practice_kind_is_set_read_and_cleared(client) -> None:
+    sitting = recent_sitting(client, FAST_OFFSETS)
+    segment_id = segment_of(client, sitting)["id"]
+
+    setter = client.patch(
+        f"/api/practice/segments/{segment_id}/kind", json={"action": "set", "kind": "memory"}
+    )
+    assert setter.status_code == 200, setter.text
+    segment = next(s for s in setter.json() if s["id"] == segment_id)
+    assert (segment["practice_kind"], segment["practice_kind_basis"]) == ("memory", "manual")
+
+    assert segment_of(client, sitting)["practice_kind"] == "memory", "and survives a re-read"
+
+    cleared = client.patch(
+        f"/api/practice/segments/{segment_id}/kind", json={"action": "set", "kind": None}
+    )
+    cleared_segment = next(s for s in cleared.json() if s["id"] == segment_id)
+    assert cleared_segment["practice_kind"] is None
+    assert cleared_segment["practice_kind_basis"] is None
+
+
+def test_an_unknown_practice_kind_is_a_422(client) -> None:
+    sitting = recent_sitting(client, FAST_OFFSETS)
+    segment_id = segment_of(client, sitting)["id"]
+    response = client.patch(
+        f"/api/practice/segments/{segment_id}/kind", json={"action": "set", "kind": "banjo"}
+    )
+    assert response.status_code == 422
+
+
+def test_accepting_with_no_offer_is_a_422_and_declining_nothing_is_harmless(client) -> None:
+    sitting = recent_sitting(client, FAST_OFFSETS)
+    segment_id = segment_of(client, sitting)["id"]
+    accepted = client.patch(
+        f"/api/practice/segments/{segment_id}/kind", json={"action": "accept"}
+    )
+    assert accepted.status_code == 422
+    declined = client.patch(
+        f"/api/practice/segments/{segment_id}/kind", json={"action": "decline"}
+    )
+    assert declined.status_code == 200, "a double-click must not 409"
+
+
+def test_setting_a_kind_on_a_missing_segment_is_a_404(client) -> None:
+    response = client.patch(
+        "/api/practice/segments/999999/kind", json={"action": "set", "kind": "slow"}
+    )
+    assert response.status_code == 404
+
+
+def test_the_kind_split_accounts_for_every_segment_minute(client) -> None:
+    """The split is checkable against the rows it claims to summarise.
+
+    Untagged is a bucket rather than an omission, and an unanswered offer lands in it: a
+    split that dropped either would not reconcile with the log, and a number nobody can
+    reconcile is a number nobody can trust.
+    """
+    sitting = recent_sitting(client, [0, 7_000, 14_000, 21_000, 40_000, 47_000, 54_000])
+    detail = client.get(f"/api/practice/sittings/{sitting['sitting_id']}").json()
+    segments = detail["segments"]
+    assert len(segments) == 2, "the fixture must produce two segments to be worth asserting on"
+
+    client.patch(
+        f"/api/practice/segments/{segments[0]['id']}/kind",
+        json={"action": "set", "kind": "slow"},
+    )
+    split = client.get("/api/practice/analytics/summary?days=365").json()["kinds"]
+    split_minutes = sum(entry["minutes"] for entry in split)
+    segment_minutes = round(sum((s["end_ms"] - s["start_ms"]) / 60_000.0 for s in segments), 1)
+    assert abs(split_minutes - segment_minutes) <= 0.2, (
+        f"the kind split must reconcile with the segment minutes ({split} vs {segment_minutes})"
+    )
+    by_kind = {entry["kind"]: entry for entry in split}
+    assert by_kind["slow"]["segments"] == 1
+    assert by_kind[None]["segments"] == 1, "the uncharacterised segment has its own bucket"
+
+
+def test_inference_never_overwrites_a_kind_a_person_chose(client, conn) -> None:
+    """Re-running the offer pass must be safe, which is what makes it automatic.
+
+    The segment is deliberately one an offer *would* be produced for - it is the slow
+    one, and the piece has a baseline - so deleting the guard changes the outcome. A test
+    on a segment no offer would ever fire for would pass with the guard removed.
+    """
+    slow, segment_id = a_piece_with_a_slow_offer(client, conn)
+    client.patch(
+        f"/api/practice/segments/{segment_id}/kind", json={"action": "set", "kind": "memory"}
+    )
+    written = store.offer_practice_kinds(conn, slow["sitting_id"])
+    conn.commit()
+    assert written == 0, "a labelled segment is not a candidate for an offer"
+    segment = segment_of(client, slow)
+    assert (segment["practice_kind"], segment["practice_kind_basis"]) == ("memory", "manual")
+
+
+def test_segmenting_a_second_sitting_does_not_erase_the_first_s_metrics(client) -> None:
+    """A regression guard for a defect that predates Phase 20a.
+
+    `_refresh_metrics` ended with a DELETE whose condition was "not a segment of *this*
+    sitting", which is every other sitting's segment: one practice session silently
+    emptied every earlier session's metrics, and with them the piece tempo trend and the
+    per-segment pedal and touch figures. Found by the 20a offer path, which needs another
+    sitting's `median_tempo` to have survived at all.
+    """
+    first = recent_sitting(client, FAST_OFFSETS)
+    before = segment_of(client, first)["metrics"]
+    assert before is not None and before["median_tempo"] is not None
+
+    recent_sitting(client, FAST_OFFSETS)
+
+    after = segment_of(client, first)["metrics"]
+    assert after is not None, "a second sitting must not erase the first one's metrics"
+    assert after["median_tempo"] == before["median_tempo"]
+    assert after["pedal_changes"] == before["pedal_changes"]

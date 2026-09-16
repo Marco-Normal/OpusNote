@@ -28,6 +28,7 @@ from .models import (
     MergeRequest,
     CaptureReportIn,
     PracticeImportReport,
+    PracticeKindRequest,
     PracticeStatus,
     PiecePracticeDetail,
     ResegmentRequest,
@@ -179,6 +180,18 @@ def resegment(
 @router.patch("/segments/{segment_id}", response_model=list[SegmentSummary])
 def assign_segment(segment_id: int, body: AssignRequest) -> list[SegmentSummary]:
     return _handle(store.assign_piece, segment_id, body.piece_id)
+
+
+@router.patch("/segments/{segment_id}/kind", response_model=list[SegmentSummary])
+def set_segment_kind(segment_id: int, body: PracticeKindRequest) -> list[SegmentSummary]:
+    """Say how a segment was practised, or answer the app's offer about it.
+
+    A route of its own rather than a field on ``PATCH /segments/{id}``. The piece label
+    and the practice kind are different decisions with different rules — one overrules a
+    matcher and records what became of the guess, the other overrules nothing — and a body
+    carrying both would have to explain which of the two a null meant.
+    """
+    return _handle(store.set_practice_kind, segment_id, body.action, body.kind)
 
 
 @router.post("/segments/{segment_id}/split", response_model=list[SegmentSummary])

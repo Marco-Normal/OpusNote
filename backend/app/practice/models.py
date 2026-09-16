@@ -146,6 +146,9 @@ class SegmentSummary(BaseModel):
     workout_id: int | None = None
     confidence: float | None = None
     identified_by: str | None = None
+    practice_kind: PracticeKind | None = None
+    #: 'offered' is a proposal the player has not answered and counts in no aggregate.
+    practice_kind_basis: PracticeKindBasis | None = None
     note_count: int
     metrics: SegmentMetricsOut | None = None
     #: What this segment might be, best first. Present only while it is undecided:
@@ -391,6 +394,33 @@ class SourceSplit(BaseModel):
     notes: int
 
 
+class PracticeKindSplit(BaseModel):
+    """Logged minutes per practice kind, with the uncharacterised as a bucket.
+
+    ``kind`` is None for segments nobody has characterised. That is a real state and not
+    a fault, and it must appear: a split that dropped it could not be reconciled against
+    the segments it claims to summarise. An unanswered offer also lands here — see
+    `store.kinds_breakdown`.
+    """
+
+    kind: str | None = None
+    minutes: float
+    notes: int
+    segments: int
+
+
+class PracticeKindRequest(BaseModel):
+    """Answer the kind question for one segment.
+
+    ``action`` is required rather than inferred from ``kind``, because choosing a kind by
+    hand and accepting the app's offer are different facts about where the value came
+    from — the same distinction ``pedal_basis`` exists to preserve.
+    """
+
+    action: Literal["set", "accept", "decline"]
+    kind: PracticeKind | None = None
+
+
 class AnalyticsSummary(BaseModel):
     days: int
     total_minutes: float
@@ -401,6 +431,7 @@ class AnalyticsSummary(BaseModel):
     by_piece: list[PiecePractice]
     neglected: list[NeglectedPiece]
     sources: list[SourceSplit]
+    kinds: list[PracticeKindSplit] = Field(default_factory=list)
     recent: list[SittingSummary]
     #: Filled from the workout domain at the API layer, so this module stays
     #: ignorant of it: a practice summary counts practice, and workouts are
