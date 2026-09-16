@@ -507,6 +507,17 @@ site to a sleep with a comment saying why — an honest sleep beats a flaky wait
 
 ## Task 9 — A scripted falsification helper
 
+**Landed.** `backend/tools/falsify.sh <break-script> ["<check command>"]` applies a deliberate
+break, runs the check, and requires that the check *fail*; a tree that is dirty before it
+starts is refused, because reverting is `git checkout` and that must not be able to take
+anything else with it. Break scripts live in `backend/tools/falsifications/`, each a small
+asserting edit that fails loudly if the line it targets has moved.
+
+The first one, `drop_pedal_sustain.sh`, does nothing more than make `sustained()` return its
+input — the smallest break that the six pedal assertions in the frontend suite should catch.
+It is the shape every later break takes: one edit, one named check, and a revert that the
+script guarantees.
+
 **Files:** create `backend/tools/falsify.sh`; modify `backend/tools/e2e_browser.py` (one
 assertion in Task 2's verification).
 
