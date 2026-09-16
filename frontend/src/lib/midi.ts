@@ -17,6 +17,7 @@ import {
   type DevicePort,
   type PortSnapshot,
 } from './midiDevice';
+import { PEDAL_DOWN } from './playback';
 
 export interface MidiDeviceInfo {
   id: string;
@@ -526,7 +527,9 @@ export class MidiInput {
       // The exercise path wants one bit, and gets it. The practice log wants the
       // time and the raw value too, because a pedal is only interesting as a
       // stretch of time, and a stream of booleans cannot say when it was pressed.
-      this.sustainHandlers.forEach((handler) => handler(second >= 64));
+      // The threshold is the MIDI spec's, and is shared with the playback side
+      // rather than spelled out again here.
+      this.sustainHandlers.forEach((handler) => handler(second >= PEDAL_DOWN));
       const pedal: MonitorPedal = {
         epochMs: this.epochMsFor(this.eventTimeMs(event)),
         value: second,

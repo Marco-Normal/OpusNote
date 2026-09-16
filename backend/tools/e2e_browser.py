@@ -125,6 +125,40 @@ FAKE_MIDI = """
     noteOffs() {
       return outgoing.filter((m) => (m.data[0] & 0xf0) === 0x80).map((m) => m.data[1]);
     },
+    // A stream the piano cannot render as two notes: a second note-on for a pitch
+    // before the previous note-off for it. MIDI carries one note-off per pitch, so
+    // the earlier release silences the later note — which is what a pedal-extended
+    // note used to do to the key struck again underneath it.
+    //
+    // Ties are broken by submission order, and `sort` is stable, so a note-off
+    // submitted before a note-on scheduled for the same instant counts as ordered.
+    // That is the order a re-trigger needs, and it is the only place that order is
+    // observable from outside the player.
+    samePitchOverlaps() {
+      const byPitch = new Map();
+      outgoing.forEach((m, index) => {
+        if (m.timestamp === null) return;
+        const status = m.data[0] & 0xf0;
+        if (status !== 0x90 && status !== 0x80) return;
+        const list = byPitch.get(m.data[1]) ?? [];
+        list.push({ on: status === 0x90 && m.data[2] > 0, at: m.timestamp, index });
+        byPitch.set(m.data[1], list);
+      });
+      let overlaps = 0;
+      for (const list of byPitch.values()) {
+        list.sort((a, b) => a.at - b.at || a.index - b.index);
+        let sounding = false;
+        for (const m of list) {
+          if (m.on) {
+            if (sounding) overlaps += 1;
+            sounding = true;
+          } else {
+            sounding = false;
+          }
+        }
+      }
+      return overlaps;
+    },
     allNotesOff() {
       return outgoing.filter((m) => (m.data[0] & 0xf0) === 0xb0 && (m.data[1] === 123 || m.data[1] === 120)).length;
     },
@@ -2184,11 +2218,56 @@ def held_note_sitting(*, minutes_ago: int = 150) -> int:
     return api("/api/practice/events", "POST", payload)["sitting_id"]
 
 
+def pedal_restrike_sitting(*, minutes_ago: int = 210) -> int:
+    """A key struck again while the pedal is still holding its earlier strike.
+
+    The owner's report, from their own Brahms session: a note released under the pedal
+    is extended to the pedal-up, that extension carries it past a re-strike of the same
+    key, and the stale note-off then silenced a note the hand was still holding — at
+    the exact moment the pedal came up.
+
+    Concretely, at 79: released at 800 ms, pedal up at 2000 ms, so playback sustains
+    the first strike to 2000 ms; the second strike lands at 1200 ms and is held to
+    5200 ms. Without the fix the first strike's note-off is scheduled at 2000 ms, which
+    is 3200 ms before the second strike's own release, and MIDI has only one note-off
+    per pitch — so the held note dies.
+
+    Pitch 79 on purpose: no other sitting in this suite plays it, so a stale notes
+    cache cannot satisfy the assertion by accident.
+    """
+    import time
+
+    base = int(time.time() * 1000) - minutes_ago * 60_000
+    payload = {
+        "tz_offset_minutes": -180,
+        "source": "web_midi",
+        "events": [
+            {"epoch_ms": base, "pitch": 79, "velocity": 80, "duration_ms": 800, "channel": 0},
+            {
+                "epoch_ms": base + 1_200,
+                "pitch": 79,
+                "velocity": 80,
+                "duration_ms": 4_000,
+                "channel": 0,
+            },
+        ],
+        "pedals": [
+            {"epoch_ms": base, "value": 127, "channel": 0},
+            {"epoch_ms": base + 2_000, "value": 0, "channel": 0},
+        ],
+    }
+    return api("/api/practice/events", "POST", payload)["sitting_id"]
+
+
 def scenario_playback(browser) -> None:
     print("\n[12] Playback: through the piano, and into it")
     clear_practice()
     sitting_id = seed_closed_sitting(minutes_ago=90)
     held_id = held_note_sitting()
+    # Seeded before the page exists, like the other two: the Log view reads the
+    # sitting list when it mounts, so a sitting created afterwards is not in the DOM
+    # to be clicked until the 20 s poll happens to run.
+    restrike_id = pedal_restrike_sitting()
     notes = api(f"/api/practice/sittings/{sitting_id}/notes")["notes"]
     check(len(notes) >= 3, f"the sitting has notes to play ({len(notes)})")
 
@@ -2416,6 +2495,36 @@ def scenario_playback(browser) -> None:
         page.input_value('input[aria-label="Split point as seconds or m:ss"]') == "0:01",
         "and a typed clock is accepted",
     )
+
+    # --- a re-struck key is not silenced by the pedal extension ---
+    # The owner's report: holding a note and clearing the pedal, it rings on in real
+    # life but died in playback. The pedal sustains the first strike to the pedal-up,
+    # which carries it past a re-strike of the same key, and MIDI has one note-off per
+    # pitch — so the earlier release killed the note the hand was still holding. This
+    # is the wiring half: the unit tests own `resolveOverlaps` itself, and this is what
+    # proves the player actually applies it and orders the clamped release first.
+    with page.expect_response(lambda r: r.url.endswith(f"/api/practice/sittings/{restrike_id}")):
+        page.click(f'[data-sitting="{restrike_id}"]')
+    page.wait_for_selector("[data-strip]", timeout=20_000)
+    page.evaluate("() => window.__fakeMidi.forget()")
+    with page.expect_response(
+        lambda r: r.url.endswith(f"/api/practice/sittings/{restrike_id}/notes")
+    ):
+        click_button(page, "Play the sitting")
+    page.wait_for_timeout(1_800)
+    strikes = page.evaluate("() => window.__fakeMidi.noteOns().filter((n) => n.pitch === 79)")
+    check(
+        len(strikes) == 2,
+        f"a key struck again under the pedal reaches the piano twice ({len(strikes)})",
+    )
+    overlaps = page.evaluate("() => window.__fakeMidi.samePitchOverlaps()")
+    check(
+        overlaps == 0,
+        f"and the first strike releases before the second sounds, so the note the hand "
+        f"is holding is not cut at the pedal-up ({overlaps} overlapping pairs)",
+    )
+    click_button(page, "Stop")
+    page.wait_for_timeout(300)
 
     check(not errors, f"no console errors ({errors})")
     page.close()

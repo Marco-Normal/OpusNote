@@ -176,13 +176,25 @@ export function fromTime(notes: readonly SynthNote[], seconds: number): SynthNot
   return out;
 }
 
-/** A pedal move as stored: CC64, where 64 and above is "down". */
+/** A pedal move as stored: CC64, where `PEDAL_DOWN` and above is "down". */
 export interface PedalPoint {
   onset_ms: number;
   value: number;
 }
 
-const PEDAL_DOWN = 64;
+/**
+ * Where a sustain-pedal value counts as "down".
+ *
+ * The MIDI specification's own rule for a switch controller: 0-63 is off, 64-127 is
+ * on. That is what makes an ordinary on/off pedal work, and it is the reading a
+ * continuous pedal gets too — the PX-870 has one, and its full-resolution values are
+ * stored in the log, but half-pedalling therefore reads as released.
+ *
+ * It is exported because two layers have to give the same answer: `midi.ts` when it
+ * decodes CC64 off the wire, and this module when it reads stored pedal moves back.
+ * It was written out in both places before, which is how one rule becomes two.
+ */
+export const PEDAL_DOWN = 64;
 
 /**
  * How much longer a note rings when the pedal is still down at the end of the
@@ -239,4 +251,45 @@ export function sustained(
     }
     return note;
   });
+}
+
+/**
+ * End a note where the same key is struck again.
+ *
+ * MIDI carries one note-off per pitch, so two notes of the same pitch cannot overlap
+ * in the stream: the earlier note's release stops the pitch, and the later note dies
+ * with it however much longer it was held. `sustained()` is what makes that common —
+ * extending a released note to the pedal-up routinely carries it past a re-strike of
+ * the same key, so the note a hand is *still holding* goes silent at the moment the
+ * pedal comes up. Measured on real sessions, that was 1,747 notes, and the worst lost
+ * 14.5 seconds of a held note after 27 ms.
+ *
+ * A re-struck string replaces the previous vibration, so ending the earlier note at
+ * the later onset is what the instrument does, not a workaround for it. Two notes at
+ * one instant on one key are the same strike and collapse to the longer.
+ *
+ * The result is in onset order and free of same-pitch overlaps, so a caller that
+ * schedules it sequentially emits each clamped note-off before the note-on that
+ * follows it — which is the order a re-trigger needs.
+ */
+export function resolveOverlaps(notes: readonly SynthNote[]): SynthNote[] {
+  const ordered = [...notes].sort(
+    (a, b) => a.onset - b.onset || a.duration - b.duration || a.pitch - b.pitch,
+  );
+  const out: SynthNote[] = [];
+  const previousOf = new Map<number, number>();
+  for (const note of ordered) {
+    const previous = previousOf.get(note.pitch);
+    if (previous !== undefined) {
+      const earlier = out[previous];
+      if (earlier.onset + earlier.duration > note.onset) {
+        out[previous] = { ...earlier, duration: note.onset - earlier.onset };
+      }
+    }
+    previousOf.set(note.pitch, out.length);
+    out.push(note);
+  }
+  // A note clamped to nothing is one that cannot sound, and leaving it would only
+  // re-attack a pitch already sounding at that instant.
+  return out.filter((note) => note.duration > 0);
 }

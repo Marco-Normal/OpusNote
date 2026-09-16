@@ -2,10 +2,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  PEDAL_DOWN,
   durationOf,
   forHands,
   loggedEvents,
   playedEvents,
+  resolveOverlaps,
   sounding,
   sustained,
   within,
@@ -225,4 +227,72 @@ test('no pedalling leaves the notes exactly as they were', () => {
   const after = sustained(before, []);
   assert.deepEqual(after, before);
   assert.notEqual(after, before, 'and hands back a copy rather than the array it was given');
+});
+
+test('the pedal-down threshold is the specification rule, written once', () => {
+  // 0-63 is off and 64-127 is on. A continuous pedal is stored at full resolution,
+  // but every consumer has to answer this one question, so it is answered here and
+  // imported by both — the value used to be spelled out twice, in two files.
+  assert.equal(PEDAL_DOWN, 64);
+  const half = sustained(oneNote(), [pedalAt(0, PEDAL_DOWN - 1), pedalAt(2000, 0)]);
+  assert.equal(half[0].duration, 0.5, 'a half-depressed pedal reads as released');
+  const down = sustained(oneNote(), [pedalAt(0, PEDAL_DOWN), pedalAt(2000, 0)]);
+  assert.equal(down[0].duration, 2, 'and at the threshold it is down');
+});
+
+// --------------------------------------------------------------------------
+// A re-struck key, and the note-off that used to silence it
+// --------------------------------------------------------------------------
+
+const held = (pitch: number, onset: number, duration: number) => ({
+  pitch,
+  onset,
+  duration,
+  velocity: 0.6,
+  hand: null,
+});
+
+test('a note ends where the same key is struck again', () => {
+  const notes = resolveOverlaps([held(60, 0, 2), held(60, 1, 3)]);
+  assert.equal(notes[0].duration, 1, 'MIDI has one note-off per pitch, so it cannot overlap');
+  assert.equal(notes[1].duration, 3, 'the re-struck note keeps its own length');
+});
+
+test('notes that never overlap are left exactly as they were', () => {
+  const before = [held(60, 0, 0.5), held(60, 1, 0.5)];
+  assert.deepEqual(resolveOverlaps(before), before);
+});
+
+test('different pitches may overlap freely', () => {
+  const before = [held(60, 0, 2), held(64, 0.5, 2)];
+  assert.deepEqual(resolveOverlaps(before), before);
+});
+
+test('the result is in onset order, so a clamped note-off is sent first', () => {
+  const notes = resolveOverlaps([held(60, 1, 1), held(60, 0, 1.5)]);
+  assert.deepEqual(
+    notes.map((note) => note.onset),
+    [0, 1],
+    'the player pumps the queue in order, so the earlier note is scheduled first',
+  );
+});
+
+test('two notes at one instant on one key collapse to the longer', () => {
+  const notes = resolveOverlaps([held(60, 0, 0.2), held(60, 0, 0.9)]);
+  assert.equal(notes.length, 1, 'a zero-length note is not something that can sound');
+  assert.equal(notes[0].duration, 0.9);
+});
+
+test('a pedal-held note no longer silences the key struck again under it', () => {
+  // The owner's report, measured on their own Brahms session. Sustaining the first
+  // note to the pedal-up carries it past a re-strike of the same key, and the stale
+  // note-off then killed the second note at the instant the pedal came up — a note
+  // the hand was still holding. Both halves are needed: the pedal creates the
+  // overlap, and this removes it.
+  const sounding = sustained([held(60, 0, 1), held(60, 1.5, 7)], [pedalAt(0, 127), pedalAt(3000, 0)]);
+  assert.equal(sounding[0].duration, 3, 'the pedal carries the first note to the pedal-up');
+
+  const scheduled = resolveOverlaps(sounding);
+  assert.equal(scheduled[0].duration, 1.5, 'and it stops where the key was struck again');
+  assert.equal(scheduled[1].duration, 7, 'the held note keeps every millisecond it was held');
 });

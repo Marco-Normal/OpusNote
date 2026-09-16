@@ -27,7 +27,7 @@
 
 import * as Tone from 'tone';
 
-import { fromTime, type SynthNote } from './playback';
+import { fromTime, resolveOverlaps, type SynthNote } from './playback';
 import { sampleUrls } from './pianoSamples';
 
 export type Instrument = 'midi' | 'piano' | 'synth';
@@ -234,7 +234,13 @@ export class PianoPlayer {
     const offset = Math.max(0, options.from ?? 0);
     const total = notes.reduce((end, note) => Math.max(end, note.onset + note.duration), 0);
     const end = Math.min(options.until ?? Infinity, total);
-    const material = fromTime(notes, offset).filter((note) => note.onset + offset < end);
+    // Normalised once, for every instrument and every caller. MIDI carries one
+    // note-off per pitch, so a note the pedal carried past a re-strike of the same
+    // key would otherwise have its release silence the note the hand is still
+    // holding. A sampler has the same problem for the same reason.
+    const material = resolveOverlaps(
+      fromTime(notes, offset).filter((note) => note.onset + offset < end),
+    );
 
     this.offset = offset;
     this.total = total;
