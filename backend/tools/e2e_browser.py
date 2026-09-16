@@ -1777,6 +1777,110 @@ def clear_practice() -> None:
         conn.close()
 
 
+#: Every table holding practice or library *data*, checked against `sqlite_master`.
+#:
+#: The reference tables are deliberately absent. `users` and `skills` are seeded once by
+#: `init_workspace` at startup, not per scenario, and `user_skills` links them — deleting any
+#: of the three would break every scenario that followed rather than isolating it. A reset
+#: removes data; it does not re-create the world.
+DATA_TABLES = (
+    "composers",
+    "pieces",
+    "piece_journal",
+    "media",
+    "sittings",
+    "note_events",
+    "pedal_events",
+    "segments",
+    "segment_metrics",
+    "identification_outcomes",
+    "workouts",
+    "performances",
+    "rating_events",
+    "exercises",
+    "exercise_skills",
+)
+
+#: Tables that must survive between scenarios, named so the check above can tell "deliberately
+#: kept" apart from "forgotten". Seeded once by `init_workspace`, and `user_skills` links them.
+REFERENCE_TABLES = frozenset({"users", "skills", "user_skills"})
+
+
+def reset_all() -> None:
+    """A known starting state for one scenario.
+
+    The `clear_*` helpers above exist for narrower setup *inside* a scenario. This is the
+    one `main()` calls *between* them, and until it existed the database was reset once per
+    process and only for performances and rating values — so a scenario inherited whatever
+    the previous one left behind. That is what made `ONLY=<name>` meaningless, and what made
+    `scenario_practice_log` and `scenario_autotag` depend on `scenario_repertoire` having run
+    first: a scenario that cannot run alone cannot verify a slice.
+
+    The table list is explicit rather than derived from `sqlite_master`, which is the
+    opposite of the choice `backup.export_document` makes. A backup must not forget a table;
+    a reset must not silently clear one that a later phase added without anyone deciding it
+    should be cleared — so the list is checked against the schema and a new table is a loud
+    failure rather than a quiet one.
+    """
+    conn = sqlite3.connect(os.environ.get("SRT_DB_PATH", str(DEFAULT_DB)), timeout=15)
+    try:
+        present = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+                " AND name NOT LIKE 'sqlite_%'"
+            )
+        }
+        uncovered = present - set(DATA_TABLES) - REFERENCE_TABLES
+        if uncovered:
+            raise AssertionError(
+                f"reset_all does not cover {sorted(uncovered)}; add it to DATA_TABLES, or to"
+                " REFERENCE_TABLES with a reason if it must survive between scenarios"
+            )
+        for table in DATA_TABLES:
+            conn.execute(f"DELETE FROM {table}")
+        # Ratings are reset in place rather than deleted: the rows *are* the learner's skill
+        # list, and a scenario that needs a fresh learner wants the numbers cleared, not the
+        # skills removed.
+        conn.execute(
+            "UPDATE user_skills SET elo_rating = 600, attempts = 0, last_practiced_at = NULL"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def seed_library(count: int = 4) -> list[dict]:
+    """A small library, created through the API.
+
+    Scenarios that tag a segment need pieces to tag with, and they used to inherit whatever
+    `scenario_repertoire` had left behind. This makes the same setup explicit, so a scenario
+    that needs a library asks for one instead of depending on the run order.
+    """
+    wanted = [
+        ("Intermezzo", "Brahms"),
+        ("Ballade", "Brahms"),
+        ("Nocturne", "Chopin"),
+        ("Impromptu", "Schubert"),
+        ("Traumerei", "Schumann"),
+    ][:count]
+    composers = {row["name"]: row["id"] for row in api("/api/repertoire/composers")}
+    created = []
+    for title, composer in wanted:
+        if composer not in composers:
+            composers[composer] = api(
+                "/api/repertoire/composers", "POST", {"name": composer}
+            )["id"]
+        created.append(
+            api(
+                "/api/repertoire/pieces",
+                "POST",
+                {"title": title, "composer_id": composers[composer], "key": "A"},
+            )
+        )
+    return created
+
+
 def seed_closed_sitting(*, minutes_ago: int = 60) -> int:
     """A sitting that is already closed, so its segments exist to be edited.
 
@@ -1813,6 +1917,10 @@ def scenario_practice_log(browser) -> None:
     print("\n[8] Practice log: passive capture, a workout, and the segment timeline")
     clear_practice()
     seeded = seed_closed_sitting()
+    # A library to tag with. This scenario used to inherit one from `scenario_repertoire`,
+    # which is why it could not be run on its own.
+    if not api("/api/repertoire/pieces"):
+        seed_library(4)
     pieces = api("/api/repertoire/pieces")
     check(len(pieces) > 0, f"the library has pieces to tag with ({len(pieces)})")
     target = next((piece for piece in pieces if piece["status"] != "completed"), pieces[0])
@@ -2593,6 +2701,10 @@ def scenario_playback(browser) -> None:
 def scenario_autotag(browser) -> None:
     print("\n[11] Recognising what you played: measured, offered, and correctable")
     clear_practice()
+    # Three pieces that sound nothing like each other are the precondition, and they used to
+    # arrive from `scenario_repertoire` having run first.
+    if len(api("/api/repertoire/pieces")) < 3:
+        seed_library(3)
     pieces = api("/api/repertoire/pieces")
     check(len(pieces) >= 3, f"the library has pieces to tag with ({len(pieces)})")
     first, second, third = pieces[0], pieces[1], pieces[2]
@@ -2800,6 +2912,13 @@ def scenario_autotag(browser) -> None:
 def scenario_lan_viewer(browser) -> None:
     print("\n[10] Viewing from another machine: what this page says it cannot do")
 
+    # The Delete control below only exists on a piece, so this scenario needs a library —
+    # and it used to inherit one from `scenario_repertoire` having run. That made three
+    # scenarios order-dependent rather than the two the plan predicted; per-scenario
+    # isolation is what surfaced the third.
+    if not api("/api/repertoire/pieces"):
+        seed_library(2)
+
     # The suite runs on loopback, so the server's own view is stubbed to what a main
     # computer would get. The rule itself is tested against the real helper in the
     # backend suite; this scenario is about the interface telling the truth.
@@ -2895,9 +3014,10 @@ def main() -> int:
     SHOTS.mkdir(parents=True, exist_ok=True)
     health = api("/api/health")
     print(f"API health: {health}")
-    # Start from a clean profile so step and score assertions are deterministic.
-    api("/api/profile/reset", method="POST")
-    print("Profile reset for a repeatable run.")
+    # The first scenario's clean state comes from the same call the loop uses, rather than
+    # from a separate profile reset that cleared two tables out of eighteen.
+    reset_all()
+    print("Starting state reset.")
 
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(
@@ -2930,6 +3050,10 @@ def main() -> int:
                 # (no argument) is still what verifies a slice.
                 if ONLY and ONLY not in scenario.__name__:
                     continue
+                # Between scenarios, not once per process. A scenario that inherits the
+                # previous one's library, sittings or ratings is not being verified — and
+                # one that cannot run alone cannot verify a slice either.
+                reset_all()
                 scenario(browser)
         finally:
             browser.close()

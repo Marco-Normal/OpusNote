@@ -161,6 +161,33 @@ budget.
 
 ## Task 2 — Per-scenario database isolation
 
+**Landed.** All twelve scenarios pass in sequence *and* individually, and the `ONLY` filter
+means something: `run_e2e.sh <name>` now verifies that scenario.
+
+`reset_all()` is called from `main()`'s loop. Its table list is explicit and is checked
+against `sqlite_master` on every run, so a table added in a later phase fails loudly rather
+than carrying state between scenarios; `REFERENCE_TABLES` names the three seeded tables that
+must survive, which is what keeps "deliberately kept" distinguishable from "forgotten".
+
+**Three scenarios depended on the library `scenario_repertoire` created, not two.**
+`lan_viewer` was the third, and the plan did not know about it — it only appeared once
+isolation removed the state it had been quietly inheriting. All three now call
+`seed_library()`. That is the clearest evidence for this slice's premise: the coupling was
+invisible for as long as everything shared one database.
+
+**The isolation work also reproduced the concurrency defect the audit predicted.** On the
+first solo pass, `two_hands` failed with `sqlite3.OperationalError: database is locked`,
+surfacing as a 500 on `POST /api/practice/events` — the same symptom seen once during Phase
+19 on an accumulated log and unexplained since. Three immediate reruns passed, so it is a
+race rather than a state: `store.ingest` reads to find a sitting and then writes, and a
+concurrent writer invalidates the WAL snapshot, which fails as `SQLITE_BUSY_SNAPSHOT` — the
+one busy condition `busy_timeout` does not retry.
+
+**Not fixed here, deliberately.** It is a production change and this slice is scoped to the
+harness; the drift rule in this plan's Execution Readiness View says to stop rather than
+widen. It belongs to Slice 5, and it now has a reproduction instead of a memory.
+
+
 **Files:** modify `backend/tools/e2e_browser.py` (`main`, the three `clear_*` helpers).
 **Why:** this is the structural repair. Nine order dependencies, the `ONLY` filter being
 meaningless, and a green filtered run proving nothing all come from one shared database

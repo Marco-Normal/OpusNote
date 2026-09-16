@@ -154,8 +154,14 @@ reads and then upgrades to a write can fail with `SQLITE_BUSY_SNAPSHOT` — **wh
 claims to protect. There is no concurrency test of any kind; the only locking-adjacent test
 asserts PRAGMA *values*.
 
-This is not hypothetical: a `sqlite3.OperationalError: database is locked` appeared during
-Phase 19 on an accumulated log and has not been reproduced or explained since.
+**Reproduced, 2026-09-16.** Running one browser scenario on its own — which per-scenario
+isolation made possible for the first time — produced exactly this: `two_hands` failed with
+`sqlite3.OperationalError: database is locked` surfacing as a 500 on
+`POST /api/practice/events`. Three immediate reruns passed, so it is a race rather than a
+state, and it is the same symptom seen once during Phase 19 on an accumulated log. The
+mechanism is now confirmed rather than inferred: `store.ingest` reads to find a sitting and
+then writes, and a concurrent writer invalidates the WAL snapshot. Slice 5 has a
+reproduction to work from.
 
 ---
 
