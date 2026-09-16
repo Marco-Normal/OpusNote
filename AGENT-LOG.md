@@ -1353,3 +1353,36 @@ changes, and the practice log still means CC64 by `pedal_events`.
 
 Still to plan: 20c (undo, grace-day streak, weekly target), 20d (journal and library depth) and
 20e (audio takes).
+
+## 2026-09-16 — sight-reading agent — Phase 20c planned (log trust and habit)
+
+Scope: `docs/PLAN-PHASE20C.md` (new), `AGENT-LOG.md`.
+
+Did: wrote the executable plan for Phase 20c in five tasks — a pure `segmentUndo.ts` that derives
+the inverse of an edit by *diffing the segment rows*, the Undo control in `PracticeLogView`, the
+grace-day streak, the weekly target, then the browser assertion and docs.
+
+Two things the planning found, both recorded in the plan rather than discovered during execution:
+
+1. **The naive grace-day streak reports one day too many for everybody.** Forgiving the first miss
+   you meet extends *every* run by one, because a gap at the end of a run is just the end of the
+   run. The rule needs a look-ahead: a rest day is only forgiven when it joins two stretches of
+   practice. The plan's code has it and `test_an_unbroken_week_is_unchanged_by_the_grace_rule` is
+   the assertion that pins it.
+2. **The undo inverse cannot be remembered from the button that was pressed — it has to be derived.**
+   `split` keeps the left half in the original row and inserts a new one; `merge` keeps the
+   lower-start row and deletes the other. Diffing the two lists gives the inverse for all three
+   reversible edits with one function, and returns null for `resegment` (many rows changed) and for
+   answering the matcher — which is exactly what keeps the Undo control off the screen when there
+   is nothing to reverse.
+
+The plan also states the one thing undo cannot restore: a merge nulls the absorbed segment's
+`identification_outcomes.segment_id` (`ON DELETE SET NULL`), so the segments and labels come back
+and the matcher's record of one of them does not. The control therefore says "Undo merge" and
+claims nothing more.
+
+Impact on the other side: planning only. 20c adds one additive summary field
+(`streak_grace_used`), no schema change, no new table — the undo stack is one component field and
+dies with the page, which is decision 20-D3 as written.
+
+Still to plan: 20d (journal and library depth) and 20e (audio takes).
