@@ -1577,9 +1577,12 @@ sharing."*
 
 **Schema and migration.** 20a adds two `segments` columns; 20d adds four `piece_journal`
 columns (`tags`, `difficulty`, `fluency`, `media_id`) and the `piece_passages` table; 20e adds
-three `media` columns. Each slice that touches the schema bumps `SCHEMA_VERSION` and adds its
-`ADDED_COLUMNS`/`CREATE TABLE` entries through the Slice 1 mechanisms, and `piece_passages`
-must join the exported table list so a backup round trip still covers every domain.
+three `media` columns. Each slice that touches the schema bumps `SCHEMA_VERSION` and declares its
+new columns in both the owning `CREATE` and `ADDED_COLUMNS`, through the Slice 1 mechanisms. A
+brand-new *table* needs no `ADDED_COLUMNS` entry — `CREATE TABLE IF NOT EXISTS` runs on every
+`init_db` — and needs no backup edit either, because `backup.table_names` reads `sqlite_master`
+rather than a written-down list. (20a's plan said the opposite about `piece_passages`; corrected
+when 20d was planned.)
 
 **ADR signal.** 20-D3 (undo without a persisted record), 20-D5 (binding behaviour to a
 controller message the app discovers) and 20e's audio-capture permission are durable

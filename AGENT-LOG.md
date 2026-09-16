@@ -1386,3 +1386,42 @@ Impact on the other side: planning only. 20c adds one additive summary field
 dies with the page, which is decision 20-D3 as written.
 
 Still to plan: 20d (journal and library depth) and 20e (audio takes).
+
+## 2026-09-16 — sight-reading agent — Phase 20d planned (journal and library depth)
+
+Scope: `docs/PLAN-PHASE20D.md` (new), `docs/ECOSYSTEM.md`, `AGENT-LOG.md`.
+
+Did: wrote the executable plan for Phase 20d in seven tasks — the four `piece_journal` columns and
+the `piece_passages` table, the `neglected()` defect fix, journal tags and two ratings with a take
+link, focus passages, the practice read the sorts need, the library and journal UI, then the browser
+assertions and docs.
+
+Three findings from planning it, all recorded in the plan:
+
+1. **A new table is a loud failure in the browser tier until it is named.** `e2e_browser.reset_all`
+   checks every table in `sqlite_master` against an *explicit* `DATA_TABLES` list, on purpose ("a
+   backup must not forget a table; a reset must not silently clear one that a later phase added
+   without anyone deciding it should be cleared"). So `piece_passages` must be added to
+   `DATA_TABLES` in the schema task, or `--fast` stays green while `--full` fails for a reason that
+   has nothing to do with the feature.
+2. **A new table needs no backup edit, and the spec said otherwise.** `backup.table_names` reads
+   `sqlite_master`, so `piece_passages` is exported and imported with no `backup.py` change and no
+   `BACKUP_VERSION` bump. `ECOSYSTEM.md` § Phase 20 claimed it "must join the exported table list";
+   corrected here, and 20a's plan never carried the claim.
+3. **`by_piece` inner-joins `segments`, so a piece with no practice in the window has no row at
+   all** rather than a zero. The library's "least time invested" and "last played" sorts therefore
+   read absence as *never played, zero minutes* — which is the strongest form of both answers, and
+   the same distinction `neglected()` already draws. The plan states the rule rather than leaving the
+   client to guess it.
+
+The plan also keeps 20-D7 honest in a way the design section only implied: seeding a passage from a
+recording's A/B loop records *which loop it came from* (`source='loop'`, `media_id` set) while the
+bar numbers stay the player's, because converting seconds to bars would need the score alignment
+that decision refuses.
+
+Impact on the other side: planning only, plus the one-paragraph correction to `ECOSYSTEM.md`'s schema
+note. 20d adds four additive `piece_journal` columns, one table, three repertoire routes, one
+practice read and five additive response fields; `SCHEMA_VERSION` goes 2 -> 3 and `BACKUP_VERSION` is
+untouched.
+
+Still to plan: 20e (audio takes) — the last one.
