@@ -7,9 +7,12 @@ is tested rather than the endpoint.
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 
-from app import backup
+import pytest
+
+from app import backup, db
 from app.practice import store as practice_store
 from app.practice.models import EventBatch, WireNote, WirePedal
 
@@ -291,3 +294,137 @@ def test_the_cli_writes_a_backup(tmp_path, fresh_db, capsys) -> None:
     printed = capsys.readouterr().out.strip()
     assert printed.endswith(".json")
     assert Path(printed).exists()
+
+
+# --------------------------------------------------------------------------
+# Shape compatibility, and interrupted work
+# --------------------------------------------------------------------------
+
+
+def test_a_v1_document_in_the_old_shape_still_imports(client) -> None:
+    """The guarantee is one-directional: fewer columns is fine, unknown ones refused.
+
+    A document written before `segment_metrics` gained its pedal and touch columns has
+    seven columns there, no `piece_journal.sitting_id`, no loop points and no
+    `legacy_id`. `_insert` intersects each row with the live columns, so it must land —
+    and the columns the document did not carry must stay NULL rather than be invented.
+    `BACKUP_VERSION` is deliberately *not* bumped for this: the version refuses a
+    *newer* document, it does not certify an older one column-for-column.
+    """
+    document = {
+        "format": backup.FORMAT,
+        "version": backup.BACKUP_VERSION,
+        "tables": {
+            "composers": [{"id": 1, "name": "Chopin", "notes": "Romantic"}],
+            "pieces": [
+                {
+                    "id": 1,
+                    "composer_id": 1,
+                    "title": "Nocturne",
+                    "opus": "Op. 9 No. 2",
+                    "difficulty": "Late Intermediate",
+                    "key": "E-flat Major",
+                    "status": "active",
+                    "description": None,
+                }
+            ],
+            "sittings": [
+                {
+                    "id": 1,
+                    "started_ms": BASE_MS,
+                    "ended_ms": BASE_MS + 20_000,
+                    "started_at": "2026-01-05 10:00:00",
+                    "ended_at": "2026-01-05 10:00:20",
+                    "local_date": "2026-01-05",
+                    "source": "web_midi",
+                }
+            ],
+            "segments": [
+                {
+                    "id": 1,
+                    "sitting_id": 1,
+                    "start_ms": 0,
+                    "end_ms": 20_000,
+                    "piece_id": 1,
+                    "confidence": 1.0,
+                    "identified_by": "manual",
+                }
+            ],
+            "segment_metrics": [
+                {
+                    "segment_id": 1,
+                    "duration_s": 20.0,
+                    "note_count": 3,
+                    "median_tempo": 100.0,
+                    "mean_velocity": 70.0,
+                    "velocity_stddev": 2.5,
+                    "restarts": 0,
+                }
+            ],
+            "piece_journal": [
+                {
+                    "id": 1,
+                    "piece_id": 1,
+                    "entry_date": "2026-01-05",
+                    "content": "From a v1 backup.",
+                    "practice_minutes": 10,
+                }
+            ],
+        },
+    }
+
+    result = client.post("/api/backup/import", json={"document": document}).json()
+    assert result["mode"] == "merge"
+    assert result["total"] == 6
+    assert result["written"]["segment_metrics"] == 1
+    assert result["counts"]["segment_metrics"] == 1
+
+    conn = db.connect()
+    try:
+        metrics = dict(
+            conn.execute("SELECT * FROM segment_metrics WHERE segment_id = 1").fetchone()
+        )
+        assert metrics["duration_s"] == 20.0, "the column it did carry survived"
+        assert metrics["pedal_changes"] is None
+        assert metrics["median_velocity"] is None
+
+        journal = dict(conn.execute("SELECT * FROM piece_journal WHERE id = 1").fetchone())
+        assert journal["content"] == "From a v1 backup."
+        assert journal["sitting_id"] is None
+        assert journal["legacy_id"] is None
+    finally:
+        conn.close()
+
+
+def test_an_import_that_fails_mid_insert_changes_nothing(client) -> None:
+    """The first execution of `db.transaction`'s ROLLBACK in the suite.
+
+    The document passes validation — every column is known — and then violates a NOT
+    NULL while inserting. In replace mode every row has already been deleted by then, so
+    a missing rollback would leave an empty database behind. The error is not caught:
+    an import that half-happened must surface, not be swallowed into a smaller count.
+    """
+    _populate(client)
+    before = client.get("/api/backup/export").json()["counts"]
+
+    document = {
+        "format": backup.FORMAT,
+        "version": backup.BACKUP_VERSION,
+        "tables": {
+            # Written first, so it is a row that only survived because of the rollback.
+            "composers": [{"id": 99, "name": "Ravel", "notes": None}],
+            # `pieces.title` is NOT NULL and has no default, so this INSERT fails.
+            "pieces": [{"id": 99, "opus": "Op. 99"}],
+        },
+    }
+    with pytest.raises(sqlite3.IntegrityError):
+        client.post(
+            "/api/backup/import",
+            json={"document": document, "mode": "replace", "confirm": True},
+        )
+
+    after = client.get("/api/backup/export").json()["counts"]
+    assert after == before, "the failed import rolled back every delete and insert"
+    assert after["pieces"] == 1
+    assert after["composers"] == 1
+

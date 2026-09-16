@@ -159,7 +159,10 @@ ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("sittings", "legacy_id", "INTEGER"),
     ("sittings", "closed_ms", "INTEGER"),
     ("segments", "source", "TEXT"),
-    ("segments", "workout_id", "INTEGER"),
+    # D1: the CREATE at :118 declares this ON DELETE SET NULL; an ALTER that omits the
+    # reference leaves upgraded databases with a dangling `workout_id` when a workout is
+    # deleted. SQLite accepts REFERENCES on ADD COLUMN because the default is NULL.
+    ("segments", "workout_id", "INTEGER REFERENCES workouts(id) ON DELETE SET NULL"),
     # Phase 18b — the measurements the app already had the data for.
     ("segment_metrics", "pedal_changes", "INTEGER"),
     ("segment_metrics", "pedal_down_ratio", "REAL"),

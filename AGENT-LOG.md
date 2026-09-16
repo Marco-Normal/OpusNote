@@ -1119,3 +1119,119 @@ and strengthening it made the scenario fail against working code.
 Impact on the other side: none. No app behaviour changed except one docstring and one test
 fixture. `pytest.ini` gained `--strict-markers --strict-config --timeout=120`, which no
 existing test violates.
+
+## 2026-09-16 — sight-reading agent — Slice 1 of the test strategy: the migration path finally runs, and the schema says which version it is
+
+Scope: `backend/app/{db.py,main.py,practice/schema.py}`,
+`backend/tests/{fixtures/pre_phase18_practice.sql,test_migration_upgrade.py,test_json_load.py,test_backup.py,test_repertoire.py}`,
+`backend/tools/falsifications/`, `docs/{TEST-STRATEGY.md,PLAN-SLICE1.md}`, `AGENT-LOG.md`.
+
+Did: made the one code path that runs on the player's real database observable in the tier
+that runs after every edit, and fixed the defect the recon found in it.
+
+- **A frozen pre-Phase-18 database now lives in the repository**, as SQL: the four CREATE
+  scripts minus exactly the `ADDED_COLUMNS` columns, with the old `NOT NULL ... ON DELETE
+  CASCADE` outcome reference, no `sitting_id`, no `performances.workout_id`, and one row per
+  table. Before this slice nothing in the suite fabricated an old-shape practice database, so
+  `migrate_practice`'s twelve ALTERs had never executed anywhere.
+- **The upgrade test asserts the fixture is still old**, then upgrades it in place and checks
+  every table's row count, the surviving outcome row, `duration_s` intact with `pedal_changes`
+  NULL, and a second `init_db` a no-op. A later "fix the fixture" edit fails instead of
+  silently deleting the coverage.
+- **D1 fixed.** `segments.workout_id` was added to old databases with no `REFERENCES`, so an
+  upgraded database let a deleted workout leave the segment pointing at nothing. The
+  `ADDED_COLUMNS` type string now carries `REFERENCES workouts(id) ON DELETE SET NULL`, the
+  same spelling `piece_journal.sitting_id` already used.
+- **`PRAGMA user_version`**, written last in `init_db`, with `SCHEMA_VERSION = 1`, and a new
+  `SchemaTooNew` refusal when the database is newer than the code — the downgrade guard that
+  did not exist.
+- **T9: corrupt JSON raises.** `db.json_load`'s malformed branch raises `CorruptJSON` naming the
+  damaged value (truncated); the empty/`None` branch still returns the default; one
+  `@app.exception_handler(CorruptJSON)` turns it into a legible 500 instead of a bare
+  traceback. Every call site's route is driven on valid data.
+- **Interrupted work.** An import that fails mid-`replace` leaves every table's row count
+  unchanged — the first execution of `db.transaction`'s `ROLLBACK` in the suite; a raw
+  `BEGIN`+insert+`close()` leaves no row and a readable database; the file is in WAL and
+  `wal_checkpoint(TRUNCATE)` succeeds.
+- **Backup shape compatibility**: a hand-written v1 document in the old shape imports, keeps
+  `duration_s`, leaves `pedal_changes` NULL, and counts. `BACKUP_VERSION` is unchanged — the
+  guarantee is one-directional.
+- **The D7 corrections**: `TEST-STRATEGY.md` no longer claims the upload path has no
+  transaction wrapper (it has one; the *file write* is what is not transactional) and no longer
+  lists "migration" as a `--full` step (`check.sh` has none, and migration tests are ordinary
+  pytest that must stay in `--fast`).
+- **Verification:** backend **835 passing** (was 813); `./check.sh --fast` passes in **62-65 s**
+  against the 180 s ceiling. Thirteen break scripts were written; because `falsify.sh` refuses a
+  dirty tree and reverts with `git checkout`, 31 breaks were applied from a snapshot instead,
+  each check observed to fail and then green again — 0 not falsified.
+
+Findings, each invisible before this slice:
+
+1. **The recon was wrong that column parity catches D1.** The column is present either way; only
+   the `REFERENCES` is missing, so a comparison of names passes. Foreign-key parity (and a
+   focused test that deletes a workout and watches the segment clear) is what catches it.
+2. **`upgraded ⊇ fresh` cannot see a deleted index either** — the index is then absent from
+   both sides. A second frozen literal, `EXPECTED_INDEXES`, is what makes "deleting
+   `idx_sittings_legacy` fails `--fast`" true.
+3. **`check.sh`'s per-step timing is shifted by one and the first step's time is never
+   printed.** `step()` compares `step_start` against the script's `start`, so a step beginning in
+   the same second as the script is mistaken for the first. The backend step — 58-60 s of a
+   62-65 s run — is the one that goes unreported. Pre-existing; `check.sh` is Slice 2's file, so this is
+   recorded, not fixed.
+4. **`performances.workout_id` exists *only* in `workout/schema.py`'s `ADDED_COLUMNS`** —
+   `db.py`'s own `performances` CREATE has no such column — so deleting that entry removes it
+   from a fresh database too, and the frozen literal is the only check that can notice.
+5. **A literal `backup.table_names` list is only caught when it is stale.** A complete literal
+   list passes every Slice 1 test, because the assertion that a table created at runtime appears
+   in the export is Slice 4's. The break script therefore uses the MVP's six tables, which is
+   what a list looks like the day after somebody adds a table.
+
+Impact on the other side: no route, response field, column, table or wire format is removed and
+`BACKUP_VERSION` is unchanged. Additive/behavioural on three points: every database now gets
+`PRAGMA user_version = 1`; a database from a newer build makes the server refuse to start rather
+than misread it; and a corrupt stored JSON row now fails the request that reads it with a
+message naming the value, where it previously degraded to an empty default (T9's decision).
+A database that already has `segments.workout_id` from the old migration keeps the missing
+reference — repair needs a table rebuild, which is recorded for a separate decision.
+
+## 2026-09-16 — sight-reading agent — Phase 20 designed and recorded: five slices of deliberate practice, piano-side ergonomics and audio takes
+
+Scope: `docs/ECOSYSTEM.md` only (the plan of record). No code, no schema, no route, no
+component, and no other document is touched. Nothing is implemented.
+
+Did: brainstormed non-sight-reading features against the current tree (models, routes,
+components, `media_pipeline.py`, `deploy/chromium-policy.json`, `practice/store.py`) and wrote
+the approved result into `ECOSYSTEM.md` as **Phase 20**, with a row in the §6 phase index, a
+seven-entry decisions table (20-D1…20-D7), per-slice acceptance criteria, schema/migration
+notes, an ADR-signal paragraph, and two new rows in the risks table. Five slices, in order:
+20a practice kinds (`segments.practice_kind` + inferred-but-never-applied offers), 20b the
+piano-side toolkit (sostenuto/CC66 hands-free after a discovery step, count-in choice, real
+URLs, command palette), 20c undo over existing routes plus a grace-day streak and weekly
+target, 20d journal tags/ratings and focus passages plus the `neglected()` status fix, 20e
+in-app low-bitrate audio takes.
+
+Three findings changed the design, and are recorded in the document rather than here alone:
+
+1. **C2 is a defect, not a feature.** `pieces.status` already exists as
+   `active | completed | paused`, but `neglected()` in `practice/store.py` filters only
+   `NOT completed`, so a deliberately paused piece is reported as neglected for ever. The
+   designed fix is `status = 'active'`; the proposed new stage system was dropped.
+2. **Undo needs no new server surface.** `merge` is exactly reversed by `split` at the
+   absorbed segment's known `start_ms`, `split` by `merge`, `assign` by `assign` with the
+   previous label. Only `resegment` is irreversible. The one loss is stated in the spec: a
+   merge nulls the absorbed segment's `identification_outcomes.segment_id`
+   (`ON DELETE SET NULL`), so undo restores the segments but not the matcher's record of one.
+3. **Focus passages cannot be inferred.** 18b made score alignment a non-goal, so a passage
+   can never be marked *touched* from passive capture. They are manual, or seeded from a
+   recording's existing A/B loop markers, and `last_worked_on` is stamped by the player.
+
+Also recorded as deliberate refusals: hands-separate is never inferred (register balance is
+registers, not hands — 18b's own promise), sight-reading is not a practice *kind* because
+`source`/`workout_id` already own it, per-piece streaks are dropped, and captured audio is a
+sharing convenience rather than an archive.
+
+Impact on the other side: none. This is a planning document. `docs/ECOSYSTEM.md` gains a new
+phase and two risk rows; no route, response field, column, table or wire format changes now,
+and `BACKUP_VERSION` is untouched. When 20e ships it will add `AudioCaptureAllowedForUrls` to
+`deploy/chromium-policy.json`, which is a kiosk-policy change the deployment docs must
+describe at that point — noted in the document's doc-ownership section.

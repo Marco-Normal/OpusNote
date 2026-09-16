@@ -122,9 +122,12 @@ empty list rather than an error. A serialisation regression would present as "no
 notes", not as a failure.
 
 **Transaction rollback is unverified.** `db.py:155`'s `ROLLBACK` inside `except Exception`
-has never executed, because no test makes a transaction fail. Separately,
-`repertoire/store.py` performs multi-statement writes — file placement plus catalogue
-insert — **with no transaction wrapper at all**.
+has never executed, because no test makes a transaction fail. Separately, the upload path's
+multi-statement work *is* wrapped — `repertoire/api.py:407-442` places the file and writes
+the catalogue row inside `db.transaction`, and `media_pipeline.py:213-218` documents that
+"the caller owns the transaction" — but the **file write is not transactional**, so a
+rollback can leave a stray file on disk. Only the database half is atomic, which is the
+real gap and not the one this paragraph first claimed.
 
 **Nine functions are dead in both directions** — 0% covered *and* referenced by nothing in
 `app/` or `tests/`: `selector.available_levels`, `db.row_to_dict`,
@@ -238,7 +241,13 @@ because the thing being verified spans both processes the README already documen
 | Tier | Contains | Budget | When |
 | --- | --- | --- | --- |
 | `--fast` | backend unit + integration + invariants + contracts + seams; frontend tests; `svelte-check`; build | **< 180 s** | after every meaningful edit |
-| `--full` | everything in `--fast`, plus browser e2e, mutation, scale, fault injection, migration | no budget | before a slice is called done |
+| `--full` | everything in `--fast`, plus browser e2e, mutation, scale and fault injection | no budget | before a slice is called done |
+
+**There is no migration step in `check.sh`, in either tier.** Migration coverage is ordinary
+pytest and belongs in `--fast`: it is fast, and the acceptance criterion for the slice that
+adds it is that a schema regression fails the tier run after every edit. Marking a migration
+test `slow` would be worse than useless — §1.2's missing `user_version` guard is exactly the
+kind of thing that would then be exercised in neither tier.
 
 **Why 180 and not 90.** The backend suite is already ~55 s and the frontend, typecheck and
 build are seconds. At a 90-second ceiling that leaves roughly half a minute for everything

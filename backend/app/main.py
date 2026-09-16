@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Iterator
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -21,7 +21,7 @@ from sqlite3 import Connection
 from . import backup, piano, services, store
 from .backup import router as backup_router
 from .config import settings
-from .db import init_db
+from .db import CorruptJSON, init_db
 from .hostinfo import require_loopback, router as hostinfo_router
 from .models import (
     ExerciseOut,
@@ -68,6 +68,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(CorruptJSON)
+def corrupt_json(request: Request, exc: CorruptJSON) -> JSONResponse:
+    """A stored row is damaged; say what is damaged and fail loudly.
+
+    Without this the exception is a bare Starlette traceback in the log and a generic 500
+    on the wire, which hides the one thing the operator needs — *which* row is corrupt and
+    what it contains. T9: visible at the piano, not "no expected notes" three weeks later.
+    """
+    return JSONResponse(status_code=500, content={"detail": str(exc)})
 
 
 app.include_router(repertoire_router)

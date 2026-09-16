@@ -684,9 +684,15 @@ def test_editing_survives_a_re_import_of_the_legacy_library(client, legacy_db):
 
 
 def test_migration_adds_legacy_id_to_an_existing_database(fresh_db):
-    """An existing library predates `legacy_id`, and CREATE TABLE IF NOT EXISTS
-    cannot add a column. The migration must upgrade in place without touching
-    the player's data."""
+    """An existing library predates every `ADDED_COLUMNS` entry, and CREATE TABLE IF
+    NOT EXISTS cannot add a column. The migration must upgrade in place without
+    touching the player's data.
+
+    All seven repertoire entries are exercised, not only the one this test was first
+    written for. The expectation is a frozen literal rather than a walk over
+    `ADDED_COLUMNS`: a deleted entry leaves the loop that would have applied it, so an
+    assertion derived from that tuple cannot notice its absence.
+    """
     conn = db.connect(settings.db_path)
     try:
         # A database as an earlier version left it: no legacy_id anywhere.
@@ -721,13 +727,19 @@ def test_migration_adds_legacy_id_to_an_existing_database(fresh_db):
 
     conn = db.connect(settings.db_path)
     try:
-        columns = {row[1] for row in conn.execute("PRAGMA table_info(pieces)")}
-        assert "legacy_id" in columns, "the column was added"
-        media_columns = {row[1] for row in conn.execute("PRAGMA table_info(media)")}
-        assert {"legacy_id", "loop_start_s", "loop_end_s"} <= media_columns, (
-            "every additive column reaches an existing library, not only the one "
-            "this test was written for"
-        )
+        # Every `repertoire/schema.py` ADDED_COLUMNS entry, frozen here.
+        expected = {
+            "composers": {"legacy_id"},
+            "pieces": {"legacy_id"},
+            "piece_journal": {"legacy_id", "sitting_id"},
+            "media": {"legacy_id", "loop_start_s", "loop_end_s"},
+        }
+        for table, wanted in expected.items():
+            columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+            missing = wanted - columns
+            assert not missing, (
+                f"{table} is missing {sorted(missing)} after the migration"
+            )
         kept = conn.execute("SELECT title, composer_id FROM pieces WHERE id = 1").fetchone()
         assert kept["title"] == "Kept piece", "existing data survived the migration"
         assert kept["composer_id"] == 1

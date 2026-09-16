@@ -26,6 +26,12 @@ from .practice.schema import PRACTICE_SCHEMA, migrate as migrate_practice
 from .repertoire.schema import REPERTOIRE_SCHEMA, migrate as migrate_repertoire
 from .workout.schema import WORKOUT_SCHEMA, migrate as migrate_workouts
 
+#: The schema generation this code builds. Written to ``PRAGMA user_version`` at the
+#: *end* of :func:`init_db`, so a database can say which version of the app made it and
+#: an older build can refuse it instead of reading columns it does not understand. Bump
+#: this whenever a migration changes the shape an older reader could not honour.
+SCHEMA_VERSION = 1
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -159,6 +165,15 @@ def transaction(db_path: Path | None = None) -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
+class SchemaTooNew(RuntimeError):
+    """The database was written by a newer version of the app than this code knows.
+
+    There is no downgrade path and there cannot be an honest one: a newer schema may have
+    reshaped a column this build would read as something else. Refusing is the only
+    failure that does not risk the player's practice log.
+    """
+
+
 def init_db(db_path: Path | None = None) -> None:
     """Create or upgrade the database. The single creation path.
 
@@ -170,6 +185,12 @@ def init_db(db_path: Path | None = None) -> None:
     """
     conn = connect(db_path)
     try:
+        version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+        if version > SCHEMA_VERSION:
+            raise SchemaTooNew(
+                f"the database reports schema version {version} but this build only "
+                f"knows {SCHEMA_VERSION}; upgrade the app before opening it"
+            )
         conn.executescript(SCHEMA)
         migrate_repertoire(conn)
         conn.executescript(REPERTOIRE_SCHEMA)
@@ -177,6 +198,9 @@ def init_db(db_path: Path | None = None) -> None:
         conn.executescript(PRACTICE_SCHEMA)
         migrate_workouts(conn)
         conn.executescript(WORKOUT_SCHEMA)
+        # Last, and as text: SQLite rejects a bound parameter in a PRAGMA, and the version
+        # must describe a schema that finished building rather than one about to.
+        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     finally:
         conn.close()
 
@@ -185,13 +209,31 @@ def row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
     return dict(row) if row is not None else None
 
 
+class CorruptJSON(ValueError):
+    """Stored JSON text is damaged, so the row cannot be read as the shape it claims.
+
+    Distinct from an empty value: ``NULL`` or the empty string means "nothing stored",
+    which is a legitimate default. Text that does not parse is a fault, and T9 in
+    ``docs/TEST-STRATEGY.md`` decides it must be visible rather than degrade into an
+    empty list that looks like "this exercise has no expected notes".
+    """
+
+
+def _truncate(value: Any, limit: int = 120) -> str:
+    """The raw value, short enough to put in an error message."""
+    text = repr(value)
+    return text if len(text) <= limit else text[: limit - 3] + "..."
+
+
 def json_load(raw: str | None, default: Any) -> Any:
     if not raw:
         return default
     try:
         return json.loads(raw)
-    except (TypeError, ValueError):
-        return default
+    except (TypeError, ValueError) as exc:
+        raise CorruptJSON(
+            f"stored JSON is corrupt ({type(exc).__name__}: {exc}): {_truncate(raw)}"
+        ) from exc
 
 
 def json_dump(value: Any) -> str:
