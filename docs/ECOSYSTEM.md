@@ -200,6 +200,7 @@ sessionizer and segmentation move across as-is with their tests.
 | 9 | **LAN server** | A planted notebook serving the whole app on the local network: `deploy/`, kiosk autostart, capture heartbeat, upload cap, concurrent-write hardening. | medium |
 | 18 | **The data the logger already has** | 18a: the journal joins the measurement — a sitting link, a real editor, a calendar series. 18b: the pedal, touch and register numbers that are recorded and unused. **Landed.** | medium |
 | 19 | **Playing back what was actually played** | A stale same-pitch note-off silences re-struck notes at the pedal-up — 1,747 notes in the owner's own sessions. Plus one owner for the pedal threshold. **Landed.** | S–M |
+| 20 | **Deliberate practice, the piano-side toolkit, and audio takes** | *How* a segment was practised (20a); hands-free control from the unused sostenuto pedal, count-in choice, real URLs and a command palette (20b); undo and a humane streak (20c); journal and library depth (20d); low-bitrate audio takes captured in-app (20e). Five slices, independently shippable. **Planned.** | medium–high |
 
 Phases 1-2 are the useful minimum: they get the library out of the Rust app's
 directory and into a browser, which is most of what you asked for.
@@ -1343,10 +1344,258 @@ a test that does not match the real path is worth nothing — which is the same 
 scenarios exist to catch, arriving from the other direction. The system Chromium (148) is
 fine and no install is needed.
 
+### Phase 20 — planned (deliberate practice, the piano-side toolkit, and audio takes)
+
+Chosen by the user from a survey of everything in the app *except* the sight-reading loop,
+and approved as five independently shippable slices. The organising finding is the mirror
+image of Phase 18's. That phase read facts the app already stored; this one closes the gap
+that the app **measures everything and plans nothing**. The log knows how long, on what, at
+what tempo and with which pedal. It does not know *how* you practised, it cannot be undone
+when an edit goes wrong, it holds no audio of its own, and the piano's middle pedal does
+nothing at all.
+
+**Order, and why: 20a → 20b → 20c → 20d → 20e.** The 20b-before-20e dependency is
+load-bearing: the hands-free gesture is what arms audio capture from the piano bench
+without reaching for the computer.
+
+#### 20a — practice kinds (A1, A3)
+
+**Problem.** A segment records what was played and for how long, never how. A stumbling
+run-through at tempo and a careful slow pass over eight bars are the same row. The one
+existing axis, `segments.source`, is *provenance* — `'sight_reading'` when a workout
+produced the segment, `NULL` for passive practice — which is a different fact and must not
+be overloaded to carry this one.
+
+**Design.**
+
+- `segments.practice_kind TEXT NULL` and `segments.practice_kind_basis TEXT NULL`, added
+  through `practice/schema.py`'s `ADDED_COLUMNS` loop like every other additive column. The
+  basis is `'manual'` or `'accepted'`, stored rather than re-derived, following
+  `segment_metrics.pedal_basis`.
+- Kinds: `run_through`, `slow`, `section`, `hands_separate`, `memory`, `warm_up`, `other`.
+  **Sight-reading is deliberately not a kind**: it is already fully determined by
+  `source`/`workout_id`, and a second owner for the same fact is exactly what Phase 18
+  refused.
+- **Inference is offered, never applied** — the autotag rule, reused:
+  - *slower than usual for this piece*, from the segment's own `median_tempo` against the
+    distribution of that piece's other segments. No new per-piece baseline is stored; the
+    metrics are already a cache of a pure function.
+  - *repeated starts*, from `restarts` (mid-segment silences ≥ `SRT_RESTART_GAP_MS`), which
+    is what section work looks like from the outside.
+  - **Hands-separate is never inferred.** `mean_velocity_low`/`high` is a register balance,
+    not hands, and 18b already refused that claim in the UI; inferring it here would break
+    that promise from the other direction.
+- A manual kind always wins: re-running inference never overwrites a row whose basis is
+  `manual`.
+- UI: a kind chip per segment on the timeline, and the existing *How the time was spent*
+  card gains a kind split beside the source split.
+
+**Acceptance.**
+
+- A kind set by hand survives a reload and is returned by the sitting detail.
+- Re-running inference leaves every `basis='manual'` row's kind untouched.
+- Accepting an offer records `basis='accepted'`; declining records nothing.
+- A one-register segment never produces a `hands_separate` offer (the refusal, tested).
+- The kind split reconciles with the window's logged minutes.
+
+#### 20b — the piano-side toolkit (G2, G3, G4, G6)
+
+**Problem.** The app is used from the piano bench, and every action needs a hand that is
+supposed to be on the keys. The PX-870 has three pedals; only the damper is read, and the
+sostenuto — the one a pianist almost never uses — does nothing. There is no count-in
+choice, no URL for anything, and no keyboard path through the app.
+
+**Design.**
+
+- **Pedal discovery first, assumption second.** The device bar gains a readout of which
+  controller numbers (`64`, `66`, `67`) have *ever* been seen from the connected piano, and
+  says `none yet` before a pedal is pressed. The sostenuto (CC66) becomes the primary
+  hands-free trigger; if it never arrives, the fallback is CC67 (soft, equally unused), then
+  a double-tap of CC64 gated on two seconds of silence. Nothing is bound to a message the
+  piano has not been observed to send.
+- Hands-free actions: start and finish a workout, arm and stop audio capture (20e), and
+  stop playback. The gesture is **inert during a scored attempt**, so it can never be
+  mistaken for a musical event.
+- Count-in: one bar, two bars, or none, plus click volume, persisted as a client preference
+  beside the existing latency and theme values. `metronome.ts` reads it instead of the
+  hard-wired one bar.
+- URLs: view plus entity (piece, attempt, sitting, take) so a link opens the same thing on
+  the LAN client and the Back button works. The view is plain in-memory state today.
+- Keyboard shortcuts (`space`, `/`, `1`–`5`, `Esc`) and a command palette over pieces,
+  journal content, sittings and media, composed from the search endpoints that already
+  exist rather than a new one.
+
+**Acceptance.**
+
+- Before any pedal is pressed the device bar says so; after the sostenuto is pressed it
+  names CC66; a piano that never sends CC66 falls back rather than appearing broken.
+- The gesture starts and finishes a workout and arms and stops capture, and is ignored while
+  an exercise is being scored.
+- A two-bar count-in is honoured by the metronome and survives a reload.
+- A deep link to a piece, attempt, sitting and take each open that thing; Back returns to
+  the previous view.
+- The palette finds a piece by title, a journal entry by a word that appears only in its
+  content, and a sitting by date.
+
+#### 20c — log trust and habit (F1, B3)
+
+**Problem.** Merge, split and re-segment are one-way, and the matcher writes labels without
+being asked. The streak resets on a single missed day, which punishes the recovery days a
+pianist needs.
+
+**Design.**
+
+- **Undo with no new server surface.** Merge is exactly reversed by splitting at the
+  absorbed segment's known `start_ms`; split by merging; assign by assigning the previous
+  piece. The client already holds the pre-action list it rendered, so it can compute the
+  inverse and call the route that exists.
+- `resegment` is the only genuinely irreversible action: it keeps its confirm and gains an
+  explicit *this cannot be undone* line. **Stated rather than hidden:** a merge sets the
+  absorbed segment's `identification_outcomes.segment_id` to NULL (`ON DELETE SET NULL`), so
+  undoing the merge restores the segments but not the matcher's record of that segment. The
+  UI must not claim otherwise.
+- Streak: `streak_days()` tolerates one missed day per rolling seven and reports whether the
+  grace was used, so the number can be explained rather than merely displayed. The weekly
+  target (`N` of 7 days) is a client preference computed from the `calendar` series the
+  summary already returns — no new server setting, no new config key.
+
+**Acceptance.**
+
+- Undo after merge restores both boundaries and both labels; after split restores the single
+  segment; after assign restores the previous piece.
+- Undo is not offered after re-segmenting, which says so before it runs.
+- One missed day preserves the streak and the UI says the grace was used; two consecutive
+  missed days reset it; today still does not count against you.
+- The weekly target needs no request beyond the existing summary.
+
+#### 20d — journal and library depth (A2, C1–C4)
+
+**Problem.** The journal is prose with a sitting link; it cannot be filtered by subject or
+compared over time. There is nowhere to write down "bars 12–14 are the problem". A paused
+piece nags for ever.
+
+**Design.**
+
+- **Focus passages, and the constraint that shapes them.** There is no score alignment and
+  18b made that an explicit non-goal, so a passage can never be marked *touched* by passive
+  capture. `piece_passages(id, piece_id, start_bar, end_bar, label, created_at,
+  last_worked_on)` is therefore created **by hand, or seeded from a recording's existing A/B
+  loop markers** — the one honest provenance available — and `last_worked_on` is stamped
+  when you say you worked on it. Staleness sorts the list; nothing is inferred.
+- Journal gains `tags` (a JSON array, the storage the project already uses for lists),
+  `difficulty` and `fluency` (1–5, nullable), and `media_id` alongside the existing
+  `sitting_id`, `ON DELETE SET NULL` for the same reason: deleting the take must not delete
+  what you wrote about it. Tags filter the cross-piece feed and the ratings draw a line per
+  piece.
+- **The neglected list is a defect, not a feature.** `pieces.status` already exists as
+  `active | completed | paused`, and `neglected()` filters only `NOT completed`, so a piece
+  the player deliberately paused is reported as neglected for ever. The fix is
+  `status = 'active'`. No new stage system, no per-piece checklist.
+- Sorts (least time invested, last played), saved filters and bulk edits are composed
+  client-side from the existing `/repertoire` list and the analytics `by_piece` the Log tab
+  already fetches. No new route.
+
+**Acceptance.**
+
+- A passage seeded from an A/B loop carries that recording's bars and records the loop as
+  its source; a hand-made one works with no recording at all.
+- A `paused` piece never appears in Neglected; a `completed` one does not either.
+- Tags filter the cross-piece feed and a rating is editable in place.
+- A journal entry can be linked to a recording, and the link survives the recording being
+  deleted.
+- Least-time-invested and last-played agree with the analytics `by_piece` numbers.
+
+#### 20e — audio takes (D1, D2, D3)
+
+**Problem.** Every recording in the library got there by upload, and the piano's own
+pen-drive recording already exists — so in-app capture is not an archive. It is the
+convenience layer: the take you want to send someone, or hear once, without finding a
+memory stick. The user's own words: *"the audio is a plus on top of that for quick audio
+sharing."*
+
+**Design.**
+
+- Capture follows the **standing capture switch**, in the same spirit as MIDI capture. Mono,
+  Opus, ~32 kbps: quality is explicitly not a gate, which is what makes a standing switch
+  affordable at roughly **14 MB per hour**.
+- A segment is computed server-side after ingest, so the client cannot cut on it directly.
+  It cuts on the *same* silence rule instead — the server serves `SRT_SEGMENT_GAP_S` so the
+  constant is not forked into the client — and uploads each chunk with its epoch range
+  through the existing recording import route. The server attaches it to the segment whose
+  window it overlaps, which is the same absolute-epoch-ms reasoning the note wire format
+  already relies on.
+- `media` gains `source` (`'uploaded' | 'captured'`), `sitting_id` and `segment_id`, all
+  nullable and additive. The content-hashing, ffprobe pass, waveform and A/B machinery are
+  unchanged: a captured take is an ordinary recording row.
+- Deployment gains `AudioCaptureAllowedForUrls` beside the existing `MidiAllowedForUrls` in
+  `deploy/chromium-policy.json`.
+- **No automatic pruning.** The System panel reports captured-audio size, and deletion stays
+  on the loopback-only side of the D8 boundary. If the machine has no input device at all,
+  the UI says so rather than cheerfully writing silence.
+- D2 is a takes timeline per piece (date, duration, and the metrics of the segment it
+  covers) with any two selected for A/B. D3 is playback rate (0.5×–1×) on that loop, with
+  the pitch-preservation setting stated in the UI rather than assumed.
+
+**Acceptance.**
+
+- With capture armed and an input present, playing produces a take whose duration is within
+  a second of the notes it covers, attached to the right segment.
+- With no input device, the UI reports that instead of writing a silent file.
+- A captured row is `source='captured'`; an imported one is `source='uploaded'`.
+- Two takes of one piece can be A/B'd and each keeps its own loop markers.
+- 0.5× playback is honoured and the pitch behaviour is stated.
+- Deleting a captured take is refused from the LAN.
+
+#### Decisions taken
+
+| ID | Question | Decision | Consequence |
+| --- | --- | --- | --- |
+| 20-D1 | Is practice kind a second axis, or an extension of `source`? | **A second axis** — `source` keeps meaning provenance | Sight-reading is not owned twice; the deliberate-practice taxonomy covers repertoire practice only |
+| 20-D2 | Is an inferred kind ever applied? | **No — offered only**, with the basis recorded | The autotag restraint is preserved; a manual tag can never be silently overwritten |
+| 20-D3 | Does undo survive a restart? | **No** — inverse operations over existing routes, and `resegment` stays irreversible | No new table, no backup change, no second source of truth for segment boundaries; the one loss (an absorbed segment's identification outcome) is stated rather than papered over |
+| 20-D4 | Does in-app audio replace the piano's pen-drive recording? | **No** — a low-bitrate convenience for sharing, never an archive | Quality is not an acceptance criterion, so a standing switch is affordable and privacy/retention stay simple |
+| 20-D5 | Which pedal is the hands-free trigger? | **The sostenuto (CC66), discovered rather than assumed**, with CC67 then a CC64 double-tap as fallbacks | No gesture is bound to a message the piano has not been seen to send; the device bar reports the discovery |
+| 20-D6 | Does one missed day break the streak? | **No — one grace day per rolling seven**, with a weekly target carrying the habit | The familiar consecutive-day number survives; the weekly target needs no server-side setting |
+| 20-D7 | Are focus passages inferred from the log? | **No — manual, or seeded from an existing A/B loop** | There is no score alignment to infer from, and 18b made that a non-goal; nothing is claimed about bars the app cannot see |
+
+**Schema and migration.** 20a adds two `segments` columns; 20d adds four `piece_journal`
+columns (`tags`, `difficulty`, `fluency`, `media_id`) and the `piece_passages` table; 20e adds
+three `media` columns. Each slice that touches the schema bumps `SCHEMA_VERSION` and adds its
+`ADDED_COLUMNS`/`CREATE TABLE` entries through the Slice 1 mechanisms, and `piece_passages`
+must join the exported table list so a backup round trip still covers every domain.
+
+**ADR signal.** 20-D3 (undo without a persisted record), 20-D5 (binding behaviour to a
+controller message the app discovers) and 20e's audio-capture permission are durable
+decisions that extend D7/D8's runtime and trust boundaries. This document plus its decisions
+tables remains the decision record; no ADR directory is created.
+
+#### Effort, risk and order
+
+| Slice | Contents | Effort | Risk | Depends on |
+| --- | --- | --- | --- | --- |
+| 20a | Practice kinds, inference, timeline chips | M | low | — |
+| 20b | Pedal discovery and hands-free, count-in, URLs, palette | M–L | medium — the routing touches the shell | — |
+| 20c | Undo, grace-day streak, weekly target | S–M | low | — |
+| 20d | Focus passages, journal tags and ratings, neglected fix, list QoL | M | low | — |
+| 20e | Audio capture, takes timeline, playback rate | L | medium — a permission, an input device, and disk growth | 20b (the gesture arms it) |
+
+#### Non-goals, stated so the plan cannot drift
+
+- No score alignment, therefore no automatic passage marking, no per-bar error map, and no
+  claim about a bar the log cannot see.
+- No hands-separate inference from register balance.
+- No audio archival, no quality work, and no replacement for the piano's own recording.
+- No per-piece streaks.
+- Section practice (pick bars, slow down, loop until clean) and per-hand practice remain
+  deferred, unchanged. 20a's *section* kind records that you did section work; it does not
+  generate or loop the section.
+
 ### Still open, from the earlier brainstorm
 
 **Section practice** (pick bars, slow down, loop until clean) and **per-hand practice**,
-both offered and both deferred by the user. They remain the highest-value items on this
+both offered and both deferred by the user, and both still deferred after Phase 20's
+survey — the slice that came closest, 20a's `section` kind, records that section work
+happened without generating or looping anything. They remain the highest-value items on this
 list by my estimate, since they change what the app is *for* rather than what it shows.
 
 Also open: **retiring `practice-logger/`** — its code and history are ported and
@@ -1363,6 +1612,8 @@ signature** at system breaks, which OSMD cannot be talked into.
 | `note_events` grows without bound | ~1–5 k rows per hour of playing is a few MB per year; the JSON export excludes media, so backups stay small. Retention policy is not needed yet |
 | An unauthenticated LAN can still *edit* and *upload* (D8) | Visible banner; the irreversible paths are loopback-only, which is the part that cannot be undone by hand |
 | A future move to a reverse proxy or a non-loopback deployment breaks the boundary silently | `request.client.host` is the check today and there is no proxy in this topology; if one is ever added, the check must move to a trusted header, and this row is the reminder |
+| Captured audio (Phase 20e) grows without bound and is the first thing in the app whose size matters | ~14 MB per hour at 32 kbps mono, against a few MB per *year* for notes. Deliberately not auto-pruned: the System panel reports captured-audio size and deletion stays loopback-only, so the player decides rather than a policy |
+| The sostenuto pedal is bound to a controller message the piano may not send (Phase 20-D5) | The device bar reports which of CC64/66/67 have actually been seen before anything is bound, and CC67 then a CC64 double-tap are the fallbacks. A piano that sends none of them keeps every feature except the gesture |
 
 ### Non-goals
 
@@ -1380,3 +1631,9 @@ facts.
 
 The deployment chapter in [`DEPLOYMENT.md`](./DEPLOYMENT.md) is extended when Phase
 9 lands, so it describes files that exist; this section is the plan until then.
+
+Phase 20 follows the same rule rather than adding documents. The audio-capture permission
+lands in `deploy/chromium-policy.json` and is described in `DEPLOYMENT.md` and
+`deploy/README.md` when 20e ships, not before. `README.md` gains a line for each slice that
+a player can see, and what a slice owes the suite is owned by
+[`TEST-STRATEGY.md`](./TEST-STRATEGY.md) as it already is for every other change.
