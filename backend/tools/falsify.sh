@@ -48,11 +48,23 @@ git diff --stat | tail -3
 echo "running: $CHECK"
 echo
 
-"$CHECK" > "${TMPDIR:-/tmp}/falsify.out" 2>&1
+# `eval`, because the check is a command *line*: `"./check.sh --fast"` quoted as a single word
+# is a file that does not exist, and the first version of this script did exactly that and then
+# reported exit 127 as a successful falsification. A tool that certifies checks must not be
+# able to pass because it failed to run them.
+eval "$CHECK" > "${TMPDIR:-/tmp}/falsify.out" 2>&1
 status=$?
 
 git checkout -- .
 echo
+
+# 126 and 127 mean "found but not executable" and "not found". The check never ran, so this
+# proves nothing either way, and reporting it as a falsification would be worse than useless.
+if [ "$status" -eq 126 ] || [ "$status" -eq 127 ]; then
+  echo "THE CHECK DID NOT RUN (exit $status), so nothing was falsified." >&2
+  echo "Command was: $CHECK" >&2
+  exit 2
+fi
 
 if [ "$status" -eq 0 ]; then
   echo "FALSIFICATION FAILED: the check passed with the break applied."
@@ -62,3 +74,5 @@ if [ "$status" -eq 0 ]; then
 fi
 
 echo "falsified: the check caught the break (exit $status), and the tree is restored."
+echo "what it reported:"
+tail -5 "${TMPDIR:-/tmp}/falsify.out" | sed 's/^/  /'
