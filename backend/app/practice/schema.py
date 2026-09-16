@@ -117,7 +117,16 @@ CREATE TABLE IF NOT EXISTS segments (
     source          TEXT,                -- 'repertoire' | 'sight_reading' | NULL
     workout_id      INTEGER REFERENCES workouts(id) ON DELETE SET NULL,
     confidence      REAL,
-    identified_by   TEXT                 -- 'similarity' | 'workout' | 'manual'
+    identified_by   TEXT,                -- 'similarity' | 'workout' | 'manual'
+    -- How it was practised, as opposed to what it was. `source` above is
+    -- *provenance* — a workout produced this segment — which is a different fact and
+    -- must not be overloaded to carry this one. Sight-reading is deliberately not a
+    -- kind for the same reason: `source`/`workout_id` already own it.
+    practice_kind       TEXT,            -- 'run_through' | 'slow' | ... | NULL
+    -- Where the value came from. 'offered' is a proposal the player has not answered:
+    -- it is drawn as a question and excluded from every aggregate. Stored rather than
+    -- re-derived, which is the same rule `pedal_basis` and `identified_by` follow.
+    practice_kind_basis TEXT             -- 'offered' | 'manual' | 'accepted' | NULL
 );
 CREATE INDEX IF NOT EXISTS idx_segments_sitting ON segments(sitting_id, start_ms);
 CREATE INDEX IF NOT EXISTS idx_segments_piece ON segments(piece_id);
@@ -172,6 +181,10 @@ ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("segment_metrics", "velocity_range", "REAL"),
     ("segment_metrics", "mean_velocity_low", "REAL"),
     ("segment_metrics", "mean_velocity_high", "REAL"),
+    # Phase 20a — how a segment was practised, as a second axis from `source`, which
+    # owns *what produced* the segment rather than how it went.
+    ("segments", "practice_kind", "TEXT"),
+    ("segments", "practice_kind_basis", "TEXT"),
 )
 
 

@@ -77,7 +77,7 @@ EXPECTED_COLUMNS: dict[str, set[str]] = {
     },
     "segments": {
         "id", "sitting_id", "start_ms", "end_ms", "piece_id", "source", "workout_id",
-        "confidence", "identified_by",
+        "confidence", "identified_by", "practice_kind", "practice_kind_basis",
     },
     "sittings": {
         "id", "started_ms", "ended_ms", "started_at", "ended_at", "local_date",
@@ -226,7 +226,9 @@ def test_the_fixture_is_the_pre_phase18_shape() -> None:
         assert "sitting_id" not in _columns(conn, "piece_journal")
         assert "workout_id" not in _columns(conn, "performances")
         assert {"legacy_id", "closed_ms"}.isdisjoint(_columns(conn, "sittings"))
-        assert {"source", "workout_id"}.isdisjoint(_columns(conn, "segments"))
+        assert {"source", "workout_id", "practice_kind", "practice_kind_basis"}.isdisjoint(
+            _columns(conn, "segments")
+        ), "the fixture predates every ADDED_COLUMNS entry for segments"
         assert "legacy_id" not in _columns(conn, "pieces")
         assert "loop_end_s" not in _columns(conn, "media")
     finally:
@@ -442,5 +444,23 @@ def test_the_database_is_in_wal_mode_and_can_checkpoint() -> None:
         assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
         busy, _log, _checkpointed = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
         assert busy == 0, "the checkpoint could not run"
+    finally:
+        conn.close()
+
+
+def test_the_upgraded_database_gains_the_practice_kind_columns() -> None:
+    """20a: how a segment was practised arrives on a database that predates it.
+
+    The parity test above compares a fresh database against an upgraded one, so it
+    already catches a missing `ADDED_COLUMNS` entry. This asserts the specific columns
+    the slice is about, so a rename cannot pass by moving the drift somewhere parity
+    happens to agree on.
+    """
+    path = _build_fixture_db("kind-columns.sqlite3")
+    db.init_db(path)
+    conn = db.connect(path)
+    try:
+        assert {"practice_kind", "practice_kind_basis"} <= _columns(conn, "segments")
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
     finally:
         conn.close()
