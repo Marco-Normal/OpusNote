@@ -3,7 +3,8 @@
 **Parent spec:** [`ECOSYSTEM.md`](./ECOSYSTEM.md) § *Phase 20* § *20d — journal and library depth
 (A2, C1–C4)*, with decision 20-D7. That section owns what and why; this document owns the how.
 
-**Status:** planned.
+**Status:** planned.  **Phase 21 landed first and took `SCHEMA_VERSION` to 3**, so the numbers below are one higher
+than when this plan was written.
 
 **Goal.** Make the journal filterable and comparable, give "bars 12–14 are the problem" somewhere to
 live, stop a deliberately paused piece from nagging for ever, and let the library be sorted and
@@ -41,7 +42,7 @@ git status --porcelain   # must print nothing before any falsification
 **Compatibility boundary.** Four additive nullable `piece_journal` columns, one new table, one new
 read route, and `tags`/`difficulty`/`fluency`/`media_id`/`passages` added to the journal and piece
 responses. `BACKUP_VERSION` unchanged — the table list is derived, and an older document simply
-carries no rows for the new table. `SCHEMA_VERSION` 2 → 3, so an older build refuses a database that
+carries no rows for the new table. `SCHEMA_VERSION` 3 → 4, so an older build refuses a database that
 has the columns rather than misreading it. No existing route changes shape.
 
 **Decision 20d-D1, and the constraint that shapes A2.** There is no score alignment (18b's non-goal,
@@ -172,7 +173,7 @@ Plan Pressure Test:
 | Path | Change |
 | --- | --- |
 | `backend/app/repertoire/schema.py` | Four columns in both places, the `piece_passages` table and its index |
-| `backend/app/db.py` | `SCHEMA_VERSION` 2 → 3 |
+| `backend/app/db.py` | `SCHEMA_VERSION` 3 → 4 |
 | `backend/app/repertoire/models.py` | `tags`/`difficulty`/`fluency`/`media_id` on the three journal models; `PassageOut`/`PassageCreate`/`PassageUpdate`; `PieceDetail.passages` |
 | `backend/app/repertoire/store.py` | One row decoder for journal tags; extend create/update; a `tag` filter; passages CRUD; attach passages in `get_piece` |
 | `backend/app/repertoire/api.py` | Three passage routes; the `tag` query param on both journal reads |
@@ -329,7 +330,7 @@ to Task 7.
 
 ### Step 1.5 — bump the version and freeze the shape
 
-`backend/app/db.py`: `SCHEMA_VERSION = 3`.
+`backend/app/db.py`: `SCHEMA_VERSION = 4`.
 
 In `backend/tests/test_migration_upgrade.py`:
 
@@ -2066,7 +2067,7 @@ Execution Readiness View:
   practice domain owns `by_piece` and exposes it through one read; the sort composition lives in one
   component
 - Compatibility Boundary: additive columns, one new table, one new read route, five additive response
-  fields; no existing route changes shape; SCHEMA_VERSION 2 -> 3; BACKUP_VERSION unchanged
+  fields; no existing route changes shape; SCHEMA_VERSION 3 -> 4; BACKUP_VERSION unchanged
 - Retirement Boundary: nothing retired; the passages table and panel retire together
 - Task Batches: 1 schema, 2 the neglected fix, 3 journal tags and ratings, 4 passages, 5 the sort
   read, 6 the UI, 7 browser + docs + commit

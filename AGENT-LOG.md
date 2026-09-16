@@ -1465,3 +1465,58 @@ which the deployment documents must describe at that point.
 
 The phase's remaining work is execution: 20b, 20c, 20d and 20e in order, each with its plan already
 written against the tree as it then stands.
+
+## 2026-09-16 — sight-reading agent — Phase 21 landed: the blur tells you where, and an edit stops reloading the world
+
+Scope: `backend/app/practice/{pedal,schema,store,models}.py`, `backend/app/db.py`,
+`backend/tests/{test_pedal,test_practice_store,test_migration_upgrade}.py`,
+`backend/tools/{e2e_browser.py,falsifications/}`, `frontend/src/lib/types.ts`,
+`frontend/src/components/{SegmentTimeline,PracticeLogView}.svelte`, `docs/`, `README.md`.
+
+Did: the two fixes the user asked for ahead of the remaining Phase 20 slices, both planned in
+`docs/PLAN-PHASE21.md`.
+
+**The blur count had no places.** `blurs()` counted attacks and threw away the onsets it had just
+computed. It is now `blur_attacks()`, with `blurs()` defined as its length so the number and the
+places cannot disagree, and the positions are cached in `segment_metrics.pedal_blur_ms` by the
+`_refresh_metrics` pass that already computes the count with the notes and the pedal stream in hand.
+The sitting strip draws a hairline at each one and the segment row reads "at 0:01, …" (capped at
+four, full list in the tooltip). `SCHEMA_VERSION` 2 -> 3.
+
+**Every edit reloaded the world.** Measured read-only against the live installation before touching
+anything: `/api/practice/autotag/quality` **866 ms**, `summary` 96 ms, `sittings` 56 ms,
+`ratings` 53 ms, `system` 16 ms, detail 12 ms — awaited in series by `load()` after every label,
+split, merge and kind change, with the mutation's own response thrown away. `load()` is now split:
+`edit()` applies the segments the mutation already returned and refreshes only `refreshTotals()`
+(summary + list, ~96 ms in parallel), while the three panels load together via `allSettled` on mount
+and on Refresh. `resegment` is the one exception and refetches the matcher's panel explicitly,
+because it rebuilds the rows that panel is measured from.
+
+**Three mistakes of my own, kept because they are the instructive kind.**
+
+1. The plan's second example chord would not have produced a blur — it shared two pitch classes with
+   what was ringing, so only one was new, against a threshold of three. Caught by running the rule
+   before writing the test, and corrected in the plan.
+2. The store invariant fixture started with **one** blur, so truncating the positions to one position
+   still passed it: the break only showed up in the pedal unit test. The fixture now carries two.
+3. My first insertion point for the new browser assertions changed *which sitting* the scenario's own
+   tagging step landed on, so the target piece's measured minutes rounded to "0 min played" and an
+   existing assertion failed. Moved both blocks to the end of the scenario, where they cannot
+   redirect the steps that came before them. (The first attempt at *that* landed the block in
+   `scenario_perfect`, because the console-error check I anchored on appears in every scenario.)
+
+**Falsified, not merely green.** `drop_blur_positions.sh` (truncating the positions to one) fails both
+the pedal unit test and the strengthened store invariant. `reload_everything_after_an_edit.sh`
+(restoring `await load()` in `edit()`) fails the browser assertion *"but not the matcher's accuracy,
+which a label cannot change"*.
+
+Verified: backend **866 passed**; frontend 76; `svelte-check` clean; build clean; the practice-log
+scenario passes with six new assertions, including that an edit refreshes the totals and does **not**
+fetch `/autotag/quality` or `/api/status/system`; `./check.sh --full` green in **548 s**.
+
+Impact on the other side: planning documents were corrected for running this out of order —
+`SCHEMA_VERSION` is now 3, so PLAN-PHASE20D's "2 → 3" is 3 → 4 and PLAN-PHASE20E's "3 → 4" is 4 → 5
+(both plans now say so at the top), and PLAN-PHASE20C gained a note that Phase 21 rewrote the
+`edit()` function its Task 2 also rewrites, so its anchor text must be re-read at execution time.
+No route, table or wire format was removed; `segment_metrics` gained one nullable column and
+`SegmentMetricsOut` one list.

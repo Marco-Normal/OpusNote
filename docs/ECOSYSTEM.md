@@ -202,6 +202,8 @@ sessionizer and segmentation move across as-is with their tests.
 | 19 | **Playing back what was actually played** | A stale same-pitch note-off silences re-struck notes at the pedal-up — 1,747 notes in the owner's own sessions. Plus one owner for the pedal threshold. **Landed.** | S–M |
 | 20 | **Deliberate practice, the piano-side toolkit, and audio takes** | *How* a segment was practised (20a); hands-free control from the unused sostenuto pedal, count-in choice, real URLs and a command palette (20b); undo and a humane streak (20c); journal and library depth (20d); low-bitrate audio takes captured in-app (20e). Five slices, independently shippable. **20a landed; 20b–20e planned.** | medium–high |
 
+| 21 | **The log at speed, and the blur you can find** | Blur positions cached beside the count and marked on the sitting strip; and an edit path that applies the server's own answer instead of refetching the matcher's accuracy, the machine's health and the week's ratings after every click. **Landed.** | S |
+
 Phases 1-2 are the useful minimum: they get the library out of the Rust app's
 directory and into a browser, which is most of what you asked for.
 
@@ -1624,6 +1626,46 @@ tables remains the decision record; no ADR directory is created.
 - Section practice (pick bars, slow down, loop until clean) and per-hand practice remain
   deferred, unchanged. 20a's *section* kind records that you did section work; it does not
   generate or loop the section.
+
+### Phase 21 — landed (the log at speed, and the blur you can find)
+
+**Implementation plan:** [`PLAN-PHASE21.md`](./PLAN-PHASE21.md). Asked for by the user ahead of the
+remaining Phase 20 slices, and executed first for that reason.
+
+Both problems were found by *using* the app on real data, not by reading it, and the measurements
+below are read-only requests against the owner's own installation.
+
+**The blur count had no places.** The newest sitting there reports 14 pedal blur attacks across two
+segments — nine of them in one segment — and the payload carried only the number. "Nine blurs" in a
+two-thousand-note segment is a fact you cannot act on. `blurs()` counted attacks and threw away the
+onsets it had just computed; it is now `blur_attacks()`, with `blurs()` defined as its length, so the
+number and the places cannot disagree. The positions are cached in `segment_metrics.pedal_blur_ms` by
+the `_refresh_metrics` pass that already computes the count with the notes and the pedal stream in
+hand, so the detail read the timeline uses constantly gained nothing, and the strip draws a hairline
+at each one.
+
+**Every edit reloaded the world.** `PracticeLogView.load()` ran after every label, split, merge and
+kind change, awaited five requests in series, and discarded the segments the mutation had already
+returned: `autotag/quality` 866 ms, `summary` 96 ms, `sittings` 56 ms, `ratings` 53 ms, `system`
+16 ms, detail 12 ms — about **1.05 s of server time per click**. It is now split: an edit applies the
+server's own answer and refreshes only the totals (the summary and the list), while the panels — reads
+about the library and the machine that an edit cannot invalidate — load together on mount and on
+Refresh.
+
+**Decisions.** The count and its positions have **one owner** and the count is defined as the
+positions' length, which is what the falsification script exists to prove. A panel that reads the
+library is **not** invalidated by an edit to one sitting; the browser assertions pin that so a later
+"just refresh everything" cannot quietly undo it. `resegment` is the one exception and refetches the
+matcher's panel explicitly, because it rebuilds the rows that panel is measured from.
+
+**Impact on the queued slices.** `SCHEMA_VERSION` is now **3**, so `PLAN-PHASE20D.md`'s "2 → 3"
+becomes 3 → 4 and `PLAN-PHASE20E.md`'s "3 → 4" becomes 4 → 5. `PracticeLogView.edit()` is rewritten
+here **and** by `PLAN-PHASE20C.md` Task 2, whose anchor text therefore no longer matches; the
+behaviour 20c needs is intact, and its precondition already greps for the function. Both are the cost
+of doing a fix out of order and are recorded rather than discovered.
+
+**Non-goals.** No new endpoint, no change to the blur rule itself, no change to the notes payload,
+and no retention policy — captured audio is 20e's, and it is reported rather than pruned.
 
 ### Still open, from the earlier brainstorm
 

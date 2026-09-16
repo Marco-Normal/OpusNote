@@ -175,6 +175,17 @@ moved.
 - Per-piece, the Repertoire detail shows measured minutes from MIDI beside the
   minutes written in the journal — deliberately not summed, because a session can
   be both measured and written down, and adding them would count it twice.
+- **The pedal blur tells you where.** A blur is an attack that brought new harmony over
+  notes the pedal was already holding, and the count now comes with its clock times: the
+  sitting strip carries a hairline at each one, and the segment row reads *"9 pedal blur —
+  at 1:23, 2:04, 4:11, 6:38 …"* (the whole list is in the tooltip). The rule is unchanged
+  and still observed from the pitches rather than from a score; what is new is that "nine"
+  is now something you can find on a long sitting.
+- **Editing is immediate.** Labelling, splitting, merging and re-tagging apply the server's
+  own answer as it arrives, and refresh only the totals. The matcher's measured accuracy,
+  the machine's health and the week's ratings are reads about the library rather than about
+  the edit, so they load when the tab opens instead of after every click — which is where a
+  one-second stall per label came from.
 
 Pieces are measured, not claimed: `median_tempo` is a **note rate** over attack
 clusters (chords are one attack, so they do not read as infinite BPM). It is

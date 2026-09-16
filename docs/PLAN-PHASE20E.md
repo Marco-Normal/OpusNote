@@ -3,7 +3,8 @@
 **Parent spec:** [`ECOSYSTEM.md`](./ECOSYSTEM.md) § *Phase 20* § *20e — audio takes (D1, D2, D3)*,
 with decisions 20-D4 and 20e-D1…D8 below. That section owns what and why; this document owns the how.
 
-**Status:** planned.
+**Status:** planned.  **Phase 21 landed first and took `SCHEMA_VERSION` to 3, and 20d takes it to 4**, so the
+numbers below are two higher than when this plan was written.
 
 **Goal.** Record the piano through the machine the app already runs on, at a quality that is honest
 about being a convenience rather than an archive, attach each take to the segment it came from, and
@@ -42,7 +43,7 @@ git status --porcelain   # must print nothing before any falsification
 
 **Compatibility boundary.** Four additive nullable `media` columns, one new read field
 (`PracticeStatus.segment_gap_s`), one new route and one new form field. `BACKUP_VERSION` unchanged — the
-table list is derived, and the media rows ride along as they always have. `SCHEMA_VERSION` 3 → 4, so
+table list is derived, and the media rows ride along as they always have. `SCHEMA_VERSION` 4 → 5, so
 an older build refuses a database with the new columns rather than misreading it. **No existing route
 changes shape, and the recording upload route is untouched**: a captured take is uploaded through the
 new route only because a take has no piece to name yet.
@@ -209,7 +210,7 @@ Plan Pressure Test:
 | Path | Change |
 | --- | --- |
 | `backend/app/repertoire/schema.py` | Four `media` columns in both places |
-| `backend/app/db.py` | `SCHEMA_VERSION` 3 → 4 |
+| `backend/app/db.py` | `SCHEMA_VERSION` 4 → 5 |
 | `backend/app/practice/models.py` | `PracticeStatus.segment_gap_s` |
 | `backend/app/repertoire/models.py` | `MediaOut` gains the four take fields |
 | `backend/app/repertoire/store.py` | Extend the three media reads and `create_media`; `sitting_at`, `segment_at`, `link_unlinked_takes`, `captured_bytes` |
@@ -380,7 +381,7 @@ difference invisible. `list_media` and `get_media` therefore both do
 
 ### Step 2.4 — the version and the frozen shape
 
-`backend/app/db.py`: `SCHEMA_VERSION = 4`.
+`backend/app/db.py`: `SCHEMA_VERSION = 5`.
 
 In `backend/tests/test_migration_upgrade.py`, `EXPECTED_COLUMNS["media"]`:
 
@@ -1749,7 +1750,7 @@ Execution Readiness View:
   read-only; the client cuts on the server's rule and never names a segment; the pipeline is shared,
   not reimplemented
 - Compatibility Boundary: four additive nullable media columns, one additive host field, one new
-  route; the recording upload route is untouched; SCHEMA_VERSION 3 -> 4; BACKUP_VERSION unchanged
+  route; the recording upload route is untouched; SCHEMA_VERSION 4 -> 5; BACKUP_VERSION unchanged
 - Retirement Boundary: nothing retired; the capture files, the route and the panel retire together
 - Task Batches: 1 the segment gap, 2 the media columns, 3 the attachment, 4 the capture client,
   5 the takes view and rate, 6 the permission, the browser proof and docs

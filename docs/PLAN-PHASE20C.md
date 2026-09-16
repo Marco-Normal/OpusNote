@@ -25,7 +25,12 @@ streak; Playwright for the browser tier.
 - `docs/PLAN-PHASE20B.md` (the sibling slice; the same tier and falsification mechanics).
 - `AGENT-LOG.md` § *Rules*.
 
-**Re-read gate.** This plan was written against the tree at `2708ebb`. Before Task 1:
+**Re-read gate.** This plan was written against the tree at `2708ebb`. **Phase 21 landed first
+and rewrote `PracticeLogView.edit()`** (it now applies the mutation's own response and refreshes only
+the totals), so Step 2.1's quoted anchor no longer matches textually. The behaviour this plan needs is
+intact — `edit()` still takes the action, still runs inside `busy`/`error`/`finally`, and the
+before/after segment lists are still available around it — but read the function before replacing it
+rather than trusting the quote. Before Task 1:
 
 ```bash
 cd /home/marco_normal/tmp/SighRTracker
