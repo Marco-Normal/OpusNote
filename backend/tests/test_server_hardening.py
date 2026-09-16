@@ -12,6 +12,8 @@ and these tests are what stop that from hiding a broken check.
 
 from __future__ import annotations
 
+import pytest
+from fastapi import HTTPException, UploadFile
 from starlette.requests import Request
 
 
@@ -172,8 +174,13 @@ def test_re_segmenting_over_labels_is_refused_over_the_lan(client) -> None:
     assert discarded.status_code == 403
 
 
-def test_the_upload_cap_is_enforced_while_writing(client) -> None:
-    """A declared size can lie; the bytes on the way in cannot."""
+def test_the_upload_cap_rejects_a_declared_size_over_the_limit(client) -> None:
+    """A declared size can lie; the bytes on the way in cannot.
+
+    Only the first half of that is observable through the endpoint, which is what
+    `test_the_endpoint_always_declares_a_size` below records. This is the path a real
+    oversized upload takes.
+    """
     import dataclasses
 
     import app.repertoire.api as repertoire_api
@@ -194,6 +201,75 @@ def test_the_upload_cap_is_enforced_while_writing(client) -> None:
         repertoire_api.settings = original
     assert response.status_code == 413
     assert "larger than" in response.json()["detail"]
+
+
+def test_the_endpoint_always_declares_a_size(client) -> None:
+    """Why the while-writing check cannot be reached through the route — recorded, not implied.
+
+    `_stage_upload` refuses twice: once on the size the client declared, once on the bytes as
+    they arrive. Through the endpoint only the first can fire, because FastAPI has already
+    parsed the whole multipart body by the time the route runs, so `size` is known and exact.
+    The cap therefore protects the media directory rather than the disk, and the second check
+    is a backstop for a streaming path rather than a live defence.
+
+    Asserting that here means a future Starlette that stops declaring a size fails this test
+    instead of silently promoting the second check to the only one.
+    """
+    import app.repertoire.api as repertoire_api
+
+    seen: dict[str, int | None] = {}
+    original = repertoire_api._stage_upload
+
+    def capture(file, *, scratch, what):  # noqa: ANN001 - matches the real signature
+        seen["size"] = file.size
+        raise HTTPException(status_code=413, detail="stop here")
+
+    repertoire_api._stage_upload = capture
+    try:
+        piece = client.post("/api/repertoire/pieces", json={"title": "Cap"}).json()
+        client.post(
+            f"/api/repertoire/pieces/{piece['id']}/media",
+            files={"file": ("take.wav", b"x" * 4096, "audio/wav")},
+        )
+    finally:
+        repertoire_api._stage_upload = original
+
+    assert seen.get("size") == 4096, (
+        "the endpoint is handed the real size, so the declared-size check always fires"
+        " first and the while-writing check is unreachable through it"
+    )
+
+
+def test_the_upload_cap_also_applies_while_writing(fresh_db, tmp_path) -> None:
+    """The second check, reached the only way it can be reached.
+
+    Called directly with an undeclared size, so the early check is skipped and the writing
+    loop is what enforces the cap. It writes up to the limit and then stops — it does not
+    write and then complain, which is the difference between a cap and a report.
+    """
+    import dataclasses
+    import io
+
+    import app.repertoire.api as repertoire_api
+    from app.config import settings as real_settings
+
+    original = repertoire_api.settings
+    repertoire_api.settings = dataclasses.replace(real_settings, max_upload_mb=1)
+    try:
+        upload = UploadFile(filename="take.wav", file=io.BytesIO(b"x" * (1024 * 1536)))
+        # A client that declared nothing — chunked transfer, or a parser that does not count.
+        upload.size = None
+        with pytest.raises(HTTPException) as raised:
+            repertoire_api._stage_upload(upload, scratch=tmp_path, what="recording")
+    finally:
+        repertoire_api.settings = original
+
+    assert raised.value.status_code == 413
+    assert "larger than" in raised.value.detail
+    staged = tmp_path / "upload.wav"
+    assert 0 < staged.stat().st_size <= 1024 * 1024, (
+        "the cap stopped the write at the limit rather than after it"
+    )
 
 
 def test_the_connection_waits_for_a_lock_instead_of_failing(fresh_db) -> None:

@@ -341,9 +341,20 @@ def _stage_upload(file: UploadFile, *, scratch: Path, what: str) -> Path:
     """Write one upload to a scratch path, enforcing the size cap while writing.
 
     Shared by recordings and scores so the cap cannot be enforced in one path and
-    forgotten in the other. The cap is checked as the bytes arrive rather than
-    against the declared size alone, because a client can lie about that and the
-    point of the cap is to protect the disk.
+    forgotten in the other.
+
+    Two checks, and it is worth being exact about which one does the work. **Through the
+    HTTP route only the first can fire**: FastAPI parses the whole multipart body before the
+    route runs, so by the time this is reached the bytes have already been received and
+    `file.size` is known and exact. The cap therefore protects the *media directory* — an
+    oversized upload is refused before it is converted, hashed and stored — and not the disk,
+    because by then the disk has already taken it. `test_the_endpoint_always_declares_a_size`
+    pins that, so a future parser that stops declaring a size fails the suite rather than
+    silently promoting the second check to the only one.
+
+    The second check, on the bytes as they arrive, is a backstop for a path that streams
+    rather than buffers. It is tested by calling this function directly, which is the only
+    way to reach it.
     """
     limit_bytes = settings.max_upload_mb * 1024 * 1024
     if file.size is not None and file.size > limit_bytes:

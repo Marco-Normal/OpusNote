@@ -1311,7 +1311,14 @@ def scenario_repertoire(browser) -> None:
         "the piece's journal entries are shown",
     )
     suggestion = page.locator(".suggestion").first.inner_text()
-    check("A" in suggestion and "level 8" in suggestion, f"key and level mapped ({suggestion!r})")
+    # The key as its own line and a level with a number behind it. The previous
+    # `"A" in suggestion` matched the word "A" anywhere in four lines of prose, so it
+    # could not have failed for any mapping the bridge produced.
+    check(
+        re.search(r"^A$", suggestion, re.M) is not None
+        and re.search(r"starting level \d+", suggestion) is not None,
+        f"key and level mapped ({suggestion!r})",
+    )
 
     # Recordings: imported by default, marked as ours, and actually playable.
     chips = page.evaluate(
@@ -2028,9 +2035,18 @@ def scenario_practice_log(browser) -> None:
         page.evaluate("() => document.querySelectorAll('[data-pedal-unrecorded]').length") == 2,
         "a sitting with no pedal rows says so, rather than reporting zero pedalling",
     )
+    # The negative and its positive control in one assertion. `[data-pedal-changes] == 0`
+    # on its own is also true when the selector was renamed and nothing rendered at all;
+    # requiring the two "not recorded" markers *and* the two segments alongside it means
+    # the check can only pass when the pedal rendering is actually there and says nothing.
     check(
-        page.evaluate("() => document.querySelectorAll('[data-pedal-changes]').length") == 0,
-        "and no pedal figure is invented for it",
+        page.evaluate(
+            "() => ({unrecorded: document.querySelectorAll('[data-pedal-unrecorded]').length,"
+            " changes: document.querySelectorAll('[data-pedal-changes]').length,"
+            " segments: document.querySelectorAll('.segment').length})"
+        )
+        == {"unrecorded": 2, "changes": 0, "segments": 2},
+        "and no pedal figure is invented for a sitting with no pedal rows",
     )
 
     with page.expect_response(lambda r: "/api/practice/segments/" in r.url and r.request.method == "PATCH"):
@@ -2617,8 +2633,10 @@ def scenario_playback(browser) -> None:
     page.evaluate("() => window.__fakeMidi.forget()")
     click_button(page, "« 30 s")
     page.wait_for_timeout(700)
+    # A length is never negative, so `>= 0` passed even when the jump played nothing at
+    # all. The jump has to produce notes.
     check(
-        len(page.evaluate("() => window.__fakeMidi.noteOns()")) >= 0,
+        len(page.evaluate("() => window.__fakeMidi.noteOns()")) > 0,
         "and the jump buttons re-start playback from the new position",
     )
     click_button(page, "Stop")
@@ -2802,9 +2820,14 @@ def scenario_autotag(browser) -> None:
         "the reported precision is the counts it came from "
         f"({quality['auto_correct']}/{quality['auto_attempted']})",
     )
+    # `unresolved >= 0` was true for every non-negative integer, so it asserted nothing.
+    # These are the relationships the panel's own numbers have to satisfy, and the last
+    # one fails the moment the matcher stops getting anything right.
     check(
-        quality["unresolved"] >= 0 and quality["offered_attempted"] >= 0,
-        f"and it says how much it could not judge ({quality['unresolved']})",
+        quality["correct_top"] <= quality["evaluated"] <= quality["labelled"]
+        and quality["correct_top"] > 0,
+        f"and its counts are consistent, having judged {quality['evaluated']} of "
+        f"{quality['labelled']} and got {quality['correct_top']} right",
     )
 
     # The inferred label, in the timeline, with the two answers next to it.
@@ -2896,9 +2919,11 @@ def scenario_autotag(browser) -> None:
 
     # --- the backfill: practice that predates the matcher ---
     report = api("/api/practice/autotag", "POST")
+    # The backfill has to account for every segment it looked at; `considered >= 0` and a
+    # key being present said nothing about whether any of them were dealt with.
     check(
-        report["considered"] >= 0 and "assigned" in report,
-        f"the backfill reports what it did ({report})",
+        report["assigned"] + report["offered"] + report["unresolved"] == report["considered"],
+        f"the backfill accounts for every segment it considered ({report})",
     )
     check(
         page.locator("[data-identification]").count() == 1,

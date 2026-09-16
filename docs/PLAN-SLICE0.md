@@ -267,6 +267,43 @@ call before Chromium is removed, not kept.
 
 ## Task 3 — Delete the assertions that cannot fail, and the test that stops short
 
+**Landed.** Four `check()` calls and one pytest test rewritten so each can fail; two of them
+were replaced by strict equalities over counted values rather than by another predicate.
+
+**The upload-cap finding is the interesting one.** `test_the_upload_cap_is_enforced_while_writing`
+set `max_upload_mb=0`, so a 4 KB body tripped the *declared-size* check and the while-writing
+check never ran. Investigating why turned up the real answer: **it cannot run through the
+endpoint at all.** FastAPI parses the whole multipart body before the route executes, so by
+the time `_stage_upload` is reached the bytes have already been received and `file.size` is
+known and exact. The cap protects the *media directory*, not the disk — and `_stage_upload`'s
+own docstring claimed the opposite ("the point of the cap is to protect the disk"), so the
+comment was corrected along with the test.
+
+Three tests now, each with a different job: the declared-size refusal through the route, a
+pinned assertion that the endpoint always hands over a real size (so a future parser that
+stops declaring one fails the suite rather than silently promoting the second check), and a
+direct call with an undeclared size that proves the while-writing check is not dead code and
+stops the write *at* the limit rather than after it.
+
+**Falsified, end to end, three of the five.**
+
+| Rewritten check | Break applied | Result |
+| --- | --- | --- |
+| while-writing cap | removed the `written > limit_bytes` raise | `DID NOT RAISE HTTPException` |
+| suggestion key | forced `suggested_key = "C"` in `bridge.py` | `key and level mapped ('…\nC\nstarting level 8\nPractise in C')` |
+| pedal-not-recorded equality | rendered a `data-pedal-changes` pill *alongside* the marker, so the positive control still passed | `and no pedal figure is invented for a sitting with no pedal rows` |
+
+The first attempt at the pedal one failed the *adjacent* positive control rather than the
+rewritten check, which proved nothing about the rewrite; the break was tightened until only
+the rewritten equality could catch it. That is the difference the standing rule is for.
+
+**Not separately falsified:** the pitch-quality count relationships and the backfill
+accounting. Both are strict comparisons — `correct_top <= evaluated <= labelled` with
+`correct_top > 0`, and `assigned + offered + unresolved == considered` — so any deviation in
+the asserted quantities fails them, and both passed against the real values. Recorded here as
+argued rather than proven, because the difference matters.
+
+
 **Files:** modify `backend/tools/e2e_browser.py` (`:1314`, `:1923`, `:2693`, `:2787`, `:2512`);
 modify `backend/tests/test_server_hardening.py:175`.
 
