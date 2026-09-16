@@ -673,6 +673,27 @@ def set_practice_kind(
         return _segment_rows(conn, int(row["sitting_id"]))
 
 
+def _backfill_blur_positions(conn: sqlite3.Connection, sitting_id: int) -> bool:
+    """Give a sitting segmented before Phase 21 its blur positions, once.
+
+    A stored metric is a cache of a pure function, and this column arrived *after* these rows
+    were written: a sitting has the blur count and no places, which is precisely the state the
+    feature exists to fix. Recomputing every sitting at startup would cost minutes on a real
+    library and would run on machines that never open the Log, so the first read of a sitting
+    fills in its own — one pass over the notes, the same work `ensure_segments` already does when
+    it segments. Returns whether anything was recomputed.
+    """
+    stale = conn.execute(
+        "SELECT 1 FROM segment_metrics m JOIN segments g ON g.id = m.segment_id"
+        " WHERE g.sitting_id = ? AND m.pedal_blur > 0 AND m.pedal_blur_ms IS NULL LIMIT 1",
+        (sitting_id,),
+    ).fetchone()
+    if stale is None:
+        return False
+    _refresh_metrics(conn, sitting_id)
+    return True
+
+
 def ensure_segments(
     sitting_id: int, now_ms: int | None = None, db_path: Path | None = None
 ) -> list[SegmentSummary]:
@@ -694,6 +715,10 @@ def ensure_segments(
             "SELECT COUNT(*) FROM segments WHERE sitting_id = ?", (sitting_id,)
         ).fetchone()[0]
         if existing:
+            # A sitting segmented before Phase 21 carries the blur count and no places; this is
+            # the one place that already knows "the segments exist", so it is where the cache is
+            # brought up to date rather than in every reader.
+            _backfill_blur_positions(conn, sitting_id)
             return _segment_rows(conn, sitting_id)
 
         # An open sitting's boundaries would be provisional, and because stored

@@ -802,14 +802,13 @@ def test_a_sitting_with_no_pedal_rows_reports_no_basis(fresh_db) -> None:
     assert metrics.pedal_blur == 0
 
 
-def test_the_stored_blur_positions_are_where_the_stored_count_says(fresh_db) -> None:
-    """One number and the places it is made of, from one pass over the same data.
+def _blurred_sitting() -> int:
+    """A sitting carrying exactly two pedal blurs, at 1,000 ms and 1,600 ms.
 
-    The invariant the cache exists to keep. A count alone cannot be acted on — "nine blurs" in a
-    two-thousand-note segment says nothing about where to look — and a count that disagreed with
-    its own positions would be worse than either.
+    Two rather than one: with a single blur a truncation of the positions still passes the
+    invariant below, which is the break that test exists to catch.
     """
-    sitting_id = store.ingest(
+    return store.ingest(
         EventBatch(
             tz_offset_minutes=0,
             source="web_midi",
@@ -820,9 +819,7 @@ def test_the_stored_blur_positions_are_where_the_stored_count_says(fresh_db) -> 
                 WireNote(epoch_ms=BASE_MS + 1_000, pitch=65, velocity=70, duration_ms=200, channel=0),
                 WireNote(epoch_ms=BASE_MS + 1_000, pitch=67, velocity=70, duration_ms=200, channel=0),
                 WireNote(epoch_ms=BASE_MS + 1_000, pitch=69, velocity=70, duration_ms=200, channel=0),
-                # A second arrival over a longer ring: three more new classes, so the sitting
-                # carries *two* blurs. One would let a truncation of the list pass unnoticed,
-                # which is exactly the break this is here to catch.
+                # A second arrival over a longer ring: three more new classes.
                 WireNote(epoch_ms=BASE_MS + 1_600, pitch=71, velocity=70, duration_ms=200, channel=0),
                 WireNote(epoch_ms=BASE_MS + 1_600, pitch=73, velocity=70, duration_ms=200, channel=0),
                 WireNote(epoch_ms=BASE_MS + 1_600, pitch=74, velocity=70, duration_ms=200, channel=0),
@@ -833,6 +830,16 @@ def test_the_stored_blur_positions_are_where_the_stored_count_says(fresh_db) -> 
             ],
         )
     ).sitting_id
+
+
+def test_the_stored_blur_positions_are_where_the_stored_count_says(fresh_db) -> None:
+    """One number and the places it is made of, from one pass over the same data.
+
+    The invariant the cache exists to keep. A count alone cannot be acted on — "nine blurs" in a
+    two-thousand-note segment says nothing about where to look — and a count that disagreed with
+    its own positions would be worse than either.
+    """
+    sitting_id = _blurred_sitting()
     store.ensure_segments(sitting_id)
 
     metrics = store._segment_rows(connect(), sitting_id)[0].metrics
@@ -842,3 +849,28 @@ def test_the_stored_blur_positions_are_where_the_stored_count_says(fresh_db) -> 
     )
     assert metrics.pedal_blur_ms == [1_000, 1_600], "both triads, in the order they arrived"
     assert metrics.pedal_blur == len(metrics.pedal_blur_ms)
+
+
+def test_a_sitting_from_before_the_column_gets_its_places_on_the_first_read(fresh_db) -> None:
+    """An upgraded library has the count and no positions; the read fills them in.
+
+    This is the state the user's own sitting is in: 14 blurs across two segments, computed before
+    the column existed. A startup migration would recompute every sitting in the database on every
+    machine including the ones that never open the Log, so the first read of a sitting — which is
+    already the one that decides "these segments exist" — brings its own cache up to date.
+    """
+    sitting_id = _blurred_sitting()
+    store.ensure_segments(sitting_id)
+
+    conn = connect()
+    conn.execute(
+        "UPDATE segment_metrics SET pedal_blur_ms = NULL WHERE segment_id IN"
+        " (SELECT id FROM segments WHERE sitting_id = ?)",
+        (sitting_id,),
+    )
+    conn.commit()
+
+    metrics = store.sitting_detail(sitting_id).segments[0].metrics
+    assert metrics is not None
+    assert metrics.pedal_blur == 2, "the count was there all along"
+    assert metrics.pedal_blur_ms == [1_000, 1_600], "and the first read supplied the places"
