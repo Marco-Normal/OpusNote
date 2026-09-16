@@ -1312,3 +1312,44 @@ additive response fields (`SegmentSummary.practice_kind*`, `AnalyticsSummary.kin
 one of the seven kinds. `BACKUP_VERSION` is unchanged (the guarantee is one-directional). A
 database created by this build reports `user_version = 2`, so an older build refuses it rather than
 misreading it. `resegment` still discards kinds along with labels, and still asks first.
+
+## 2026-09-16 — sight-reading agent — Phase 20b planned; a kind-tagged split no longer loses the tag
+
+Scope: `docs/PLAN-PHASE20B.md` (new), `docs/ECOSYSTEM.md`, `backend/app/practice/store.py`,
+`backend/tests/test_practice_api.py`, `backend/tools/falsifications/drop_split_kind_inheritance.sh`,
+`AGENT-LOG.md`.
+
+Did: wrote the executable plan for Phase 20b (the piano-side toolkit) and fixed a gap 20a left in
+the two segment-boundary writers.
+
+**The 20a gap, found while reading `split_segment` for 20c's undo design.** `split_segment` copied
+`source` and `workout_id` to the new half and not `practice_kind`, so tagging a segment and then
+splitting it silently dropped the tag on one half — and 20c's undo could never restore what was
+never carried. Fixed at the owner: a split inherits a **counted** kind (`manual` or `accepted`) to
+both halves and drops an unanswered `offered` one from both, because an offer was a question about
+the stretch that no longer exists; a merge keeps whichever half carries a counted kind, preferring
+the earlier one, mirroring the rule the piece label already follows. Three tests and one break
+script, falsified.
+
+**20b's plan.** Six tasks: the controller stream in `midi.ts` plus a pure `pedalGesture.ts`; the
+discovery readout and the hands-free action; count-in bars and click volume; hash routes and deep
+links; shortcuts and the first overlay in the app; then the browser scenario and docs. Two findings
+worth naming here because they are the sharp edges:
+
+1. **`midi.ts` drops every controller but CC64** (`if (status === 0xb0 && first === 64)`), so the
+   sostenuto pedal has no path to any handler at all. 20b adds a second, read-only controller
+   stream — and deliberately does **not** widen the pedal stream, because `pedal_events` has no
+   controller column and `practice/pedal.py` reads it as CC64, so routing CC66 into it would record
+   the sostenuto as sustain and corrupt the blur and basis figures.
+2. **A preference nobody can observe is a preference nobody can verify.** The browser tier cannot
+   hear the metronome, so the practice view now states the count-in it actually derived
+   (`data-count-in-beats`), from the same value it hands the metronome rather than from the
+   preference — otherwise the falsification would have nothing to fail against.
+
+Impact on the other side: the store.py change is the only server-side one and it is additive
+behaviour on an existing column, with no schema, route or wire change. `BACKUP_VERSION` and
+`SCHEMA_VERSION` are untouched. 20b itself is client-only: no route, table, column or wire format
+changes, and the practice log still means CC64 by `pedal_events`.
+
+Still to plan: 20c (undo, grace-day streak, weekly target), 20d (journal and library depth) and
+20e (audio takes).
