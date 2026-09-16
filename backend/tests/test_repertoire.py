@@ -760,17 +760,24 @@ def tone_wav(tmp_path):
     import subprocess
 
     path = tmp_path / "take.wav"
-    result = subprocess.run(
-        [
-            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-            "-f", "lavfi", "-i", "sine=frequency=440:duration=2",
-            str(path),
-        ],
-        capture_output=True,
-        text=True,
-    )
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                "-f", "lavfi", "-i", "sine=frequency=440:duration=2",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        # This was the branch that never ran: `subprocess.run` raises before the returncode
+        # is ever inspected, so a machine without ffmpeg got twelve errors rather than twelve
+        # skips — the graceful path was written and unreachable. Skips are reported at the end
+        # of the run now, so "the media suite did not run" is visible rather than inferred.
+        pytest.skip("ffmpeg is not on PATH, so the media-conversion suite cannot run")
     if result.returncode != 0:
-        pytest.skip(f"ffmpeg unavailable: {result.stderr[:200]}")
+        pytest.skip(f"ffmpeg is on PATH but failed: {result.stderr[:200]}")
     return path
 
 

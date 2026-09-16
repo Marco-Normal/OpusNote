@@ -385,6 +385,32 @@ handler a no-op.
 
 ## Task 5 — Skips report as skips
 
+**Landed, and it found a graceful path that had never run.**
+
+`skip()` records a scenario that ran nothing; `main()` prints them and returns 1 unless
+`SRT_E2E_ALLOW_SKIPS=1`. Verified by pointing the client at a legacy fixture the server was
+not using: the scenario reports `SKIPPED`, `main()` prints *"but these ran no assertions"*,
+and the process exits **1** where it used to print *"All browser scenarios passed."* and
+exit 0.
+
+On the pytest side, `conftest.py` records setup-time skips and prints them under a
+"*N tests did not run*" separator, so a quiet `-q` run cannot hide them. Verified by running
+the repertoire suite with `ffmpeg` removed from `PATH`: `87 passed, 12 skipped`, with all
+twelve reasons listed.
+
+**And that verification exposed a branch that had never executed.**
+`tone_wav` checked `result.returncode` for a `pytest.skip` — but `subprocess.run` raises
+`FileNotFoundError` when the binary is missing, *before* the returncode is ever inspected. So
+the intended "skip the media suite when ffmpeg is absent" behaviour did not exist: a machine
+without ffmpeg got twelve errors, and the graceful branch was unreachable code. It now catches
+the missing binary and skips with a reason. This is the same shape as the upload-cap finding
+in Task 3 — a documented fallback that the happy path never reaches, which only a deliberate
+failure injection makes visible.
+
+**Also here:** `pytest.ini` now excludes `mutants/`, mutmut's working copy of the tree.
+Without it pytest collects a second `conftest.py` under the same module name and aborts
+collection — so a mutation run would break the very suite it had just graded.
+
 **Files:** modify `backend/tools/e2e_browser.py` (`main`, `scenario_repertoire`,
 `scenario_playback`); modify `backend/tests/test_repertoire.py` (the `ffmpeg` fixture).
 

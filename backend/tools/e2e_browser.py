@@ -39,6 +39,17 @@ BASE_URL = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8000"
 ONLY = sys.argv[2].lower() if len(sys.argv) > 2 else ""
 CHROMIUM = "/usr/bin/chromium"
 SHOTS = Path(__file__).resolve().parent.parent / "screenshots"
+
+#: Scenarios that ran no assertions, with why. `check()` is what raises, so a scenario that
+#: returns early is a pass — and `main()` printed "All browser scenarios passed." over it.
+#: The largest scenario in the suite could vanish and the run would still look green.
+SKIPPED: list[tuple[str, str]] = []
+
+
+def skip(scenario: str, reason: str) -> None:
+    """Record that a scenario did nothing, rather than returning quietly."""
+    SKIPPED.append((scenario, reason))
+    print(f"      SKIPPED: {reason}")
 DEFAULT_DB = Path(__file__).resolve().parent.parent / "data" / "e2e.sqlite3"
 DEFAULT_LEGACY = Path(__file__).resolve().parent.parent / "data" / "legacy-fixture.db"
 
@@ -1241,7 +1252,7 @@ def scenario_repertoire(browser) -> None:
         # The server was started against a different legacy database, so the
         # fixture is not what it will import. Say so rather than asserting on
         # someone's real library.
-        print(f"      skipped: server reads {expected['legacy_db']}, fixture is {fixture}")
+        skip("scenario_repertoire", f"server reads {expected['legacy_db']}, fixture is {fixture}")
         return
 
     clear_repertoire()
@@ -2545,7 +2556,7 @@ def scenario_playback(browser) -> None:
     else:
         # Without the samples installed this scenario cannot check the instrument, and
         # pretending otherwise would be a green tick over nothing.
-        print("      skipped: the sampled piano is not installed on this server")
+        print("      this half is not installed; the MIDI-output checks below still run")
 
     # --- playing, through the piano ---
     # Selecting a sitting reads its detail; the notes are fetched on the first play,
@@ -3127,6 +3138,20 @@ def main() -> int:
             browser.close()
 
     print("\nAll browser scenarios passed.")
+
+    if SKIPPED:
+        print("\nbut these ran no assertions:")
+        for name, reason in SKIPPED:
+            print(f"  {name}: {reason}")
+        if os.environ.get("SRT_E2E_ALLOW_SKIPS") != "1":
+            print(
+                "\nSet SRT_E2E_ALLOW_SKIPS=1 only when this environment genuinely cannot run"
+                " them — no ffmpeg, or the sampled piano not installed.",
+                file=sys.stderr,
+            )
+            return 1
+        print("(SRT_E2E_ALLOW_SKIPS=1, so this is accepted)")
+
     return 0
 
 

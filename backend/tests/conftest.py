@@ -275,3 +275,33 @@ def add_legacy_practice(path: Path) -> Path:
 
 def pytest_sessionfinish(session, exitstatus):  # noqa: ARG001
     shutil.rmtree(_TMP_ROOT, ignore_errors=True)
+
+
+#: Tests that reported themselves skipped, by reason. Sits alongside `SKIPPED` in
+#: `tools/e2e_browser.py`, which does the same job for the browser scenarios.
+_SKIPPED: list[tuple[str, str]] = []
+
+
+def pytest_runtest_logreport(report):
+    if report.skipped and report.when == "setup":
+        reason = ""
+        if isinstance(report.longrepr, tuple) and len(report.longrepr) == 3:
+            reason = str(report.longrepr[2]).removeprefix("Skipped: ")
+        elif hasattr(report.longrepr, "reason"):
+            reason = str(report.longrepr.reason)
+        _SKIPPED.append((report.nodeid, reason))
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):  # noqa: ARG001
+    """Say plainly how many tests did not run, and why.
+
+    `pytest -q` ends with "811 passed, 12 skipped", and a skipped test is easy to read past —
+    which matters here because the whole media-conversion surface sits behind an ffmpeg
+    availability check. A run where those silently did nothing must not look like a run where
+    they passed.
+    """
+    if not _SKIPPED:
+        return
+    terminalreporter.write_sep("=", f"{len(_SKIPPED)} tests did not run")
+    for nodeid, reason in _SKIPPED:
+        terminalreporter.write_line(f"  {nodeid}: {reason}")
