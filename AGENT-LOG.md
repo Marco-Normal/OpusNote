@@ -1235,3 +1235,21 @@ phase and two risk rows; no route, response field, column, table or wire format 
 and `BACKUP_VERSION` is untouched. When 20e ships it will add `AudioCaptureAllowedForUrls` to
 `deploy/chromium-policy.json`, which is a kiosk-policy change the deployment docs must
 describe at that point — noted in the document's doc-ownership section.
+
+## 2026-09-16 — sight-reading agent — Phase 20a is planned and not started
+
+Scope: `docs/PLAN-PHASE20A.md` and `AGENT-LOG.md`. No code, schema, route or component changed.
+
+Did: wrote the implementation plan for Phase 20a (practice kinds) — five tasks with complete code,
+exact commands and a falsification for every new assertion. Planned against the tree as it stands
+after `d0aba27` (`./check.sh --fast` measured green in 65 s). Three defects were found and fixed
+while planning and are recorded in the plan: the offer pass would have run before the matcher, when
+a fresh segment still has no piece, so "slower than usual" could never fire (it now runs after
+autotagging and again on label assignment); an offered kind was excluded from the split instead of
+landing in the untagged bucket, which would have broken reconciliation (it is now a CASE); and the
+"manual wins" guard test was built on a segment no offer would ever fire for, so it would have
+passed with the guard deleted.
+
+Impact on the other side: none — planning only. Anyone about to start 20a should read
+`docs/PLAN-PHASE20A.md` first; `ECOSYSTEM.md` § Phase 20 remains the what/why, and the plan does not
+restate it. 20b-20e are not planned yet.
