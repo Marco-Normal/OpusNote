@@ -330,6 +330,10 @@ cd ../backend && .venv/bin/python -m uvicorn app.main:app --port 8000
 
 ### Tests
 
+> **What these must cover is owned by [`docs/TEST-STRATEGY.md`](docs/TEST-STRATEGY.md).**
+> The commands below are the mechanics; the strategy decides which tier a change owes,
+> and a slice is not done until `./check.sh --full` passes.
+
 ```bash
 # Backend unit + API integration
 cd backend && .venv/bin/pip install -r requirements-dev.txt

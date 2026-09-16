@@ -28,7 +28,9 @@ These do not change per slice.
 2. **Every slice lands with tests.** Backend unit/integration coverage in
    `backend/tests/`, and the browser end-to-end script
    (`backend/tools/e2e_browser.py`) extended when the slice is user-visible.
-   "It looked right when I ran it" is not verification.
+   "It looked right when I ran it" is not verification. **Superseded in detail by
+   [`TEST-STRATEGY.md`](./TEST-STRATEGY.md)**, which owns what each kind of change owes;
+   this rule stands as the history of why.
 3. **Nothing regresses the 173 existing tests.** A slice that needs an existing
    assertion changed must say so in its PR description and explain why.
 4. **Notation legibility wins ties.** Where a UI preference fights how music is
@@ -552,6 +554,11 @@ The e2e harness needs three upgrades to carry these slices honestly:
 Everything else about the harness stays: the injected fake Web MIDI device
 exercises the real input path, and a profile reset at the start keeps runs
 deterministic.
+
+**All three landed** during slices B, C and the phase work that followed. The
+verification surface has since outgrown this section: what the suite must cover,
+which tier a change owes, and how a new check is proven able to fail are owned by
+[`TEST-STRATEGY.md`](./TEST-STRATEGY.md).
 
 ---
 
