@@ -17,6 +17,24 @@ from .capture_status import CaptureReport
 #: silently invent a third category that the analytics then have to display.
 PracticeSource = Literal["web_midi", "sight_reading"]
 
+#: How a segment was practised — the axis the log was missing. Deliberately **not**
+#: including sight-reading: that is owned by `source`/`workout_id`, and a second owner
+#: for one fact is how the two drift apart.
+PracticeKind = Literal[
+    "run_through",
+    "slow",
+    "section",
+    "hands_separate",
+    "memory",
+    "warm_up",
+    "other",
+]
+
+#: Where a stored kind came from. 'offered' is a proposal the player has not answered, so
+#: it is displayed as a question and excluded from every aggregate — the same restraint
+#: the autotag bands and `pedal_basis` follow.
+PracticeKindBasis = Literal["offered", "manual", "accepted"]
+
 
 class WireNote(BaseModel):
     epoch_ms: int = Field(description="Absolute event time, ms since the Unix epoch")
