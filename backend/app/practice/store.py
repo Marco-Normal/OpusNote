@@ -21,15 +21,23 @@ from __future__ import annotations
 
 import sqlite3
 import time
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Iterable, Literal, Sequence
 
 from .. import db
 from ..config import settings
 from . import capture_status
 from . import schema as practice_schema
 from .metrics import SegmentMetrics, segment_metrics
+from .pedal import (
+    BASIS_OBSERVED,
+    median_velocity,
+    register_balance,
+    segment_pedal,
+    velocity_range,
+)
 from .similarity import (
     DEFAULT_WEIGHTS,
     Candidate,
@@ -78,6 +86,22 @@ CLOSE_QUIET_MS = 1_500
 #: How far back to look for an open sitting to close. Without it, a device event
 #: days after the last note would "close" a sitting that the silence already closed.
 CLOSE_LOOKBACK_MS = 60 * 60 * 1000
+
+
+@dataclass(frozen=True)
+class CloseOutcome:
+    """What closing found, including *why* it found nothing.
+
+    The two ways to close nothing are different facts and the client has to be able
+    to tell them apart. *nothing open* means the piano had already gone quiet and
+    there is nothing to do; *still playing* means notes arrived moments ago and the
+    sitting is deliberately being left alone, because splitting a session mid-phrase
+    over a USB blip is worse than being slow. Both used to arrive as a bare `None`,
+    so the interface had to guess which one it was looking at.
+    """
+
+    sitting_id: int | None
+    reason: Literal["closed", "still playing", "nothing open"]
 
 
 class NotFound(Exception):
@@ -250,7 +274,7 @@ def close_open_sitting(
     db_path: Path | None = None,
     now_ms: int | None = None,
     quiet_ms: int = CLOSE_QUIET_MS,
-) -> int | None:
+) -> CloseOutcome:
     """Close the newest open sitting, if the player has stopped.
 
     Called when the piano goes away — switched off, unplugged — because that answers
@@ -260,7 +284,9 @@ def close_open_sitting(
     ``quiet_ms`` guards the other direction: a device event while notes are still
     arriving is a blip (a USB hiccup, a statechange race), not the end of a session,
     and splitting a sitting in the middle of playing would be worse than being slow.
-    Returns the sitting id that was closed, or None if there was nothing to close.
+
+    Returns the sitting that was closed and the reason, so a caller can tell "nothing
+    was open" from "you are still playing" without asking a second question.
     """
     now = int(now_ms if now_ms is not None else time.time() * 1000)
     with db.transaction(db_path) as conn:
@@ -271,14 +297,14 @@ def close_open_sitting(
             (now - CLOSE_LOOKBACK_MS,),
         ).fetchone()
         if sitting is None:
-            return None
+            return CloseOutcome(sitting_id=None, reason="nothing open")
         if now - int(sitting["ended_ms"]) < quiet_ms:
-            return None
+            return CloseOutcome(sitting_id=None, reason="still playing")
         conn.execute(
             "UPDATE sittings SET closed_ms = ?1 WHERE id = ?2",
             (int(sitting["ended_ms"]), int(sitting["id"])),
         )
-        return int(sitting["id"])
+        return CloseOutcome(sitting_id=int(sitting["id"]), reason="closed")
 
 
 def _sitting_notes(conn: sqlite3.Connection, sitting_id: int, started_ms: int) -> list[Note]:
@@ -325,7 +351,10 @@ def _segment_rows(conn: sqlite3.Connection, sitting_id: int) -> list[SegmentSumm
                    AND e.onset_ms >= g.start_ms
                    AND e.onset_ms <= g.end_ms) AS note_count,
                m.duration_s, m.note_count AS metric_note_count, m.median_tempo,
-               m.mean_velocity, m.velocity_stddev, m.restarts
+               m.mean_velocity, m.velocity_stddev, m.restarts,
+               m.median_velocity, m.velocity_range,
+               m.mean_velocity_low, m.mean_velocity_high,
+               m.pedal_changes, m.pedal_down_ratio, m.pedal_blur, m.pedal_basis
         FROM segments g
         LEFT JOIN pieces p ON p.id = g.piece_id
         LEFT JOIN composers c ON c.id = p.composer_id
@@ -347,6 +376,14 @@ def _segment_rows(conn: sqlite3.Connection, sitting_id: int) -> list[SegmentSumm
                 mean_velocity=data["mean_velocity"],
                 velocity_stddev=data["velocity_stddev"],
                 restarts=data["restarts"],
+                median_velocity=data["median_velocity"],
+                velocity_range=data["velocity_range"],
+                mean_velocity_low=data["mean_velocity_low"],
+                mean_velocity_high=data["mean_velocity_high"],
+                pedal_changes=data["pedal_changes"],
+                pedal_down_ratio=data["pedal_down_ratio"],
+                pedal_blur=data["pedal_blur"],
+                pedal_basis=data["pedal_basis"],
             )
         out.append(
             SegmentSummary(
@@ -379,6 +416,15 @@ def _refresh_metrics(conn: sqlite3.Connection, sitting_id: int) -> None:
         "SELECT id, start_ms, end_ms FROM segments WHERE sitting_id = ?",
         (sitting_id,),
     ).fetchall()
+    # Whether this sitting has any pedal rows at all, which is not the same question
+    # as whether the pedal was pressed: imported history has none, and reporting a
+    # zero there would be reporting a fault that was never observed.
+    pedals_recorded = (
+        conn.execute(
+            "SELECT 1 FROM pedal_events WHERE sitting_id = ? LIMIT 1", (sitting_id,)
+        ).fetchone()
+        is not None
+    )
     for segment in segments:
         rows = conn.execute(
             "SELECT onset_ms, duration_ms, pitch, velocity, channel FROM note_events"
@@ -401,18 +447,40 @@ def _refresh_metrics(conn: sqlite3.Connection, sitting_id: int) -> None:
             attack_window_ms=settings.attack_window_ms,
             restart_gap_ms=settings.restart_gap_ms,
         )
+        # The pedal is read for the whole sitting and then clipped to the segment: a
+        # stretch that began before the boundary is still holding notes inside it.
+        pedal_rows = conn.execute(
+            "SELECT onset_ms, value FROM pedal_events"
+            " WHERE sitting_id = ? AND onset_ms <= ? ORDER BY onset_ms",
+            (sitting_id, segment["end_ms"]),
+        ).fetchall()
+        pedal_moves = [(int(row["onset_ms"]), int(row["value"])) for row in pedal_rows]
+        pedalling = segment_pedal(notes, pedal_moves, recorded=pedals_recorded)
+        median = median_velocity(notes)
+        spread = velocity_range(notes)
+        low, high = register_balance(notes)
         conn.execute(
             "INSERT INTO segment_metrics"
             " (segment_id, duration_s, note_count, median_tempo, mean_velocity,"
-            "  velocity_stddev, restarts)"
-            " VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"
+            "  velocity_stddev, restarts, pedal_changes, pedal_down_ratio, pedal_blur,"
+            "  pedal_basis, median_velocity, velocity_range, mean_velocity_low,"
+            "  mean_velocity_high)"
+            " VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)"
             " ON CONFLICT (segment_id) DO UPDATE SET"
             "  duration_s = excluded.duration_s,"
             "  note_count = excluded.note_count,"
             "  median_tempo = excluded.median_tempo,"
             "  mean_velocity = excluded.mean_velocity,"
             "  velocity_stddev = excluded.velocity_stddev,"
-            "  restarts = excluded.restarts",
+            "  restarts = excluded.restarts,"
+            "  pedal_changes = excluded.pedal_changes,"
+            "  pedal_down_ratio = excluded.pedal_down_ratio,"
+            "  pedal_blur = excluded.pedal_blur,"
+            "  pedal_basis = excluded.pedal_basis,"
+            "  median_velocity = excluded.median_velocity,"
+            "  velocity_range = excluded.velocity_range,"
+            "  mean_velocity_low = excluded.mean_velocity_low,"
+            "  mean_velocity_high = excluded.mean_velocity_high",
             (
                 segment["id"],
                 stats.duration_s,
@@ -421,6 +489,14 @@ def _refresh_metrics(conn: sqlite3.Connection, sitting_id: int) -> None:
                 stats.mean_velocity,
                 stats.velocity_stddev,
                 stats.restarts,
+                pedalling.changes,
+                pedalling.down_ratio,
+                pedalling.blur,
+                BASIS_OBSERVED if pedalling.recorded else None,
+                median,
+                spread,
+                low,
+                high,
             ),
         )
     # Drop metrics for segments that no longer exist (a merge removes one).
@@ -528,8 +604,8 @@ def sitting_detail(
     conn = db.connect(db_path)
     try:
         row = conn.execute(
-            "SELECT id, started_ms, ended_ms, started_at, ended_at, local_date, source"
-            " FROM sittings WHERE id = ?",
+            "SELECT id, started_ms, ended_ms, started_at, ended_at, local_date, source,"
+            " closed_ms FROM sittings WHERE id = ?",
             (sitting_id,),
         ).fetchone()
         if row is None:
@@ -552,7 +628,13 @@ def sitting_detail(
             source=row["source"],
             note_count=int(note_count),
             duration_s=(int(row["ended_ms"]) - int(row["started_ms"])) / 1000.0,
-            closed=int(row["ended_ms"]) + settings.sitting_gap_s * 1000 < now,
+            # The same question `ensure_segments` asks, answered the same way: a
+            # sitting is finished when it was explicitly closed (the piano went
+            # away) *or* when the silence gap has run out. Deriving it from the
+            # clock alone reported "not closed" for a sitting the piano had already
+            # ended, so the interface disagreed with the segmentation underneath it.
+            closed=row["closed_ms"] is not None
+            or int(row["ended_ms"]) + settings.sitting_gap_s * 1000 < now,
             segments=segments,
         )
     finally:
@@ -831,15 +913,43 @@ def calendar(conn: sqlite3.Connection, days: int) -> list[CalendarDay]:
         " GROUP BY s.local_date"
     ).fetchall()
     notes_by_date = {row["date"]: int(row["notes"]) for row in note_rows}
-    by_date = {
-        row["date"]: CalendarDay(
-            date=row["date"],
-            minutes=round(float(row["minutes"] or 0.0), 1),
-            notes=notes_by_date.get(row["date"], 0),
-            sittings=int(row["sittings"]),
-        )
-        for row in days_rows
+    # What was written down, kept as its own series. The practice domain reads the
+    # journal here for the same reason `by_piece` already does: "how long did I
+    # practise" is a question about the whole log, and the journal is part of it.
+    written_rows = conn.execute(
+        """
+        SELECT entry_date AS date,
+               COALESCE(SUM(practice_minutes), 0) AS minutes,
+               COUNT(*) AS entries
+        FROM piece_journal
+        WHERE practice_minutes IS NOT NULL
+        GROUP BY entry_date
+        """
+    ).fetchall()
+    written_by_date = {
+        row["date"]: (round(float(row["minutes"] or 0.0), 1), int(row["entries"]))
+        for row in written_rows
     }
+    by_date = {}
+    for row in days_rows:
+        date = row["date"]
+        written, entries = written_by_date.get(date, (0.0, 0))
+        by_date[date] = CalendarDay(
+            date=date,
+            minutes=round(float(row["minutes"] or 0.0), 1),
+            notes=notes_by_date.get(date, 0),
+            sittings=int(row["sittings"]),
+            written_minutes=written,
+            written_entries=entries,
+        )
+    # A day with prose but no notes still has to appear, or the entries vanish from
+    # the calendar entirely.
+    for date, (written, entries) in written_by_date.items():
+        if date not in by_date:
+            by_date[date] = CalendarDay(
+                date=date, minutes=0.0, notes=0, sittings=0,
+                written_minutes=written, written_entries=entries,
+            )
     return _fill_days(by_date, days)
 
 

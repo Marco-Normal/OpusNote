@@ -1011,3 +1011,136 @@ def test_a_score_has_nothing_to_loop(client):
     )
     assert response.status_code == 422
     assert "score" in response.json()["detail"]
+
+
+# --------------------------------------------------------------------------
+# Phase 18a — the journal joins the measurement
+# --------------------------------------------------------------------------
+
+
+def _a_piece(client, title: str = "Intermezzo") -> int:
+    created = client.post("/api/repertoire/pieces", json={"title": title})
+    assert created.status_code == 201, created.text
+    return created.json()["id"]
+
+
+def _a_sitting(client) -> int:
+    """A closed sitting that is well in the past, so nothing is waiting on silence."""
+    import time
+
+    base = int(time.time() * 1000) - 3 * 60 * 60 * 1000
+    response = client.post(
+        "/api/practice/events",
+        json={
+            "tz_offset_minutes": 0,
+            "events": [
+                {"epoch_ms": base, "pitch": 60, "velocity": 70, "duration_ms": 300, "channel": 0},
+                {"epoch_ms": base + 500, "pitch": 64, "velocity": 70, "duration_ms": 300, "channel": 0},
+            ],
+        },
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["sitting_id"]
+
+
+def test_a_journal_entry_can_be_written_about_a_sitting(client) -> None:
+    """The piece owns the entry; the sitting is the session it was written about."""
+    piece_id = _a_piece(client)
+    sitting_id = _a_sitting(client)
+
+    created = client.post(
+        f"/api/repertoire/pieces/{piece_id}/journal",
+        json={
+            "entry_date": "2026-03-01",
+            "content": "worked the coda slowly",
+            "sitting_id": sitting_id,
+        },
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["sitting_id"] == sitting_id
+
+    detail = client.get(f"/api/repertoire/pieces/{piece_id}").json()
+    assert detail["journal"][0]["sitting_id"] == sitting_id
+
+
+def test_an_entry_with_no_sitting_is_still_fine(client) -> None:
+    """Written from the piece's page, with no session in mind — the ordinary case."""
+    piece_id = _a_piece(client)
+    created = client.post(
+        f"/api/repertoire/pieces/{piece_id}/journal",
+        json={"entry_date": "2026-03-01", "content": "fingering decided in bar 12"},
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["sitting_id"] is None
+
+
+def test_an_entry_about_a_sitting_that_does_not_exist_is_refused(client) -> None:
+    piece_id = _a_piece(client)
+    response = client.post(
+        f"/api/repertoire/pieces/{piece_id}/journal",
+        json={"entry_date": "2026-03-01", "content": "x", "sitting_id": 999_999},
+    )
+    assert response.status_code == 422
+    assert "999999" in response.json()["detail"]
+
+
+def test_a_journal_entry_can_be_edited(client) -> None:
+    """Editing, not delete-and-retype. The endpoint existed and nothing called it."""
+    piece_id = _a_piece(client)
+    entry = client.post(
+        f"/api/repertoire/pieces/{piece_id}/journal",
+        json={"entry_date": "2026-03-01", "content": "first thought", "practice_minutes": 20},
+    ).json()
+
+    edited = client.patch(
+        f"/api/repertoire/journal/{entry['id']}",
+        json={"content": "a paragraph now\nwith a second line"},
+    )
+    assert edited.status_code == 200, edited.text
+    assert edited.json()["content"] == "a paragraph now\nwith a second line"
+    assert edited.json()["practice_minutes"] == 20, "a field the edit did not mention survives"
+
+
+def test_the_journal_feed_gathers_entries_across_pieces(client) -> None:
+    first = _a_piece(client, "Intermezzo")
+    second = _a_piece(client, "Ballade")
+    client.post(
+        f"/api/repertoire/pieces/{first}/journal",
+        json={"entry_date": "2026-03-01", "content": "older"},
+    )
+    client.post(
+        f"/api/repertoire/pieces/{second}/journal",
+        json={"entry_date": "2026-03-02", "content": "newer"},
+    )
+
+    feed = client.get("/api/repertoire/journal").json()
+    assert [row["content"] for row in feed] == ["newer", "older"], "newest first"
+    assert feed[0]["piece_title"] == "Ballade", "and it says which piece it came from"
+
+
+def test_the_journal_feed_searches_the_prose(client) -> None:
+    piece_id = _a_piece(client)
+    client.post(
+        f"/api/repertoire/pieces/{piece_id}/journal",
+        json={"entry_date": "2026-03-01", "content": "the coda needs slow work"},
+    )
+    client.post(
+        f"/api/repertoire/pieces/{piece_id}/journal",
+        json={"entry_date": "2026-03-02", "content": "pedalling is fine"},
+    )
+
+    hits = client.get("/api/repertoire/journal", params={"search": "coda"}).json()
+    assert [row["content"] for row in hits] == ["the coda needs slow work"]
+
+
+def test_library_search_finds_a_piece_by_what_was_written_about_it(client) -> None:
+    piece_id = _a_piece(client, "Intermezzo")
+    client.post(
+        f"/api/repertoire/pieces/{piece_id}/journal",
+        json={"entry_date": "2026-03-01", "content": "the coda needs slow work"},
+    )
+
+    found = client.get("/api/repertoire/pieces", params={"search": "coda"}).json()
+    assert [row["title"] for row in found] == ["Intermezzo"], (
+        "a word that appears only in the journal still finds the piece"
+    )

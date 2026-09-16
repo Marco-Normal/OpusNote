@@ -234,6 +234,14 @@ export const api = {
     deleteJournal: (entryId: number) =>
       request<DeleteResult>(`/repertoire/journal/${entryId}`, { method: 'DELETE' }),
 
+    /** The newest entries across the whole library, newest first. */
+    journal: (filters: { limit?: number; search?: string } = {}) => {
+      const query = new URLSearchParams();
+      if (filters.limit) query.set('limit', String(filters.limit));
+      if (filters.search) query.set('search', filters.search);
+      return request<JournalEntry[]>(`/repertoire/journal${query.size ? `?${query}` : ''}`);
+    },
+
     uploadRecording: (pieceId: number, file: File, title?: string) => {
       const form = new FormData();
       form.append('file', file);

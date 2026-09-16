@@ -18,6 +18,7 @@
   import { formatClock, parseClock } from '../lib/clock';
   import {
     type PieceSummary,
+    type SegmentMetrics,
     type SegmentSummary,
     type SittingDetail,
   } from '../lib/types';
@@ -50,6 +51,41 @@
     segment.piece_id === null && segment.candidates.length > 0 && segment.candidates[0].band === 'suggest';
 
   const percent = (value: number): string => `${Math.round(value * 100)}%`;
+
+  /**
+   * The arithmetic for a journal draft, in one line.
+   *
+   * The prose box stays empty when the entry opens: the app has no language model and
+   * will not put words in the player's mouth. What a draft carries is the numbers
+   * that are already stored and are tedious to recall a day later.
+   */
+  function measuredSummary(segment: SegmentSummary): string {
+    const parts: string[] = [];
+    const minutes = (segment.end_ms - segment.start_ms) / 60_000;
+    if (minutes > 0) parts.push(`${minutes.toFixed(1)} min`);
+    if (segment.metrics?.median_tempo) {
+      parts.push(`${Math.round(segment.metrics.median_tempo)} BPM note rate`);
+    }
+    if (segment.metrics?.restarts) parts.push(`${segment.metrics.restarts} restarts`);
+    return parts.join(' · ') || `${segment.note_count} notes`;
+  }
+
+  /**
+   * Which half of the keyboard was played more firmly.
+   *
+   * Worded as registers, not as hands, because that is what it measures: the piano
+   * sends both hands on a single MIDI channel, so a passive log cannot separate them,
+   * and in crossed or single-hand writing the register does not follow the hand at
+   * all. It reports; it does not judge.
+   */
+  function balanceLabel(metrics: SegmentMetrics): string | null {
+    const low = metrics.mean_velocity_low;
+    const high = metrics.mean_velocity_high;
+    if (!low || !high) return null;
+    const gap = Math.round(((low - high) / Math.max(low, high)) * 100);
+    if (Math.abs(gap) < 8) return 'registers even';
+    return gap > 0 ? `lower half +${gap}%` : `upper half ${gap}%`;
+  }
 
   /** Split points, in seconds from the sitting start, keyed by segment. */
   let splitAt = $state<Record<number, string>>({});
@@ -366,10 +402,67 @@
                 {segment.metrics.restarts} restarts
               </span>
             {/if}
+            {#if segment.metrics?.pedal_basis}
+              <span
+                class="pill mono"
+                data-pedal-changes={segment.metrics.pedal_changes}
+                title="Times the pedal crossed its threshold. MIDI's own rule: below 64 is up, so a half-depressed pedal reads as released"
+              >
+                {segment.metrics.pedal_changes} pedal
+              </span>
+              {#if segment.metrics.pedal_blur}
+                <span
+                  class="pill warn"
+                  data-pedal-blur={segment.metrics.pedal_blur}
+                  title="Attacks that brought new harmony over notes the pedal was already holding. Observed from the pitches, not from a score — it reports, it does not judge"
+                >
+                  {segment.metrics.pedal_blur} pedal blur
+                </span>
+              {/if}
+            {:else if segment.metrics}
+              <span
+                class="muted small"
+                data-pedal-unrecorded
+                title="This sitting has no pedal events at all — imported history. Not the same as a pedal that was never pressed"
+              >
+                pedal not recorded
+              </span>
+            {/if}
+            {#if segment.metrics?.median_velocity != null}
+              <span
+                class="pill mono"
+                title="Middle velocity, at MIDI controller resolution — comparable with itself over weeks, not a measure of loudness"
+              >
+                {Math.round(segment.metrics.median_velocity)} vel
+              </span>
+            {/if}
+            {#if segment.metrics && balanceLabel(segment.metrics)}
+              <span
+                class="pill"
+                title="Mean velocity below and above middle C. A proxy for the hands, not a measurement of them — the piano sends both hands on one channel"
+              >
+                {balanceLabel(segment.metrics)}
+              </span>
+            {/if}
             {#if segment.source === 'sight_reading'}
               <span class="pill accent">
                 {segment.workout_id ? `workout ${segment.workout_id}` : 'sight-reading'}
               </span>
+            {/if}
+            {#if segment.piece_id}
+              <button
+                class="ghost tiny"
+                data-write-about={segment.id}
+                title="Write a journal entry about this piece and this session"
+                onclick={() =>
+                  app.writeAboutSitting(
+                    segment.piece_id as number,
+                    detail.id,
+                    measuredSummary(segment),
+                  )}
+              >
+                Write about this
+              </button>
             {/if}
           </div>
 

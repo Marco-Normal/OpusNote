@@ -587,7 +587,38 @@ def test_the_piano_going_away_closes_the_sitting_through_the_api(client) -> None
 def test_closing_with_nothing_open_says_so(client) -> None:
     body = client.post("/api/practice/sittings/close").json()
     assert body["closed"] is False
-    assert body["reason"] == "nothing open to close"
+    assert body["reason"] == "nothing open"
+
+
+def test_closing_while_still_playing_says_that_instead(client) -> None:
+    """The two ways to close nothing are different facts.
+
+    "Nothing open" means the piano had already gone quiet; "still playing" means
+    notes arrived moments ago and the sitting is deliberately left alone. Both used
+    to reach the client as the same answer, so a UI could not tell a finished session
+    from a USB blip without guessing.
+    """
+    import time
+
+    now = int(time.time() * 1000)
+    client.post(
+        "/api/practice/events",
+        json={
+            "tz_offset_minutes": 0,
+            "events": [
+                {
+                    "epoch_ms": now - 200,
+                    "pitch": 60,
+                    "velocity": 70,
+                    "duration_ms": 100,
+                    "channel": 0,
+                }
+            ],
+        },
+    )
+    body = client.post("/api/practice/sittings/close").json()
+    assert body["closed"] is False
+    assert body["reason"] == "still playing"
 
 
 def test_status_is_open_only_while_a_note_would_still_join(client) -> None:

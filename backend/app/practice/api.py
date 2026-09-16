@@ -88,10 +88,12 @@ def close_sitting() -> SittingCloseResult:
     than waiting out the whole silence gap, and it is the difference between the
     dashboard showing the sitting now and showing it five minutes from now.
     """
-    sitting_id = _handle(store.close_open_sitting)
-    if sitting_id is None:
-        return SittingCloseResult(closed=False, reason="nothing open to close")
-    return SittingCloseResult(closed=True, sitting_id=sitting_id, reason="closed")
+    outcome = _handle(store.close_open_sitting)
+    return SittingCloseResult(
+        closed=outcome.sitting_id is not None,
+        sitting_id=outcome.sitting_id,
+        reason=outcome.reason,
+    )
 
 
 @router.get("/status", response_model=PracticeStatus)

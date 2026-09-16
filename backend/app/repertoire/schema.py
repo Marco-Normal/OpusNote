@@ -51,12 +51,25 @@ CREATE TABLE IF NOT EXISTS piece_journal (
     entry_date        TEXT NOT NULL,
     content           TEXT NOT NULL,
     practice_minutes  INTEGER,
+    -- The sitting this was written about, when it was written about one. The piece
+    -- owns the entry and this is only context, which is why it is nullable and why
+    -- the reference is SET NULL rather than CASCADE: deleting a sitting must never
+    -- delete prose. It links to the *sitting* and not to a segment because
+    -- `resegment` deletes and rebuilds every segment of a sitting, and an entry that
+    -- the app's own correction action could orphan is not a durable link.
+    --
+    -- Declared here and in ADDED_COLUMNS so a database created before this column
+    -- gets it too. `sittings` is created by the practice script, which runs after
+    -- this one; SQLite resolves a foreign key at insert time, not at create time.
+    sitting_id        INTEGER REFERENCES sittings(id) ON DELETE SET NULL,
     legacy_id         INTEGER,
     created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_journal_legacy
     ON piece_journal(legacy_id) WHERE legacy_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_journal_piece ON piece_journal(piece_id, entry_date DESC);
+CREATE INDEX IF NOT EXISTS idx_journal_sitting ON piece_journal(sitting_id);
+CREATE INDEX IF NOT EXISTS idx_journal_date ON piece_journal(entry_date DESC, id DESC);
 
 CREATE TABLE IF NOT EXISTS media (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -94,6 +107,9 @@ ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("media", "legacy_id", "INTEGER"),
     ("media", "loop_start_s", "REAL"),
     ("media", "loop_end_s", "REAL"),
+    # SQLite only accepts a REFERENCES clause on ADD COLUMN when the default is
+    # NULL, which is why the piece that owns the entry is NOT NULL and this is not.
+    ("piece_journal", "sitting_id", "INTEGER REFERENCES sittings(id) ON DELETE SET NULL"),
 )
 
 

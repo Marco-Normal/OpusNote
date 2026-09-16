@@ -199,6 +199,16 @@ def _validate_composer(conn: sqlite3.Connection, composer_id: int | None) -> Non
         raise HTTPException(status_code=422, detail=f"no composer {composer_id}")
 
 
+def _validate_sitting(conn: sqlite3.Connection, sitting_id: int | None) -> None:
+    """Refuse a sitting that is not in the log, so a stale id is a 422.
+
+    Without this the foreign key raises, and a mistyped or out-of-date id reaches
+    the client as a 500 with nothing in it to act on.
+    """
+    if sitting_id is not None and not store.sitting_exists(conn, sitting_id):
+        raise HTTPException(status_code=422, detail=f"no sitting {sitting_id}")
+
+
 @router.post("/pieces", response_model=PieceDetail, status_code=201)
 def create_piece(body: PieceCreate) -> PieceDetail:
     with db.transaction(settings.db_path) as conn:
@@ -271,11 +281,28 @@ def delete_composer(composer_id: int) -> DeleteResult:
     return DeleteResult(deleted=True, cascaded=cascaded)
 
 
+@router.get("/journal", response_model=list[JournalEntryOut])
+def journal_feed(
+    limit: int = Query(default=50, ge=1, le=500),
+    search: str | None = Query(default=None),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> list[JournalEntryOut]:
+    """The newest entries across the whole library.
+
+    A piece's own page returns its journal inline; this is the other direction, so
+    a note written months ago can be found without remembering the piece, and so
+    the search box can answer a question about the prose rather than only about a
+    title.
+    """
+    return [JournalEntryOut(**row) for row in store.list_journal_entries(conn, limit=limit, search=search)]
+
+
 @router.post("/pieces/{piece_id}/journal", response_model=JournalEntryOut, status_code=201)
 def create_journal_entry(piece_id: int, body: JournalCreate) -> JournalEntryOut:
     with db.transaction(settings.db_path) as conn:
         if not store.piece_exists(conn, piece_id):
             raise HTTPException(status_code=404, detail=f"no piece {piece_id}")
+        _validate_sitting(conn, body.sitting_id)
         entry_id = store.create_journal_entry(conn, piece_id, body.model_dump())
         row = store.get_journal_entry(conn, entry_id)
     assert row is not None
@@ -288,6 +315,7 @@ def update_journal_entry(entry_id: int, body: JournalUpdate) -> JournalEntryOut:
     if not changes:
         raise HTTPException(status_code=422, detail="no fields to change")
     with db.transaction(settings.db_path) as conn:
+        _validate_sitting(conn, changes.get("sitting_id"))
         if store.update_journal_entry(conn, entry_id, changes) == 0:
             raise HTTPException(status_code=404, detail=f"no journal entry {entry_id}")
         row = store.get_journal_entry(conn, entry_id)

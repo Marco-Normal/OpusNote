@@ -263,7 +263,12 @@ export interface JournalEntry {
   entry_date: string;
   content: string;
   practice_minutes: number | null;
+  /** The sitting this was written about, or null for one written from the piece. */
+  sitting_id: number | null;
   created_at: string | null;
+  /** Filled only by the cross-piece feed, which shows an entry away from its piece. */
+  piece_title?: string | null;
+  composer_name?: string | null;
 }
 
 export interface Recording {
@@ -421,6 +426,21 @@ export interface SegmentMetrics {
   mean_velocity: number | null;
   velocity_stddev: number | null;
   restarts: number | null;
+  /** MIDI controller values, comparable with themselves over weeks, not loudness. */
+  median_velocity: number | null;
+  velocity_range: number | null;
+  /** Split at middle C. A proxy for the hands: the piano sends both on one channel. */
+  mean_velocity_low: number | null;
+  mean_velocity_high: number | null;
+  pedal_changes: number | null;
+  pedal_down_ratio: number | null;
+  /** Attacks that brought new harmony over notes the pedal was already holding. */
+  pedal_blur: number | null;
+  /**
+   * Which harmony source produced `pedal_blur`. Null means the sitting has no pedal
+   * rows at all — imported history — which is not the same as "not used".
+   */
+  pedal_basis: string | null;
 }
 
 /** One piece's claim on a segment, with the arithmetic that produced it. */
@@ -560,9 +580,16 @@ export interface SittingDetail {
 
 export interface CalendarDay {
   date: string;
+  /** Time the piano heard. */
   minutes: number;
   notes: number;
   sittings: number;
+  /**
+   * Time written down in the journal, kept apart from `minutes` on purpose: a
+   * session can be both played and written about, so the two are never added.
+   */
+  written_minutes: number;
+  written_entries: number;
 }
 
 export interface PiecePractice {
@@ -694,6 +721,8 @@ export interface JournalInput {
   entry_date?: string;
   content?: string;
   practice_minutes?: number | null;
+  /** The sitting the entry is about. Null clears the link; omit to leave it alone. */
+  sitting_id?: number | null;
 }
 
 export interface DeleteResult {

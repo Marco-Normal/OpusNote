@@ -1,6 +1,6 @@
 """Queries for the repertoire domain.
 
-Read-only for now: Phase 1 imports and displays, editing arrives in Phase 2.
+Reading and writing both live here: the pieces, their journal, and their media.
 """
 
 from __future__ import annotations
@@ -90,9 +90,16 @@ def list_pieces(
         clauses.append("p.composer_id = ?")
         params.append(composer_id)
     if search:
-        clauses.append("(p.title LIKE ? OR c.name LIKE ? OR p.opus LIKE ?)")
+        # Journal prose is searchable too. "Where did I write about the coda?" is a
+        # question the library should be able to answer, and the text is already
+        # sitting in the database next to the piece.
+        clauses.append(
+            "(p.title LIKE ? OR c.name LIKE ? OR p.opus LIKE ?"
+            " OR EXISTS (SELECT 1 FROM piece_journal j"
+            "            WHERE j.piece_id = p.id AND j.content LIKE ?))"
+        )
         pattern = f"%{search}%"
-        params.extend([pattern, pattern, pattern])
+        params.extend([pattern, pattern, pattern, pattern])
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
 
     rows = conn.execute(
@@ -129,7 +136,8 @@ def get_piece(conn: sqlite3.Connection, piece_id: int) -> dict[str, Any] | None:
         dict(row)
         for row in conn.execute(
             """
-            SELECT id, piece_id, entry_date, content, practice_minutes, created_at
+            SELECT id, piece_id, entry_date, content, practice_minutes,
+                   sitting_id, created_at
             FROM piece_journal WHERE piece_id = ?
             ORDER BY entry_date DESC, id DESC
             """,
@@ -375,14 +383,16 @@ def delete_composer(conn: sqlite3.Connection, composer_id: int) -> tuple[int, di
 def create_journal_entry(conn: sqlite3.Connection, piece_id: int, fields: dict[str, Any]) -> int:
     cursor = conn.execute(
         """
-        INSERT INTO piece_journal (piece_id, entry_date, content, practice_minutes)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO piece_journal
+            (piece_id, entry_date, content, practice_minutes, sitting_id)
+        VALUES (?, ?, ?, ?, ?)
         """,
         (
             piece_id,
             fields["entry_date"],
             fields["content"],
             fields.get("practice_minutes"),
+            fields.get("sitting_id"),
         ),
     )
     return int(cursor.lastrowid)
@@ -390,7 +400,9 @@ def create_journal_entry(conn: sqlite3.Connection, piece_id: int, fields: dict[s
 
 def update_journal_entry(conn: sqlite3.Connection, entry_id: int, changes: dict[str, Any]) -> int:
     updates = {
-        key: value for key, value in changes.items() if key in ("entry_date", "content", "practice_minutes")
+        key: value
+        for key, value in changes.items()
+        if key in ("entry_date", "content", "practice_minutes", "sitting_id")
     }
     if not updates:
         return conn.execute(
@@ -410,10 +422,60 @@ def delete_journal_entry(conn: sqlite3.Connection, entry_id: int) -> int:
 
 def get_journal_entry(conn: sqlite3.Connection, entry_id: int) -> dict[str, Any] | None:
     row = conn.execute(
-        "SELECT id, piece_id, entry_date, content, practice_minutes FROM piece_journal WHERE id = ?",
+        "SELECT id, piece_id, entry_date, content, practice_minutes, sitting_id"
+        " FROM piece_journal WHERE id = ?",
         (entry_id,),
     ).fetchone()
     return dict(row) if row else None
+
+
+def sitting_exists(conn: sqlite3.Connection, sitting_id: int) -> bool:
+    """Whether the practice log has a sitting with this id.
+
+    The one place the repertoire domain looks at a practice table, and it is here
+    because the journal now points at the sitting an entry was written about.
+    Checking it turns a stale id into a 422 instead of a foreign-key failure
+    surfacing as a 500 with no explanation.
+    """
+    return (
+        conn.execute("SELECT 1 FROM sittings WHERE id = ?", (sitting_id,)).fetchone()
+        is not None
+    )
+
+
+def list_journal_entries(
+    conn: sqlite3.Connection, *, limit: int = 50, search: str | None = None
+) -> list[dict[str, Any]]:
+    """The newest entries across the whole library.
+
+    A piece's page shows its own journal; this is the other direction, so something
+    written months ago can be found without remembering which piece it was about.
+    It searches `content` as well as the piece and composer, which is what makes
+    "where did I write about the coda?" answerable at all.
+    """
+    clauses: list[str] = []
+    params: list[Any] = []
+    if search:
+        clauses.append("(j.content LIKE ? OR p.title LIKE ? OR c.name LIKE ?)")
+        pattern = f"%{search}%"
+        params.extend([pattern, pattern, pattern])
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    params.append(max(1, min(limit, 500)))
+    rows = conn.execute(
+        f"""
+        SELECT j.id, j.piece_id, j.entry_date, j.content, j.practice_minutes,
+               j.sitting_id, j.created_at,
+               p.title AS piece_title, c.name AS composer_name
+        FROM piece_journal j
+        JOIN pieces p ON p.id = j.piece_id
+        LEFT JOIN composers c ON c.id = p.composer_id
+        {where}
+        ORDER BY j.entry_date DESC, j.id DESC
+        LIMIT ?
+        """,
+        params,
+    ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def piece_exists(conn: sqlite3.Connection, piece_id: int) -> bool:

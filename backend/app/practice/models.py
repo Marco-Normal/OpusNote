@@ -96,6 +96,24 @@ class SegmentMetricsOut(BaseModel):
     mean_velocity: float | None = None
     velocity_stddev: float | None = None
     restarts: int | None = None
+    #: Touch, at MIDI controller resolution — comparable with itself over weeks, not a
+    #: claim about loudness.
+    median_velocity: float | None = None
+    velocity_range: float | None = None
+    #: Mean velocity below and above middle C. A *proxy* for the hands: the piano
+    #: sends both hands on one channel, so a passive log has nothing better.
+    mean_velocity_low: float | None = None
+    mean_velocity_high: float | None = None
+    #: Pedal, derived from the raw CC64 stream.
+    pedal_changes: int | None = None
+    pedal_down_ratio: float | None = None
+    #: Attacks that brought new harmony over notes the pedal was already holding.
+    pedal_blur: int | None = None
+    #: Which harmony source produced `pedal_blur`. NULL means the sitting has no pedal
+    #: rows at all — imported history — which is not the same as "the pedal was not
+    #: used". Stored rather than re-derived so a score attached later cannot
+    #: retroactively relabel an observed number.
+    pedal_basis: str | None = None
 
 
 class SegmentSummary(BaseModel):
@@ -295,9 +313,16 @@ class ResegmentRequest(BaseModel):
 
 class CalendarDay(BaseModel):
     date: str
+    #: Time the piano heard, from the sittings that day.
     minutes: float
     notes: int
     sittings: int
+    #: Time written down in the journal that day. Deliberately a separate series and
+    #: never added to `minutes`: a session can be both played and written about, so
+    #: summing them would count it twice. A day with prose and no notes reads as
+    #: written-but-not-measured, which is a different fact from a day with neither.
+    written_minutes: float = 0.0
+    written_entries: int = 0
 
 
 class PiecePractice(BaseModel):
@@ -373,9 +398,11 @@ class SittingCloseResult(BaseModel):
 
     closed: bool
     sitting_id: int | None = None
-    #: Why nothing was closed, in words — 'nothing open', 'still playing' — so the
-    #: client can tell a blip from a genuine end without guessing.
-    reason: str | None = None
+    #: Always present, and always one of three things: 'closed', 'still playing' or
+    #: 'nothing open'. The last two are different facts — the piano went quiet long
+    #: ago, versus notes arrived moments ago and the sitting is being left alone — and
+    #: the client needs to tell them apart to react sensibly to a device event.
+    reason: Literal["closed", "still playing", "nothing open"] = "nothing open"
 
 
 class PracticeStatus(BaseModel):

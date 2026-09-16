@@ -164,8 +164,12 @@ export class CaptureClient {
       this.pedals = this.pedals.slice(-MAX_BUFFERED);
     }
 
-    const batch = this.buffer;
-    const pedals = this.pedals;
+    // Copied, not aliased. Notes and pedal moves keep arriving while the request is
+    // in flight and are pushed onto these same arrays, so slicing by the *aliased*
+    // array's length afterwards measured the grown list and threw the new arrivals
+    // away — silently, and by however much was played during the round trip.
+    const batch = this.buffer.slice();
+    const pedals = this.pedals.slice();
     this.flushing = true;
     try {
       await api.practice.ingest({

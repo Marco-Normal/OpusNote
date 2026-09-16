@@ -1389,8 +1389,10 @@ def scenario_repertoire(browser) -> None:
     )
     check(True, "a piece can be created from the interface")
 
-    # Journal entry, through the form.
-    page.fill('.journal-form input[aria-label="Journal entry"]', "Sight-read the exposition.")
+    # Journal entry, through the form. The field is a textarea rather than an input
+    # since Phase 18a: an entry is prose, and a single-line control cannot hold a
+    # paragraph at all.
+    page.fill('.journal-form textarea[aria-label="Journal entry"]', "Sight-read the exposition.")
     page.fill('.journal-form input[aria-label="Practice minutes"]', "35")
     with page.expect_response(lambda r: "/journal" in r.url and r.request.method == "POST"):
         click_button(page, "Add")
@@ -1403,6 +1405,51 @@ def scenario_repertoire(browser) -> None:
         "35" in page.locator(".journal").inner_text(),
         "the practice minutes are recorded",
     )
+
+    # Editing the entry in place, rather than deleting and retyping it. The PATCH
+    # endpoint existed from the beginning and no component called it.
+    page.click("[data-journal-edit]")
+    page.wait_for_selector('.journal textarea[aria-label="Edit journal entry"]', timeout=10_000)
+    page.fill(
+        '.journal textarea[aria-label="Edit journal entry"]',
+        "Sight-read the exposition.\nSecond thought: slow the coda.",
+    )
+    with page.expect_response(
+        lambda r: "/api/repertoire/journal/" in r.url and r.request.method == "PATCH"
+    ):
+        click_button(page, "Save entry")
+    page.wait_for_timeout(400)
+    check(
+        "Second thought" in page.locator(".journal").inner_text(),
+        "a journal entry can be edited in place",
+    )
+    check(
+        "35" in page.locator(".journal").inner_text(),
+        "and a field the edit did not mention survives it",
+    )
+    check(
+        page.evaluate(
+            "() => document.querySelectorAll('.journal textarea').length === 0"
+        ),
+        "and the box closes again once saved",
+    )
+
+    # The other direction round: the journal of the whole library, found by what it
+    # says rather than by which piece it belongs to. It is also what the detail pane
+    # shows when nothing is selected, which used to be blank.
+    page.click(".row-piece.selected")
+    page.wait_for_selector("[data-journal-feed]", timeout=10_000)
+    check(
+        "Second thought" in page.locator("[data-journal-feed]").inner_text(),
+        "with nothing selected, the journal of the whole library is shown",
+    )
+    check(
+        page.evaluate("() => document.querySelectorAll('[data-feed-entry]').length") >= 1,
+        "and it lists the entries as entries, not as pieces",
+    )
+    page.click("[data-feed-entry] .piece-link")
+    page.wait_for_selector(".detail-title", timeout=10_000)
+    check(True, "and an entry in the feed leads back to its piece")
 
     # Editing a field changes only that field.
     click_button(page, "Edit")
@@ -1863,6 +1910,19 @@ def scenario_practice_log(browser) -> None:
     check(
         page.locator(".block").count() == 2,
         "both are drawn on the timeline strip",
+    )
+
+    # Phase 18b: this sitting was seeded straight into the log, so it has no pedal
+    # rows at all. The timeline has to say "not recorded" rather than showing a pedal
+    # figure of zero, which would report a fault nobody ever observed — the same
+    # distinction recordings make between "pending" and "missing".
+    check(
+        page.evaluate("() => document.querySelectorAll('[data-pedal-unrecorded]').length") == 2,
+        "a sitting with no pedal rows says so, rather than reporting zero pedalling",
+    )
+    check(
+        page.evaluate("() => document.querySelectorAll('[data-pedal-changes]').length") == 0,
+        "and no pedal figure is invented for it",
     )
 
     with page.expect_response(lambda r: "/api/practice/segments/" in r.url and r.request.method == "PATCH"):

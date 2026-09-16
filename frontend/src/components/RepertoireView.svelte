@@ -38,10 +38,45 @@
   // null = closed, 'new' = creating, a PieceDetail = editing that piece.
   let editing = $state<PieceDetail | 'new' | null>(null);
   let confirmingDelete = $state(false);
-  let journalDate = $state(new Date().toISOString().slice(0, 10));
+  let journalDate = $state(localDate());
   let journalContent = $state('');
   let journalMinutes = $state<number | null>(null);
   let savingJournal = $state(false);
+  // Which entry is open for editing, and the draft of it. One at a time: the journal
+  // is prose, and two half-edited paragraphs is a way to lose one of them.
+  let editingEntry = $state<number | null>(null);
+  let editDate = $state('');
+  let editMinutes = $state<number | null>(null);
+  let editContent = $state('');
+  //: Set when the entry is being written about a sitting, from the Log tab.
+  let journalSitting = $state<number | null>(null);
+  let journalMeasured = $state<string | null>(null);
+  //: The newest entries across the library, shown where a piece would be.
+  let feedEntries = $state<JournalEntry[]>([]);
+  let feedSearch = $state('');
+  let feedTimer: ReturnType<typeof setTimeout> | null = null;
+
+  $effect(() => {
+    // Read `feedSearch` here so this re-runs when it changes, and pass the value into
+    // the debounce so typing a word does not fire a query per keystroke.
+    const term = feedSearch;
+    if (feedTimer) clearTimeout(feedTimer);
+    feedTimer = setTimeout(() => void loadFeed(term), 200);
+    return () => {
+      if (feedTimer) clearTimeout(feedTimer);
+    };
+  });
+
+  $effect(() => {
+    // Arrived from the Log tab's "Write about this". Consumed and cleared in the same
+    // pass, so it opens once and cannot re-fire on a later re-render.
+    const draft = app.journalDraft;
+    if (!draft) return;
+    app.journalDraft = null;
+    journalSitting = draft.sittingId;
+    journalMeasured = draft.measured;
+    void open(draft.pieceId);
+  });
   let uploadFile = $state<File | null>(null);
   let fileInput = $state<HTMLInputElement | undefined>(undefined);
   let uploadTitle = $state('');
@@ -136,6 +171,32 @@
     }
     editing = null;
     confirmingDelete = false;
+    // The cross-piece feed is on screen whenever no piece is selected, so a write
+    // from either side has to show up in it.
+    void loadFeed(feedSearch);
+  }
+
+  async function loadFeed(term: string): Promise<void> {
+    try {
+      feedEntries = await api.repertoire.journal({ limit: 40, search: term || undefined });
+    } catch {
+      // The feed is a convenience on an otherwise empty pane. A failure here must not
+      // take the whole view over with an error about something the user did not ask
+      // for; the pane simply stays empty.
+      feedEntries = [];
+    }
+  }
+
+  /**
+   * Today in the player's own timezone.
+   *
+   * `toISOString().slice(0, 10)` is UTC, so anywhere west of Greenwich it offers
+   * yesterday's date through the whole evening — which is when practice happens.
+   */
+  function localDate(): string {
+    const now = new Date();
+    const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
+    return local.toISOString().slice(0, 10);
   }
 
   async function addJournalEntry(): Promise<void> {
@@ -148,10 +209,45 @@
         entry_date: journalDate,
         content: journalContent.trim(),
         practice_minutes: journalMinutes,
+        sitting_id: journalSitting,
       });
       journalContent = '';
       journalMinutes = null;
+      journalSitting = null;
+      journalMeasured = null;
       await afterWrite(pieceId);
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : String(cause);
+    } finally {
+      savingJournal = false;
+    }
+  }
+
+  function startEditing(entry: JournalEntry): void {
+    editingEntry = entry.id;
+    editDate = entry.entry_date;
+    editMinutes = entry.practice_minutes;
+    editContent = entry.content;
+    error = null;
+  }
+
+  function cancelEditing(): void {
+    editingEntry = null;
+    editContent = '';
+  }
+
+  async function saveEdit(entry: JournalEntry): Promise<void> {
+    if (!detail || !editContent.trim()) return;
+    savingJournal = true;
+    error = null;
+    try {
+      await api.repertoire.updateJournal(entry.id, {
+        entry_date: editDate,
+        content: editContent.trim(),
+        practice_minutes: editMinutes,
+      });
+      editingEntry = null;
+      await afterWrite(detail.id);
     } catch (cause) {
       error = cause instanceof Error ? cause.message : String(cause);
     } finally {
@@ -625,24 +721,66 @@
           {:else}
             <ul class="journal">
               {#each detail.journal as entry (entry.id)}
-                <li>
+                <li data-journal-entry={entry.id}>
                   <div class="entry-head">
                     <span>
                       <span class="date mono">{entry.entry_date}</span>
                       {#if entry.practice_minutes}
                         <span class="pill">{entry.practice_minutes} min</span>
                       {/if}
+                      {#if entry.sitting_id}
+                        <span
+                          class="muted small"
+                          title="Written about the sitting you played, from the Log tab"
+                          >about a logged session</span
+                        >
+                      {/if}
                     </span>
-                    <button
-                      class="ghost tiny"
-                      disabled={!app.host?.loopback}
-                      title={app.host?.loopback
-                        ? 'Delete this entry'
-                        : 'Only on the piano machine'}
-                      onclick={() => void removeJournalEntry(entry)}>×</button
-                    >
+                    <span class="row">
+                      {#if editingEntry === entry.id}
+                        <button
+                          class="ghost tiny"
+                          disabled={savingJournal || !editContent.trim()}
+                          onclick={() => void saveEdit(entry)}>Save entry</button
+                        >
+                        <button class="ghost tiny" onclick={cancelEditing}>Discard</button>
+                      {:else}
+                        <button
+                          class="ghost tiny"
+                          data-journal-edit={entry.id}
+                          onclick={() => startEditing(entry)}>Edit entry</button
+                        >
+                        <button
+                          class="ghost tiny"
+                          disabled={!app.host?.loopback}
+                          title={app.host?.loopback
+                            ? 'Delete this entry'
+                            : 'Only on the piano machine'}
+                          onclick={() => void removeJournalEntry(entry)}>×</button
+                        >
+                      {/if}
+                    </span>
                   </div>
-                  <p>{entry.content}</p>
+                  {#if editingEntry === entry.id}
+                    <div class="journal-edit">
+                      <input type="date" bind:value={editDate} aria-label="Edit entry date" />
+                      <input
+                        type="number"
+                        min="0"
+                        max="1440"
+                        placeholder="min"
+                        bind:value={editMinutes}
+                        aria-label="Edit practice minutes"
+                      />
+                      <textarea
+                        rows="4"
+                        bind:value={editContent}
+                        aria-label="Edit journal entry"
+                      ></textarea>
+                    </div>
+                  {:else}
+                    <p class="entry-body">{entry.content}</p>
+                  {/if}
                 </li>
               {/each}
             </ul>
@@ -656,22 +794,37 @@
               void addJournalEntry();
             }}
           >
-            <input type="date" bind:value={journalDate} aria-label="Entry date" required />
-            <input
-              type="number"
-              min="0"
-              max="1440"
-              placeholder="min"
-              bind:value={journalMinutes}
-              aria-label="Practice minutes"
-            />
-            <input
-              class="grow"
+            {#if journalSitting !== null}
+              <p class="muted small measured" data-journal-sitting={journalSitting}>
+                About the session you just played{#if journalMeasured}: {journalMeasured}{/if}.
+                <button
+                  type="button"
+                  class="ghost tiny"
+                  onclick={() => {
+                    journalSitting = null;
+                    journalMeasured = null;
+                  }}>Write about the piece instead</button
+                >
+              </p>
+            {/if}
+            <div class="row">
+              <input type="date" bind:value={journalDate} aria-label="Entry date" required />
+              <input
+                type="number"
+                min="0"
+                max="1440"
+                placeholder="min"
+                bind:value={journalMinutes}
+                aria-label="Practice minutes"
+              />
+            </div>
+            <textarea
+              rows="3"
               placeholder="What happened in this session?"
               bind:value={journalContent}
               aria-label="Journal entry"
               required
-            />
+            ></textarea>
             <button type="submit" disabled={savingJournal || !journalContent.trim()}>
               {savingJournal ? '…' : 'Add'}
             </button>
@@ -856,6 +1009,49 @@
             {#if uploadNote}
               <div class="notice">{uploadNote}</div>
             {/if}
+        </div>
+      {:else}
+        <!-- The other direction round: the journal of the whole library, found by
+             what it says rather than by which piece it belongs to. It is also what
+             the detail pane shows when nothing is selected, which used to be blank. -->
+        <div class="detail card" data-journal-feed>
+          <h3>Recent notes</h3>
+          <p class="muted small">
+            The newest journal entries across the library. Pick a piece to read or add its
+            own.
+          </p>
+          <input
+            type="search"
+            placeholder="Search the journal…"
+            bind:value={feedSearch}
+            aria-label="Search the journal"
+          />
+          {#if feedEntries.length === 0}
+            <p class="muted small">
+              {feedSearch ? 'No entries mention that.' : 'Nothing written down yet.'}
+            </p>
+          {:else}
+            <ul class="journal feed">
+              {#each feedEntries as entry (entry.id)}
+                <li data-feed-entry={entry.id}>
+                  <div class="entry-head">
+                    <span>
+                      <span class="date mono">{entry.entry_date}</span>
+                      <button class="ghost tiny piece-link" onclick={() => void open(entry.piece_id)}>
+                        {entry.piece_title}{entry.composer_name
+                          ? ` · ${entry.composer_name}`
+                          : ''}
+                      </button>
+                    </span>
+                    {#if entry.practice_minutes}
+                      <span class="pill">{entry.practice_minutes} min</span>
+                    {/if}
+                  </div>
+                  <p class="entry-body">{entry.content}</p>
+                </li>
+              {/each}
+            </ul>
+          {/if}
         </div>
       {/if}
     </div>
@@ -1159,14 +1355,54 @@
     gap: 0.4rem;
   }
 
+  /* Prose needs to keep its own line breaks, which an <input> could not hold at
+     all. The box is a paragraph until you ask to change it, so reading the journal
+     does not look like filling in a form. */
+  .entry-body {
+    white-space: pre-wrap;
+    margin: 0.25rem 0 0;
+  }
+
+  /* In the cross-piece feed the piece is the thing you came for, so it reads as the
+     link it is rather than as a caption. */
+  .piece-link {
+    padding: 0 0.2rem;
+    font-size: 0.78rem;
+    color: var(--accent);
+  }
+
   .journal-form {
     display: flex;
+    flex-direction: column;
     gap: 0.3rem;
-    align-items: center;
+    align-items: stretch;
     margin-top: 0.35rem;
   }
 
-  .journal-form input {
+  .journal-form .row,
+  .journal-edit {
+    display: flex;
+    gap: 0.3rem;
+    align-items: center;
+  }
+
+  .journal-edit {
+    flex-wrap: wrap;
+    margin-top: 0.3rem;
+  }
+
+  .journal-edit textarea {
+    flex: 1 1 100%;
+  }
+
+  .measured {
+    margin: 0;
+  }
+
+  .journal-form input,
+  .journal-form textarea,
+  .journal-edit input,
+  .journal-edit textarea {
     font: inherit;
     font-size: 0.84rem;
     padding: 0.3rem 0.4rem;
@@ -1177,8 +1413,10 @@
     min-width: 0;
   }
 
-  .journal-form input.grow {
-    flex: 1 1 10rem;
+  .journal-form textarea,
+  .journal-edit textarea {
+    resize: vertical;
+    line-height: 1.4;
   }
 
   .journal {

@@ -496,7 +496,9 @@ def test_a_sitting_can_be_closed_without_waiting_out_the_silence(fresh_db) -> No
 
     # Ten seconds of quiet, which is past `close_quiet_ms` and nowhere near the
     # five-minute silence the sitting would otherwise wait for.
-    assert store.close_open_sitting(now_ms=BASE_MS + 10_000) == sitting_id
+    outcome = store.close_open_sitting(now_ms=BASE_MS + 10_000)
+    assert outcome.sitting_id == sitting_id
+    assert outcome.reason == "closed"
 
     segments = store.ensure_segments(sitting_id, now_ms=BASE_MS + 10_000)
     assert len(segments) == 1, "closed means closed: the boundaries exist at once"
@@ -506,7 +508,7 @@ def test_closing_takes_no_more_notes(fresh_db) -> None:
     """A note after the piano comes back is a *new* sitting, not a continuation of
     the one the player ended by switching off."""
     first = store.ingest(batch([0, 500])).sitting_id
-    assert store.close_open_sitting(now_ms=BASE_MS + 10_000) == first
+    assert store.close_open_sitting(now_ms=BASE_MS + 10_000).sitting_id == first
 
     second = store.ingest(batch([2_000, 2_500])).sitting_id
     assert second != first
@@ -526,20 +528,22 @@ def test_closing_while_notes_are_still_arriving_is_refused(fresh_db) -> None:
     ]
     sitting_id = store.ingest(EventBatch(tz_offset_minutes=0, events=events)).sitting_id
 
-    assert store.close_open_sitting(now_ms=base) is None, "still playing"
-    assert store.close_open_sitting(now_ms=base, quiet_ms=0) == sitting_id, (
+    refused = store.close_open_sitting(now_ms=base)
+    assert refused.sitting_id is None
+    assert refused.reason == "still playing", "and it says so, rather than looking idle"
+    assert store.close_open_sitting(now_ms=base, quiet_ms=0).sitting_id == sitting_id, (
         "and the guard can be dropped when the caller knows better"
     )
 
 
 def test_nothing_to_close_is_not_an_error(fresh_db) -> None:
-    assert store.close_open_sitting(now_ms=BASE_MS) is None
+    assert store.close_open_sitting(now_ms=BASE_MS).reason == "nothing open"
 
     store.ingest(batch([0, 500]))
-    assert store.close_open_sitting(now_ms=BASE_MS + 10_000) is not None, (
+    assert store.close_open_sitting(now_ms=BASE_MS + 10_000).sitting_id is not None, (
         "the first call closes it"
     )
-    assert store.close_open_sitting(now_ms=BASE_MS + 10_000) is None, (
+    assert store.close_open_sitting(now_ms=BASE_MS + 10_000).reason == "nothing open", (
         "and the second finds nothing open"
     )
 
@@ -548,8 +552,251 @@ def test_a_long_forgotten_sitting_is_not_closed_by_a_stray_device_event(fresh_db
     """The piano being plugged back in days later must not "close" a sitting that the
     silence closed long ago — there is nothing to close by then."""
     store.ingest(batch([0, 500]))
-    assert store.close_open_sitting(now_ms=BASE_MS + 10_000) is not None
+    assert store.close_open_sitting(now_ms=BASE_MS + 10_000).sitting_id is not None
 
     # Days later the device reappears. The sitting is long closed, and the lookback
     # is what stops a stray event from reaching back and touching it.
-    assert store.close_open_sitting(now_ms=BASE_MS + 3 * 24 * 60 * 60 * 1000) is None
+    assert store.close_open_sitting(now_ms=BASE_MS + 3 * 24 * 60 * 60 * 1000).sitting_id is None
+
+
+# --------------------------------------------------------------------------
+# Phase 18a — the journal's minutes, and the history a re-segment used to eat
+# --------------------------------------------------------------------------
+
+
+def test_the_calendar_keeps_written_time_apart_from_measured_time(fresh_db) -> None:
+    """Journal minutes are a second series and are never added to the measured one.
+
+    A session can be both played and written about, so summing them would count it
+    twice — which is the rule the per-piece view already follows. Both are put on the
+    same day here, which is the only arrangement in which adding them would show.
+    """
+    import datetime
+    import time
+
+    # A sitting spanning a minute, today, so the measured series is non-zero on the
+    # same day the entry is written about.
+    now = int(time.time() * 1000)
+    events = [
+        WireNote(epoch_ms=now - 120_000, pitch=60, velocity=70, duration_ms=300, channel=0),
+        WireNote(epoch_ms=now - 60_000, pitch=62, velocity=70, duration_ms=300, channel=0),
+    ]
+    store.ingest(EventBatch(tz_offset_minutes=0, events=events))
+    today = datetime.datetime.now().date().isoformat()
+
+    conn = connect()
+    try:
+        piece = conn.execute("INSERT INTO pieces (title, status) VALUES ('Intermezzo', 'active')")
+        conn.execute(
+            "INSERT INTO piece_journal (piece_id, entry_date, content, practice_minutes)"
+            " VALUES (?, ?, 'slow coda', 35)",
+            (int(piece.lastrowid), today),
+        )
+        conn.commit()
+        days = {day.date: day for day in store.calendar(conn, 7)}
+    finally:
+        conn.close()
+
+    row = next(day for day in days.values() if day.written_entries == 1)
+    assert row.minutes == 1.0, "the measured series is the sitting, and only the sitting"
+    assert row.written_minutes == 35
+    assert row.minutes != 36.0, "and the two are never summed"
+
+
+def test_a_day_with_only_prose_still_appears_on_the_calendar(fresh_db) -> None:
+    """Written and measured are different facts, and a written-only day is one of them.
+
+    Built from sittings alone, the calendar dropped such a day entirely, so the entry
+    existed and the picture denied it.
+    """
+    import datetime
+
+    day = (datetime.datetime.now().date() - datetime.timedelta(days=2)).isoformat()
+    conn = connect()
+    try:
+        piece = conn.execute("INSERT INTO pieces (title, status) VALUES ('Ballade', 'active')")
+        conn.execute(
+            "INSERT INTO piece_journal (piece_id, entry_date, content, practice_minutes)"
+            " VALUES (?, ?, 'read through once', 12)",
+            (int(piece.lastrowid), day),
+        )
+        conn.commit()
+        days = {row.date: row for row in store.calendar(conn, 7)}
+    finally:
+        conn.close()
+
+    row = days[day]
+    assert row.minutes == 0.0, "nothing was measured that day"
+    assert row.written_minutes == 12
+    assert row.written_entries == 1
+
+
+def test_a_sitting_closed_by_the_piano_reports_itself_closed(fresh_db) -> None:
+    """`closed` has to mean what `ensure_segments` means by it.
+
+    Derived from the clock alone it reported "not closed" for a sitting the piano had
+    already ended, so the interface disagreed with the segmentation underneath it.
+    """
+    import time
+
+    now = int(time.time() * 1000)
+    events = [
+        WireNote(epoch_ms=now - 300, pitch=60, velocity=70, duration_ms=100, channel=0)
+    ]
+    sitting_id = store.ingest(EventBatch(tz_offset_minutes=0, events=events)).sitting_id
+
+    # Well inside the five-minute gap, so the clock on its own says "not closed".
+    assert store.sitting_detail(sitting_id, now_ms=now).closed is False
+
+    store.close_open_sitting(now_ms=now + 2_000)
+    assert store.sitting_detail(sitting_id, now_ms=now + 2_000).closed is True
+
+
+def test_re_segmenting_does_not_delete_the_matchers_track_record(fresh_db) -> None:
+    """`resegment` rebuilds every boundary; it must not also rebuild the history.
+
+    `identification_outcomes` is the only record of how often the matcher is right,
+    and its `segment_id` used to cascade — so the app's own corrective action shrank
+    the accuracy panel's denominators without leaving a trace.
+    """
+    sitting_id = store.ingest(batch([0, 500, 20_000])).sitting_id
+    segments = store.ensure_segments(sitting_id, now_ms=LATER_MS)
+    assert segments, "there is something to label"
+
+    conn = connect()
+    try:
+        conn.execute(
+            "INSERT INTO identification_outcomes"
+            " (segment_id, guessed_piece_id, resolved_piece_id, action, accepted, score)"
+            " VALUES (?, 1, 1, 'confirmed', 1, 0.91)",
+            (segments[0].id,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    store.resegment_sitting(sitting_id, confirm=True)
+
+    conn = connect()
+    try:
+        rows = [
+            dict(row)
+            for row in conn.execute(
+                "SELECT segment_id, action, score FROM identification_outcomes"
+            )
+        ]
+    finally:
+        conn.close()
+
+    assert len(rows) == 1, "the boundaries were rebuilt, not the evidence"
+    assert rows[0]["action"] == "confirmed"
+    assert rows[0]["score"] == 0.91
+    assert rows[0]["segment_id"] is None, "and it no longer claims a segment that is gone"
+
+
+def test_the_outcome_table_is_rebuilt_out_of_the_cascading_shape(fresh_db) -> None:
+    """An existing database keeps its outcomes when the constraint is widened.
+
+    SQLite cannot alter a constraint, so this is a table rebuild — and the test is
+    here because a rebuild that lost rows would be worse than the defect it fixes.
+    """
+    from app.practice.schema import migrate
+
+    sitting_id = store.ingest(batch([0, 500, 20_000])).sitting_id
+    segments = store.ensure_segments(sitting_id, now_ms=LATER_MS)
+    segment_id = segments[0].id
+
+    conn = connect()
+    try:
+        # Put the old shape back, with a row in it, and run the migration over it.
+        conn.executescript(
+            f"""
+            DROP TABLE identification_outcomes;
+            CREATE TABLE identification_outcomes (
+                id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                segment_id         INTEGER NOT NULL REFERENCES segments(id) ON DELETE CASCADE,
+                guessed_piece_id   INTEGER,
+                resolved_piece_id  INTEGER,
+                action             TEXT NOT NULL,
+                accepted           INTEGER NOT NULL,
+                score              REAL,
+                resolved_at        TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            INSERT INTO identification_outcomes
+                (segment_id, guessed_piece_id, resolved_piece_id, action, accepted, score)
+                VALUES ({segment_id}, 2, 2, 'changed', 0, 0.64);
+            """
+        )
+        applied = migrate(conn)
+        assert "identification_outcomes.segment_id -> ON DELETE SET NULL" in applied
+
+        rows = [
+            dict(row)
+            for row in conn.execute(
+                "SELECT segment_id, action, score FROM identification_outcomes"
+            )
+        ]
+        assert len(rows) == 1, "the rebuild keeps every row"
+        assert rows[0] == {"segment_id": segment_id, "action": "changed", "score": 0.64}
+
+        assert migrate(conn) == [], "and running it again has nothing left to do"
+    finally:
+        conn.close()
+
+
+def pedalled_batch() -> EventBatch:
+    """A chord arriving over a note the pedal is holding: one blur, by construction.
+
+    Pitch 48 is released at 200ms and the pedal is down until 2000ms, so the pedal is
+    what keeps it ringing when the triad at 500ms arrives. The closing note at 2500ms
+    is what puts the pedal-up *inside* the segment — a release after the last note
+    belongs to whatever comes next, not to this figure.
+    """
+    return EventBatch(
+        tz_offset_minutes=0,
+        events=[
+            WireNote(epoch_ms=BASE_MS, pitch=48, velocity=50, duration_ms=200, channel=0),
+            WireNote(epoch_ms=BASE_MS, pitch=60, velocity=60, duration_ms=200, channel=0),
+            WireNote(epoch_ms=BASE_MS + 500, pitch=65, velocity=90, duration_ms=200, channel=0),
+            WireNote(epoch_ms=BASE_MS + 500, pitch=67, velocity=90, duration_ms=200, channel=0),
+            WireNote(epoch_ms=BASE_MS + 500, pitch=69, velocity=90, duration_ms=200, channel=0),
+            WireNote(epoch_ms=BASE_MS + 2_500, pitch=48, velocity=50, duration_ms=200, channel=0),
+        ],
+        pedals=[
+            WirePedal(epoch_ms=BASE_MS, value=127, channel=0),
+            WirePedal(epoch_ms=BASE_MS + 2_000, value=0, channel=0),
+        ],
+    )
+
+
+def test_a_segment_carries_the_pedal_and_the_touch(fresh_db) -> None:
+    """The figures the app had the data for all along, now written where they can be read."""
+    sitting_id = store.ingest(pedalled_batch()).sitting_id
+    metrics = store.ensure_segments(sitting_id, now_ms=LATER_MS)[0].metrics
+
+    assert metrics is not None
+    assert metrics.pedal_basis == "observed", "the basis is stored, not re-derived"
+    assert metrics.pedal_changes == 2, "one press and one release, both inside the span"
+    assert metrics.pedal_blur == 1, "the triad arrives over what the pedal is holding"
+    assert metrics.pedal_down_ratio is not None and 0 < metrics.pedal_down_ratio < 1
+
+    assert metrics.median_velocity == 75.0
+    assert metrics.velocity_range == 40.0
+    assert metrics.mean_velocity_low == 50.0, "pitch 48 is below middle C"
+    assert metrics.mean_velocity_high == 82.5, "60, 65, 67 and 69 are not"
+
+
+def test_a_sitting_with_no_pedal_rows_reports_no_basis(fresh_db) -> None:
+    """Imported history has no pedal rows at all.
+
+    Reading that as "no pedal problems" would report a fault that was never observed,
+    which is why the distinction is carried in the stored basis rather than inferred
+    from a zero.
+    """
+    sitting_id = store.ingest(batch([0, 500])).sitting_id
+    metrics = store.ensure_segments(sitting_id, now_ms=LATER_MS)[0].metrics
+
+    assert metrics is not None
+    assert metrics.pedal_basis is None, "not recorded, as distinct from not used"
+    assert metrics.pedal_changes == 0
+    assert metrics.pedal_blur == 0

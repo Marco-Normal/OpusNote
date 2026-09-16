@@ -50,8 +50,23 @@
       minutes: 0,
       notes: 0,
       sittings: 0,
+      written_minutes: 0,
+      written_entries: 0,
     } as CalendarDay),
   );
+
+  /**
+   * What was written down, totalled separately from what was measured.
+   *
+   * The two are never added: a session can be both played and written about, so a
+   * combined figure would count it twice. The heat itself stays measured-only for
+   * the same reason — written time is an overlay on the picture, not part of its
+   * scale.
+   */
+  const writtenTotal = $derived(
+    Math.round(days.reduce((sum, day) => sum + day.written_minutes, 0) * 10) / 10,
+  );
+  const writtenDays = $derived(days.filter((day) => day.written_minutes > 0).length);
 </script>
 
 <div class="heat" role="img" aria-label="Practice minutes per day">
@@ -65,9 +80,14 @@
           {#if day}
             <span
               class="cell l{level(day.minutes)}"
+              class:written={day.written_minutes > 0}
+              class:unmeasured={day.written_minutes > 0 && day.minutes <= 0}
               data-date={day.date}
               data-level={level(day.minutes)}
-              title="{day.date} · {day.minutes} min · {day.notes} notes · {day.sittings} sittings"
+              data-written={day.written_minutes}
+              title="{day.date} · {day.minutes} min · {day.notes} notes · {day.sittings} sittings{day.written_minutes
+                ? ` · ${day.written_minutes} min written down`
+                : ''}"
             ></span>
           {:else}
             <span class="cell blank"></span>
@@ -80,6 +100,10 @@
   <div class="spread footnote">
     <span class="muted small">
       {days.length} days · busiest {busiest.date} at {busiest.minutes} min
+      {#if writtenDays > 0}
+        · {writtenTotal} min written down over {writtenDays}
+        {writtenDays === 1 ? 'day' : 'days'}
+      {/if}
     </span>
     <span class="row legend">
       <span class="muted small">less</span>
@@ -87,6 +111,8 @@
         <span class="cell l{step}"></span>
       {/each}
       <span class="muted small">more</span>
+      <span class="cell l2 written"></span>
+      <span class="muted small">written down</span>
     </span>
   </div>
 </div>
@@ -141,6 +167,18 @@
   .l4 {
     background: var(--accent);
     opacity: 1;
+  }
+
+  /* Written time is an overlay, so it is drawn as a border rather than as another
+     shade: the fill still means "minutes the piano heard" and nothing else. */
+  .cell.written {
+    border-color: var(--accent);
+  }
+
+  /* A day with prose and nothing measured is its own state, not a low value. */
+  .cell.unmeasured {
+    background: transparent;
+    border-style: dashed;
   }
 
   .footnote {

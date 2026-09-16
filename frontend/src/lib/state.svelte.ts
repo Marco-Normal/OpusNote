@@ -274,6 +274,24 @@ class AppState {
   revision = $state(0);
 
   /**
+   * A journal entry that the Log tab has asked to write about a sitting.
+   *
+   * The entry belongs to the piece, so writing about a session means going to the
+   * piece's page with the sitting attached — and that is a move between two views,
+   * which is why the draft is parked here rather than passed down. RepertoireView
+   * consumes it and clears it, so it cannot fire twice.
+   */
+  journalDraft = $state<{ pieceId: number; sittingId: number; measured: string | null } | null>(
+    null,
+  );
+
+  /** Ask for a journal entry about a sitting, and go where it can be written. */
+  writeAboutSitting(pieceId: number, sittingId: number, measured: string | null): void {
+    this.journalDraft = { pieceId, sittingId, measured };
+    this.view = 'repertoire';
+  }
+
+  /**
    * Tell the server the piano has gone, so it can close the open sitting.
    *
    * Idempotent and safe to call when nothing is open: the server answers with a

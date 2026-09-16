@@ -28,7 +28,15 @@ class JournalEntryOut(BaseModel):
     entry_date: str
     content: str
     practice_minutes: int | None = None
+    #: The sitting this entry was written about, or None for one written from the
+    #: piece's page without a session in mind. Optional by design: the piece owns the
+    #: entry, and the sitting is context for it.
+    sitting_id: int | None = None
     created_at: str | None = None
+    #: Filled only by the cross-piece feed, which is the one place an entry is shown
+    #: away from its piece and therefore has to say which piece it belongs to.
+    piece_title: str | None = None
+    composer_name: str | None = None
 
 
 class MediaOut(BaseModel):
@@ -176,12 +184,16 @@ class JournalCreate(BaseModel):
     entry_date: str = Field(pattern=DATE_PATTERN)
     content: str = Field(min_length=1)
     practice_minutes: int | None = Field(default=None, ge=0, le=24 * 60)
+    #: Optional, and validated to exist, so a bad id is a 422 rather than a foreign-key
+    #: failure surfacing as a 500.
+    sitting_id: int | None = None
 
 
 class JournalUpdate(BaseModel):
     entry_date: str | None = Field(default=None, pattern=DATE_PATTERN)
     content: str | None = Field(default=None, min_length=1)
     practice_minutes: int | None = Field(default=None, ge=0, le=24 * 60)
+    sitting_id: int | None = None
 
 
 class DeleteResult(BaseModel):
