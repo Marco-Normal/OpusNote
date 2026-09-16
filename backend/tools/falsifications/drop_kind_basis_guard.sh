@@ -18,11 +18,11 @@ import pathlib, sys
 
 path = pathlib.Path(sys.argv[1])
 text = path.read_text()
-needle = """                   CASE
+needle = """            SELECT CASE
                        WHEN g.practice_kind_basis IN ('manual', 'accepted')
                        THEN g.practice_kind
                        ELSE NULL
                    END AS kind,"""
 assert needle in text, "the guard is not where this script expects it"
-path.write_text(text.replace(needle, "                   g.practice_kind AS kind,", 1))
+path.write_text(text.replace(needle, "            SELECT g.practice_kind AS kind,", 1))
 PY
