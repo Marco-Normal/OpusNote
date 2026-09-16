@@ -389,6 +389,11 @@ missing binary: the run fails loudly rather than passing.
 
 ## Task 6 — `scenario_repertoire` checks its own errors and closes its page
 
+**Landed.** One line each, added where the other eleven scenarios already had them. It was
+the largest scenario and the only one collecting console, page and network errors without
+ever asserting them — a `console.error` or a failed request anywhere in 67 checks went
+unreported.
+
 **Files:** modify `backend/tools/e2e_browser.py` (end of `scenario_repertoire`).
 
 **Steps.** Add the `check(not errors, ...)` the other eleven scenarios have, and
@@ -400,6 +405,14 @@ scenario now fails.
 ---
 
 ## Task 7 — A database mismatch is a hard error
+
+**Landed and falsified.** The guard compares the server's reported database path with this
+process's and refuses to run, naming both. Verified by pointing `SRT_DB_PATH` at a file the
+server was not using: exit 1, both paths quoted.
+
+Worth noting where it *cannot* fire: `run_e2e.sh` exports the environment it uses, so the two
+can only diverge on the README's manual invocation — which is exactly the path that produced
+the failure `AGENT-LOG.md` records, so the guard is aimed at the right place.
 
 **Files:** modify `backend/tools/e2e_browser.py` (the `clear_*` / `reset_all` helpers).
 
@@ -489,6 +502,17 @@ reports success; removing the `git apply` makes it report failure.
 ---
 
 ## Task 10 — Mutation baseline
+
+**Landed, and the fallback was not needed.** `mutmut` 3.8 works with pytest 9 and grades the
+whole codebase in one pass at roughly 21 mutants a second, so it is a `--full` report rather
+than an overnight job. Configured in `backend/setup.cfg`.
+
+**Baseline: 10,652 mutants — 10,289 killed, 305 survived, 53 uncovered, 5 timeouts. 97.1%.**
+The headline is that the suite is genuinely good. The survivors are the work queue and
+concentrate exactly where the audit predicted: `app.music` 199, `app.config` 30,
+`app.skills_data` 29, `app.piano` 23, `app.main` 20. The full distribution and what it means
+are in `TEST-STRATEGY.md` §1.4; the sharpest single entry is `bass_patterns.x_free_line` with
+62, which is the free left hand the README itself calls the harder half.
 
 **Files:** modify `backend/setup.cfg` or `pytest.ini` (mutmut config); no app changes.
 

@@ -9,6 +9,9 @@ venv/
 backend/data/
 backend/.pytest-tmp/
 backend/screenshots/
+# Mutation testing artefacts (Slice 0 of docs/TEST-STRATEGY.md)
+backend/mutants/
+backend/.mutmut-cache
 # Coverage artefacts (Slice 0 of docs/TEST-STRATEGY.md makes these routine)
 .coverage
 .coverage.*

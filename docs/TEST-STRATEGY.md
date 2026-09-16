@@ -27,7 +27,7 @@ any of them is allowed to be called finished.
 | Contracts (schema, status codes, boundaries) | by example only |
 | Cross-domain seams | actually good — no zero-coverage seam found |
 | Scale bounds, fault injection, accessibility, visual | none |
-| Mutation testing, CI | none |
+| Mutation score | **97.1%** — 10,652 mutants, 10,289 killed, **305 survived**, 53 uncovered, 5 timeouts |
 
 Three facts make the rest of this document necessary.
 
@@ -162,6 +162,55 @@ state, and it is the same symptom seen once during Phase 19 on an accumulated lo
 mechanism is now confirmed rather than inferred: `store.ingest` reads to find a sitting and
 then writes, and a concurrent writer invalidates the WAL snapshot. Slice 5 has a
 reproduction to work from.
+
+---
+
+### 1.4 The mutation baseline, and what it says
+
+`mutmut` 3.8 works with pytest 9 — the fallback was not needed — and its instrumented
+trampoline design means the whole codebase is graded in one pass at roughly 21 mutants a
+second rather than one test run per mutant. That makes it affordable as a `--full` report
+instead of an overnight job.
+
+**10,652 mutants: 10,289 killed, 305 survived, 53 uncovered, 5 timeouts.** The headline is
+that the suite is genuinely good — 97% of deliberately-broken code is caught. The survivors
+are the work queue, and they concentrate exactly where the gap analysis predicted:
+
+| Module | Survivors | What it is |
+| --- | --- | --- |
+| `app.music` | **199** | the generator, the bass-pattern library, harmony |
+| `app.config` | **30** | the settings plumbing |
+| `app.skills_data` | **29** | the difficulty model's own data |
+| `app.piano` | 23 | the one-time sample download and its static mount |
+| `app.main` | 20 | the app factory and the frontend mount |
+| everything else | 4 | |
+
+Two of those rows are the audit restated as a number. `app.config`'s 30 survivors are the
+"~40 `SRT_*` knobs never exercised at a non-default value" finding: the settings object is
+built once at import and every test runs at its defaults, so a mutant that changes a default
+changes nothing any test observes. `app.music`'s 199 are the resolution problem: the catalogue
+sweeps are exhaustive over what ships and blind to anything else, so mutating a pattern's
+internals often leaves every shipped case passing.
+
+At function level the queue is sharpest at:
+
+| Function | Survivors |
+| --- | --- |
+| `bass_patterns.x_free_line` | **62** |
+| `bass_patterns.x_countermelody` | 30 |
+| `skills_data.x_validate_taxonomy` | 23 |
+| `piano.x_mount_samples` | 23 |
+| `generator.x__inner_voice_events` | 22 |
+| `main.x_mount_frontend` | 20 |
+| `bass_patterns.x_canon` | 19 |
+
+`x_free_line` is the free left hand that this project's own README calls *"the harder half:
+it needs its own melodic generation… the difference between reading and guessing"*. The
+hardest thing to generate is also the least defended, which is not a coincidence — it is
+what a hard case looks like when the tests were written alongside it.
+
+**This is a report, not a gate.** 305 survivors is a work queue, not a failure, and the score
+becomes a no-regression gate only once slices 1-2 have worked through the worst of it.
 
 ---
 

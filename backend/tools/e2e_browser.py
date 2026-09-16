@@ -1737,6 +1737,11 @@ def scenario_repertoire(browser) -> None:
         "cancelling the delete keeps the piece",
     )
 
+    # The other eleven scenarios assert this; this one — the largest, at 67 checks — did
+    # not, so a console error or a failed request anywhere in it went unreported.
+    check(not errors, f"no console errors ({errors})")
+    page.close()
+
 #: Send a short phrase straight from the simulated device.
 PLAY_PHRASE = """
 ([pitches, spacing, hold]) => {
@@ -3039,6 +3044,23 @@ def main() -> int:
     SHOTS.mkdir(parents=True, exist_ok=True)
     health = api("/api/health")
     print(f"API health: {health}")
+
+    # The setup helpers write to the database named by *this* process's SRT_DB_PATH, while
+    # the server uses its own. When the two disagree, setup silently applies to the wrong
+    # file and the scenarios fail for reasons that have nothing to do with the app —
+    # `AGENT-LOG.md` records exactly that being met. Comparing the server's reported path
+    # with this process's turns it into one sentence naming both.
+    local_db = os.environ.get("SRT_DB_PATH")
+    server_db = health.get("database")
+    if local_db and server_db and os.path.realpath(local_db) != os.path.realpath(server_db):
+        print(
+            f"refusing to run: SRT_DB_PATH here is {local_db!r} but the server is using"
+            f" {server_db!r}, so scenario setup would write to a database the app is not"
+            " reading.",
+            file=sys.stderr,
+        )
+        return 1
+
     # The first scenario's clean state comes from the same call the loop uses, rather than
     # from a separate profile reset that cleared two tables out of eighteen.
     reset_all()
