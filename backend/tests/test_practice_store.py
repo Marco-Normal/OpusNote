@@ -820,6 +820,12 @@ def test_the_stored_blur_positions_are_where_the_stored_count_says(fresh_db) -> 
                 WireNote(epoch_ms=BASE_MS + 1_000, pitch=65, velocity=70, duration_ms=200, channel=0),
                 WireNote(epoch_ms=BASE_MS + 1_000, pitch=67, velocity=70, duration_ms=200, channel=0),
                 WireNote(epoch_ms=BASE_MS + 1_000, pitch=69, velocity=70, duration_ms=200, channel=0),
+                # A second arrival over a longer ring: three more new classes, so the sitting
+                # carries *two* blurs. One would let a truncation of the list pass unnoticed,
+                # which is exactly the break this is here to catch.
+                WireNote(epoch_ms=BASE_MS + 1_600, pitch=71, velocity=70, duration_ms=200, channel=0),
+                WireNote(epoch_ms=BASE_MS + 1_600, pitch=73, velocity=70, duration_ms=200, channel=0),
+                WireNote(epoch_ms=BASE_MS + 1_600, pitch=74, velocity=70, duration_ms=200, channel=0),
             ],
             pedals=[
                 WirePedal(epoch_ms=BASE_MS, value=127, channel=0),
@@ -834,5 +840,5 @@ def test_the_stored_blur_positions_are_where_the_stored_count_says(fresh_db) -> 
     assert metrics.pedal_blur >= 1, (
         "the fixture must actually produce a blur, or this asserts nothing"
     )
-    assert metrics.pedal_blur_ms == [1_000], "the blur was at the triad"
+    assert metrics.pedal_blur_ms == [1_000, 1_600], "both triads, in the order they arrived"
     assert metrics.pedal_blur == len(metrics.pedal_blur_ms)
