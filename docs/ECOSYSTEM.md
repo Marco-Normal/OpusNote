@@ -1403,7 +1403,13 @@ be overloaded to carry this one.
 - A one-register segment never produces a `hands_separate` offer (the refusal, tested).
 - The kind split reconciles with the window's logged minutes.
 
-#### 20b — the piano-side toolkit (G2, G3, G4, G6)
+#### 20b — the piano-side toolkit (G2, G3, G4, G6) — planned
+
+**Implementation plan:** [`PLAN-PHASE20B.md`](./PLAN-PHASE20B.md). Two things it settles that this
+section left open: `midi.ts` drops every controller but CC64, so the sostenuto needs a second,
+**read-only** stream rather than a widened pedal stream (`pedal_events` has no controller column and
+is read as CC64); and routing is by **hash** (`#/repertoire/piece/12`), which needs no server change
+and behaves the same on `localhost:8000` and `piano.local:8000`.
 
 **Problem.** The app is used from the piano bench, and every action needs a hand that is
 supposed to be on the keys. The PX-870 has three pedals; only the damper is read, and the
@@ -1442,7 +1448,13 @@ choice, no URL for anything, and no keyboard path through the app.
 - The palette finds a piece by title, a journal entry by a word that appears only in its
   content, and a sitting by date.
 
-#### 20c — log trust and habit (F1, B3)
+#### 20c — log trust and habit (F1, B3) — planned
+
+**Implementation plan:** [`PLAN-PHASE20C.md`](./PLAN-PHASE20C.md). It derives the inverse of a
+timeline edit by **diffing the segment rows** rather than remembering which button was pressed, and
+pins the two consequences of the grace-day rule that a naive implementation gets wrong: a rest day
+at the *end* of a run is the end of the run (without a look-ahead every streak reports one too
+many), and a forgiven rest day must join two stretches of practice.
 
 **Problem.** Merge, split and re-segment are one-way, and the matcher writes labels without
 being asked. The streak resets on a single missed day, which punishes the recovery days a
