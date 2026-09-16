@@ -581,3 +581,50 @@ Every check added from here is falsified before it is kept.
   slices 0-7; the rules stay as history with a pointer.
 - Each phase's acceptance bullets in `docs/ECOSYSTEM.md` — unchanged, but a phase now also
   owes whatever this document says its change surface implies.
+---
+
+## Appendix — dead code and duplicated owners
+
+Inventoried in Slice 0 and **deliberately not removed**. Deletion is a decision with its own
+evidence, and sweeping it into a test-strategy slice would be exactly the "while here" work
+this document argues against. Each entry names what would justify keeping it.
+
+### Dead in both directions — 0% covered *and* referenced by nothing
+
+Verified by grep: no non-definition reference anywhere in `app/` or `tests/`.
+
+| Function | Note |
+| --- | --- |
+| `adaptive/selector.py:147` `available_levels` | superseded by the level table it derives from |
+| `db.py:184` `row_to_dict` | a one-line adapter nothing calls |
+| `music/events.py:102` `even_durations` | an exact-`Fraction` bar divider, never entered |
+| `music/events.py:136` `melody_events_to_pitches` | never entered |
+| `music/expected.py:205` `expected_to_dicts` | an orphaned serialiser; callers use `note.to_dict()` inline in three modules |
+| `practice/similarity.py:196` `attack_count` | superseded by `metrics.attacks` |
+| `practice/similarity.py:399` `top_piece` | superseded by the ranked candidate list |
+| `skills_data.py:226` `keys_at_level` | never entered |
+| `store.py:482` `performance_count` | never entered |
+
+`piano.py:120 fetch` is **not** on this list: it is the deliberate network seam that
+`load_piano` wraps, and its `OSError`/`URLError` handlers are unreachable in tests only because
+every test monkeypatches around the network. That is a coverage gap, not dead code, and
+Slice 5 owns it.
+
+### Two owners for one value
+
+The project's own recurring defect class — a rule written twice, with the two copies drifting
+apart in how well they are tested.
+
+| Value | Owners | Divergence |
+| --- | --- | --- |
+| consecutive practice days | `services.py:363 _streak_days` | the "today unplayed, yesterday played" branch has never run — and this is the one `/api/stats` uses |
+| | `practice/store.py:1137 streak_days` | well tested, via `/api/practice/analytics/summary` |
+| the player's calendar day | `services.py:344 _local_day` | malformed-timestamp fallback never run |
+| | `practice/store.py:124 local_date` | tested |
+| the upload cap | `repertoire/api.py:349` | fires through the route; tested in Slice 0 |
+| | `repertoire/api.py:361` | unreachable through the route; tested directly in Slice 0 with the finding recorded |
+| serialisation | `music/expected.py:205 expected_to_dicts` | dead |
+| | inline `[n.to_dict() for n in …]` | three call sites, none of which round-trip |
+
+The first two rows are the same shape: the copy that is *used* is the copy that is *untested*.
+Retiring one of each pair is the fix, and Slice 5's environment work touches the same files.
