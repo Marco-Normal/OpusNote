@@ -1425,3 +1425,43 @@ practice read and five additive response fields; `SCHEMA_VERSION` goes 2 -> 3 an
 untouched.
 
 Still to plan: 20e (audio takes) — the last one.
+
+## 2026-09-16 — sight-reading agent — Phase 20e planned: the phase is now fully specified
+
+Scope: `docs/PLAN-PHASE20E.md` (new), `docs/ECOSYSTEM.md`, `AGENT-LOG.md`. Planning only; no code,
+schema, route or component changed.
+
+Did: wrote the executable plan for 20e (audio takes) in six tasks — the segment gap on the wire, four
+`media` columns, attachment by epoch range, the capture client with a pure cutter, the takes view and
+the playback rate, then the kiosk permission, the browser proof and the docs. **With 20a landed and
+20b–20e planned, Phase 20 is fully specified**: five slices, five plans, every acceptance bullet
+traced to a task.
+
+Findings from planning it, each recorded in the plan:
+
+1. **The store function is `create_media`, keyword-only — there is no `insert_media`.** The first
+   draft of the plan invented one, with a positional signature, which would have broken the three
+   existing callers (recording upload, score upload, legacy importer). Corrected: the four new
+   arguments are keyword-only with defaults, so all three keep writing `source='uploaded'` untouched.
+2. **A `MediaRecorder` blob must be given a `.webm` filename.** `_stage_upload` takes the suffix from
+   `file.filename` and `store_recording` refuses anything outside `KNOWN_SUFFIXES`, so an unnamed
+   blob is a 422 *even though* `.webm` is accepted and the pipeline already transcodes it to Opus.
+   The failure would read as a format problem rather than a naming one.
+3. **The segment gap belongs on `PracticeStatus`, not `HostInfo`.** `HostInfo`'s own docstring scopes
+   it to "what this machine can see", and `ProfileOut` is the scoring and exercise settings surface;
+   the segment gap is the practice domain's own rule, so it goes on the practice domain's own status.
+   There is deliberately **no local fallback constant** — a server that cannot report its gap refuses
+   the arming, because a take cut in the wrong place is worse than a take not recorded.
+4. **The speed control is inside `{#if open}`**, so the browser scenario has to open the waveform
+   before it can select a rate; and `preservesPitch` needs the `webkitPreservesPitch` spelling too,
+   because a kiosk is exactly the kind of machine that runs an older Chromium.
+5. **`AudioCaptureAllowed: false` is the half that is easy to get wrong.** Without it Chromium grants
+   audio capture to *every* origin, not only the two named in `AudioCaptureAllowedForUrls`.
+
+Impact on the other side: planning only. When 20e lands it adds four additive nullable `media`
+columns (`SCHEMA_VERSION` 3 -> 4), one new route `POST /api/repertoire/takes`, one field on
+`PracticeStatus`, one field on `SystemStatus`, and `AudioCaptureAllowedForUrls` in the kiosk policy —
+which the deployment documents must describe at that point.
+
+The phase's remaining work is execution: 20b, 20c, 20d and 20e in order, each with its plan already
+written against the tree as it then stands.

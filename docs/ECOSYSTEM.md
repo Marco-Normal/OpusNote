@@ -1485,7 +1485,15 @@ pianist needs.
   missed days reset it; today still does not count against you.
 - The weekly target needs no request beyond the existing summary.
 
-#### 20d — journal and library depth (A2, C1–C4)
+#### 20d — journal and library depth (A2, C1–C4) — planned
+
+**Implementation plan:** [`PLAN-PHASE20D.md`](./PLAN-PHASE20D.md). It records three things this
+section left implicit: a new table is a **loud failure in the browser tier** until it is named in
+`e2e_browser.DATA_TABLES`, which is checked against `sqlite_master` on purpose; `by_piece`
+inner-joins `segments`, so a piece with no practice in the window has no row at all and the sorts
+read absence as never played; and seeding a passage from an A/B loop records *which loop* it came
+from while the bars stay the player's, because seconds-to-bars would need the score alignment 20-D7
+refuses.
 
 **Problem.** The journal is prose with a sitting link; it cannot be filtered by subject or
 compared over time. There is nowhere to write down "bars 12–14 are the problem". A paused
@@ -1522,7 +1530,14 @@ piece nags for ever.
   deleted.
 - Least-time-invested and last-played agree with the analytics `by_piece` numbers.
 
-#### 20e — audio takes (D1, D2, D3)
+#### 20e — audio takes (D1, D2, D3) — planned
+
+**Implementation plan:** [`PLAN-PHASE20E.md`](./PLAN-PHASE20E.md). Two corrections it makes to this
+section as written: the client learns the segment rule from **`PracticeStatus`** rather than being
+handed a constant (there is no local fallback — a server that cannot report its gap refuses the
+arming), and a take carries one column more than planned, `captured_start_ms`, because the segment
+it belongs to does not exist when the audio is cut and the absolute epoch is what lets the server
+attach it — the same reasoning the note wire format already uses.
 
 **Problem.** Every recording in the library got there by upload, and the piano's own
 pen-drive recording already exists — so in-app capture is not an archive. It is the
