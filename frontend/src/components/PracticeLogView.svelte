@@ -91,36 +91,65 @@
     return `last note ${Math.round(seconds / 60)} min ago`;
   }
 
+  /**
+   * What an edit can change: the totals and the sitting list.
+   *
+   * Cheap, and the half of `load` that a label or a boundary genuinely invalidates: a measured
+   * 96 ms and 56 ms on the real library, and they go together.
+   */
+  async function refreshTotals(): Promise<void> {
+    const [nextSummary, nextSittings] = await Promise.all([
+      api.practice.summary(days),
+      api.practice.sittings(50),
+    ]);
+    summary = nextSummary;
+    sittings = nextSittings;
+  }
+
+  /**
+   * The whole dashboard: once when the tab opens, and from Refresh.
+   *
+   * The three panels below are reads about the *library* and the *machine*, and they are the
+   * expensive ones — the matcher's leave-one-out accuracy measured **866 ms** against the real
+   * library, against 96 ms for the totals. They used to be refetched after every label, split
+   * and merge, which is where a one-second stall per click came from.
+   *
+   * `allSettled`, and together rather than in series: none of the three may take the log down,
+   * and awaiting them one after another costs the sum of their times instead of the longest.
+   */
   async function load(): Promise<void> {
     error = null;
     try {
-      const [nextSummary, nextSittings] = await Promise.all([
-        api.practice.summary(days),
-        api.practice.sittings(50),
+      await refreshTotals();
+      const [nextWeek, nextSystem, nextQuality] = await Promise.allSettled([
+        api.progressRatings(7),
+        api.systemStatus(),
+        api.practice.identificationQuality(),
       ]);
-      // The week summary mixes practice time with what the trainer thinks improved, so
-      // it needs both domains; failures here must not stop the log rendering.
-      week = await api.progressRatings(7).catch(() => null);
-      system = await api.systemStatus().catch(() => null);
-      // The matcher's measured accuracy is a read like any other; it is allowed to
-      // fail without taking the log down with it.
-      quality = await api.practice.identificationQuality().catch(() => null);
-      summary = nextSummary;
-      sittings = nextSittings;
-      // Always re-read the open sitting. `load` runs after every edit, and the
-      // timeline is drawn from this detail: skipping the refresh left a tag or a
-      // split visible in the API but not on screen, which is worse than a stale
-      // number because the interface looked like it had ignored the edit.
-      if (selectedId !== null && nextSittings.some((row) => row.id === selectedId)) {
-        await select(selectedId);
-      } else if (nextSittings.length > 0 && selectedId === null) {
-        await select(nextSittings[0].id);
-      } else if (selectedId !== null) {
-        selectedId = null;
-        detail = null;
-      }
+      week = nextWeek.status === 'fulfilled' ? nextWeek.value : null;
+      system = nextSystem.status === 'fulfilled' ? nextSystem.value : null;
+      quality = nextQuality.status === 'fulfilled' ? nextQuality.value : null;
+      await openSelectedSitting();
     } catch (cause) {
       error = cause instanceof Error ? cause.message : String(cause);
+    }
+  }
+
+  /**
+   * Keep the timeline pointed at the same sitting across a refresh.
+   *
+   * The sitting is always re-read rather than patched from the list: `load` runs after a
+   * re-segment too, and a timeline drawn from a stale detail looked like it had ignored the
+   * edit — which is worse than a stale number.
+   */
+  async function openSelectedSitting(): Promise<void> {
+    if (selectedId !== null && sittings.some((row) => row.id === selectedId)) {
+      await select(selectedId);
+    } else if (sittings.length > 0 && selectedId === null) {
+      await select(sittings[0].id);
+    } else if (selectedId !== null) {
+      selectedId = null;
+      detail = null;
     }
   }
 
@@ -133,13 +162,26 @@
     }
   }
 
-  /** Every edit re-reads both the sitting and the totals: they are one dataset. */
+  /**
+   * Every edit applies the server's own answer, then refreshes only the totals.
+   *
+   * The response *is* what the timeline draws: `assignSegment`, `setSegmentKind`, `splitSegment`,
+   * `mergeSegments`, `resegment` and `identify` all answer with the sitting's segments, and this
+   * used to throw that away and re-read the same rows — along with three panels an edit cannot
+   * have changed.
+   *
+   * `SittingDetail` carries more than its segments, but nothing an edit moves lives outside
+   * them: a split changes boundaries, not the sitting's duration or its note count.
+   */
   async function edit(action: () => Promise<unknown>): Promise<void> {
     busy = true;
     error = null;
     try {
-      await action();
-      await load();
+      const result = await action();
+      if (detail !== null && Array.isArray(result)) {
+        detail = { ...detail, segments: result as SittingDetail['segments'] };
+      }
+      await refreshTotals();
     } catch (cause) {
       error = cause instanceof Error ? cause.message : String(cause);
     } finally {
@@ -383,7 +425,12 @@
       onsplit={(segmentId, atMs) => void edit(() => api.practice.splitSegment(segmentId, atMs))}
       onmerge={(segmentId, otherId) =>
         void edit(() => api.practice.mergeSegments(segmentId, otherId))}
-      onresegment={(confirm) => void edit(() => api.practice.resegment(detail!.id, confirm))}
+      onresegment={async (confirm) => {
+        await edit(() => api.practice.resegment(detail!.id, confirm));
+        // Re-segmenting rebuilds the rows the matcher was measured against, so its panel is
+        // the one thing here that a refresh can legitimately move.
+        quality = await api.practice.identificationQuality().catch(() => quality);
+      }}
       onidentify={(segmentId, action) =>
         void edit(() => api.practice.identify(segmentId, action))}
     />

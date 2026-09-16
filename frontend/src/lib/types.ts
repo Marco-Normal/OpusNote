@@ -453,6 +453,11 @@ export interface SegmentMetrics {
   /** Attacks that brought new harmony over notes the pedal was already holding. */
   pedal_blur: number | null;
   /**
+   * Where those attacks were, in ms from the start of the sitting, ascending.
+   * `pedal_blur` is this array's length: the count says whether to look, these say where.
+   */
+  pedal_blur_ms: number[];
+  /**
    * Which harmony source produced `pedal_blur`. Null means the sitting has no pedal
    * rows at all — imported history — which is not the same as "not used".
    */

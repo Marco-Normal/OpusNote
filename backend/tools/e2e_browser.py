@@ -1950,6 +1950,36 @@ def seed_closed_sitting(*, minutes_ago: int = 60) -> int:
     return api("/api/practice/events", "POST", payload)["sitting_id"]
 
 
+def seed_blurred_sitting() -> int:
+    """A sitting with one pedal blur in it, so a marker has something to point at.
+
+    Its own sitting rather than an extra note on `seed_closed_sitting`: that one is asserted to
+    have *no* pedal rows at all ("no pedal figure is invented for a sitting with no pedal rows"),
+    and adding pedals to it would quietly turn that assertion into a tautology.
+
+    The shape is the blur rule's: a note released under the pedal, then a triad arriving over it
+    that shares no pitch class with what is ringing.
+    """
+    import time
+
+    base = int(time.time() * 1000) - 90 * 60_000
+    payload = {
+        "tz_offset_minutes": -180,
+        "source": "web_midi",
+        "events": [
+            {"epoch_ms": base, "pitch": 60, "velocity": 70, "duration_ms": 200, "channel": 0},
+            {"epoch_ms": base + 1_000, "pitch": 65, "velocity": 70, "duration_ms": 200, "channel": 0},
+            {"epoch_ms": base + 1_000, "pitch": 67, "velocity": 70, "duration_ms": 200, "channel": 0},
+            {"epoch_ms": base + 1_000, "pitch": 69, "velocity": 70, "duration_ms": 200, "channel": 0},
+        ],
+        "pedals": [
+            {"epoch_ms": base, "value": 127, "channel": 0},
+            {"epoch_ms": base + 2_000, "value": 0, "channel": 0},
+        ],
+    }
+    return api("/api/practice/events", "POST", payload)["sitting_id"]
+
+
 def scenario_practice_log(browser) -> None:
     print("\n[8] Practice log: passive capture, a workout, and the segment timeline")
     clear_practice()
@@ -2317,6 +2347,51 @@ def scenario_practice_log(browser) -> None:
     check(
         len(api(f"/api/practice/sittings/{newest_again['id']}")["segments"]) >= 1,
         "closed by the disconnect like the one before it",
+    )
+
+    # --- a blur count says where, not only how many ---
+    blurred = seed_blurred_sitting()
+    metrics = api(f"/api/practice/sittings/{blurred}")["segments"][0]["metrics"]
+    check(metrics["pedal_blur"] >= 1, f"the fixture produces a blur ({metrics['pedal_blur']})")
+    check(
+        metrics["pedal_blur_ms"] == [1_000],
+        f"and its position travels with the count ({metrics['pedal_blur_ms']})",
+    )
+    with page.expect_response(lambda r: f"/api/practice/sittings/{blurred}" in r.url):
+        page.click(f'[data-sitting="{blurred}"]')
+    page.wait_for_selector('[data-blur="1000"]', timeout=20_000)
+    check(
+        page.locator('[data-blur="1000"]').count() == 1,
+        "the strip marks where the blur was",
+    )
+    check(
+        page.inner_text("[data-blur-where]").startswith("at 0:01"),
+        f"and the row names the time ({page.inner_text('[data-blur-where]')!r})",
+    )
+
+    # --- an edit refreshes what an edit changed, and nothing else ---
+    # The measured stall: `load()` awaited the matcher's accuracy (866 ms against the real
+    # library), the machine's health and the week's ratings after every label, split and merge.
+    requested: list[str] = []
+    page.on("request", lambda request: requested.append(request.url))
+    with page.expect_response(
+        lambda r: "/api/practice/segments/" in r.url and r.request.method == "PATCH"
+    ):
+        page.select_option(
+            'select[aria-label="Piece for this segment"] >> nth=0', str(target["id"])
+        )
+    page.wait_for_timeout(900)
+    check(
+        any("analytics/summary" in url for url in requested),
+        "an edit still refreshes the totals",
+    )
+    check(
+        not any("/autotag/quality" in url for url in requested),
+        "but not the matcher's accuracy, which a label cannot change",
+    )
+    check(
+        not any("/api/status/system" in url for url in requested),
+        "nor the machine's health",
     )
 
     check(not errors, f"no console errors ({errors})")

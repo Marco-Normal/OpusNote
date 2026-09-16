@@ -387,6 +387,18 @@
             (segment.end_ms - segment.start_ms) / 1000,
           )} · click to play from here"
         ></span>
+        {#each segment.metrics?.pedal_blur_ms ?? [] as blurMs (blurMs)}
+          <!-- A hairline per blur, so a long sitting can be searched by eye. The count
+               says whether to look; these say where. -->
+          <span
+            class="blur"
+            data-blur={blurMs}
+            style="left: {((segment.start_ms + blurMs) / total) * 100}%"
+            title="Pedal blur at {formatClock(
+              (segment.start_ms + blurMs) / 1000,
+            )} — new harmony arrived while the pedal was holding notes from before"
+          ></span>
+        {/each}
       {/each}
       {#if soundingRange}
         <span
@@ -429,9 +441,20 @@
                 <span
                   class="pill warn"
                   data-pedal-blur={segment.metrics.pedal_blur}
-                  title="Attacks that brought new harmony over notes the pedal was already holding. Observed from the pitches, not from a score — it reports, it does not judge"
+                  title="Attacks that brought new harmony over notes the pedal was already holding. Observed from the pitches, not from a score — it reports, it does not judge. At {segment.metrics.pedal_blur_ms
+                    .map((ms) => formatClock((segment.start_ms + ms) / 1000))
+                    .join(', ')}"
                 >
                   {segment.metrics.pedal_blur} pedal blur
+                </span>
+                <!-- The strip says where to look; this says what you are looking at. Capped at
+                     four times because a segment can hold nine, and nine clock times in a row is
+                     a wall of digits rather than a hint. -->
+                <span class="muted small" data-blur-where={segment.id}>
+                  at {segment.metrics.pedal_blur_ms
+                    .slice(0, 4)
+                    .map((ms) => formatClock((segment.start_ms + ms) / 1000))
+                    .join(', ')}{segment.metrics.pedal_blur_ms.length > 4 ? ' …' : ''}
                 </span>
               {/if}
             {:else if segment.metrics}
@@ -682,6 +705,19 @@
   .block.labelled {
     background: var(--good);
     opacity: 0.8;
+  }
+
+  /* A blur marker is a hairline: findable on a long sitting without becoming the loudest
+     thing on the strip. It takes no pointer events, so clicking it still seeks. */
+  .strip .blur {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    margin-left: -1px;
+    background: var(--warn);
+    opacity: 0.85;
+    pointer-events: none;
   }
 
   .playhead {
