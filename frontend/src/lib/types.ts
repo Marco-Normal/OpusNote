@@ -375,6 +375,22 @@ export interface PracticeSuggestion {
 /** What produced a batch of notes. A closed set, matching the server's. */
 export type PracticeSource = 'web_midi' | 'sight_reading';
 
+/**
+ * How a segment was practised. Sight-reading is deliberately not one of these: the
+ * segment's `source` already owns that, and two owners for one fact drift apart.
+ */
+export type PracticeKind =
+  | 'run_through'
+  | 'slow'
+  | 'section'
+  | 'hands_separate'
+  | 'memory'
+  | 'warm_up'
+  | 'other';
+
+/** 'offered' is the app's question; 'manual' and 'accepted' are answers. */
+export type PracticeKindBasis = 'offered' | 'manual' | 'accepted';
+
 export interface PracticeStatus {
   sittings: number;
   notes: number;
@@ -473,6 +489,9 @@ export interface SegmentSummary {
   workout_id: number | null;
   confidence: number | null;
   identified_by: string | null;
+  practice_kind: PracticeKind | null;
+  /** 'offered' means the kind above is a question, not a label. */
+  practice_kind_basis: PracticeKindBasis | null;
   note_count: number;
   metrics: SegmentMetrics | null;
   /** Empty once the segment is decided, or once you have declined a suggestion. */
@@ -633,6 +652,14 @@ export interface SourceSplit {
   notes: number;
 }
 
+/** Logged minutes per practice kind. A null `kind` is the uncharacterised bucket. */
+export interface PracticeKindSplit {
+  kind: string | null;
+  minutes: number;
+  notes: number;
+  segments: number;
+}
+
 export interface AnalyticsSummary {
   days: number;
   total_minutes: number;
@@ -643,6 +670,7 @@ export interface AnalyticsSummary {
   by_piece: PiecePractice[];
   neglected: NeglectedPiece[];
   sources: SourceSplit[];
+  kinds: PracticeKindSplit[];
   recent: SittingSummary[];
   workouts_completed: number;
   workouts_this_week: number;

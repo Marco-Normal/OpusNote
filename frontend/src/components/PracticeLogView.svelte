@@ -26,6 +26,7 @@
   import SegmentTimeline from './SegmentTimeline.svelte';
   import SittingList from './SittingList.svelte';
   import { formatClock } from '../lib/clock';
+  import { practiceKindLabel } from '../lib/kinds';
 
   let summary = $state<AnalyticsSummary | null>(null);
   let week = $state<RatingHistory | null>(null);
@@ -349,6 +350,17 @@
           </span>
         {/each}
       </div>
+      {#if summary.kinds.length > 0}
+        <div class="row wrap" data-kind-split>
+          {#each summary.kinds as entry (entry.kind ?? 'untagged')}
+            <span class="pill" class:accent={entry.kind === 'slow'}>
+              {practiceKindLabel(entry.kind)} · {formatMinutes(entry.minutes)} ·
+              {entry.segments}
+              {entry.segments === 1 ? 'segment' : 'segments'}
+            </span>
+          {/each}
+        </div>
+      {/if}
     </section>
   {/if}
 {/if}
@@ -366,6 +378,8 @@
       {busy}
       onassign={(segmentId, pieceId) =>
         void edit(() => api.practice.assignSegment(segmentId, pieceId))}
+      onkinds={(segmentId, body) =>
+        void edit(() => api.practice.setSegmentKind(segmentId, body))}
       onsplit={(segmentId, atMs) => void edit(() => api.practice.splitSegment(segmentId, atMs))}
       onmerge={(segmentId, otherId) =>
         void edit(() => api.practice.mergeSegments(segmentId, otherId))}

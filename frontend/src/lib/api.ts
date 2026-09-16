@@ -22,6 +22,7 @@ import type {
   PianoStatus,
   PieceSummary,
   PracticeImportReport,
+  PracticeKind,
   PracticeSource,
   PracticeStatus,
   PlayedNote,
@@ -362,6 +363,21 @@ export const api = {
       request<SegmentSummary[]>(`/practice/segments/${segmentId}`, {
         method: 'PATCH',
         body: JSON.stringify({ piece_id: pieceId }),
+      }),
+
+    /**
+     * Say how a segment was practised, or answer the app's offer about it.
+     *
+     * `set` is your own choice and may replace a previous one; `accept` promotes a
+     * pending offer; `decline` clears it. All three return the sitting's segments.
+     */
+    setSegmentKind: (
+      segmentId: number,
+      body: { action: 'set' | 'accept' | 'decline'; kind?: PracticeKind | null },
+    ) =>
+      request<SegmentSummary[]>(`/practice/segments/${segmentId}/kind`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
       }),
 
     splitSegment: (segmentId: number, atMs: number) =>

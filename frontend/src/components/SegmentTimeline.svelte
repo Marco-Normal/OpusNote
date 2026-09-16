@@ -16,8 +16,10 @@
     type SynthNote,
   } from '../lib/playback';
   import { formatClock, parseClock } from '../lib/clock';
+  import { PRACTICE_KINDS, kindCounts, practiceKindLabel } from '../lib/kinds';
   import {
     type PieceSummary,
+    type PracticeKind,
     type SegmentMetrics,
     type SegmentSummary,
     type SittingDetail,
@@ -28,6 +30,10 @@
     pieces: PieceSummary[];
     busy: boolean;
     onassign: (segmentId: number, pieceId: number | null) => void;
+    onkinds: (
+      segmentId: number,
+      body: { action: 'set' | 'accept' | 'decline'; kind?: PracticeKind | null },
+    ) => void;
     onsplit: (segmentId: number, atMs: number) => void;
     onmerge: (segmentId: number, otherId: number) => void;
     onresegment: (confirm: boolean) => void;
@@ -35,8 +41,17 @@
     onidentify: (segmentId: number, action: 'accept' | 'reject' | 'dismiss') => void;
   }
 
-  let { detail, pieces, busy, onassign, onsplit, onmerge, onresegment, onidentify }: Props =
-    $props();
+  let {
+    detail,
+    pieces,
+    busy,
+    onassign,
+    onkinds,
+    onsplit,
+    onmerge,
+    onresegment,
+    onidentify,
+  }: Props = $props();
 
   /** A segment the matcher wrote, rather than one you did. */
   const inferred = (segment: SegmentSummary): boolean => segment.identified_by === 'similarity';
@@ -449,6 +464,15 @@
                 {segment.workout_id ? `workout ${segment.workout_id}` : 'sight-reading'}
               </span>
             {/if}
+            {#if segment.practice_kind && kindCounts(segment.practice_kind_basis)}
+              <span
+                class="pill"
+                data-kind={segment.practice_kind}
+                title="How this segment was practised — said by you, not inferred"
+              >
+                {practiceKindLabel(segment.practice_kind)}
+              </span>
+            {/if}
             {#if segment.piece_id}
               <button
                 class="ghost tiny"
@@ -511,6 +535,30 @@
             </div>
           {/if}
 
+          {#if segment.practice_kind_basis === 'offered' && segment.practice_kind}
+            <div class="row wrap suggest" data-kind-offer={segment.id}>
+              <span class="muted small">{practiceKindLabel(segment.practice_kind)} practice?</span>
+              <button
+                class="ghost tiny"
+                disabled={busy}
+                onclick={() => onkinds(segment.id, { action: 'accept' })}
+              >
+                Yes
+              </button>
+              <button
+                class="ghost tiny"
+                disabled={busy}
+                onclick={() => onkinds(segment.id, { action: 'decline' })}
+              >
+                No
+              </button>
+              <span class="muted small">
+                from the tempo and the restarts — not from a score, and it counts for nothing
+                until you say so
+              </span>
+            </div>
+          {/if}
+
           <div class="row wrap controls">
             <select
               aria-label="Piece for this segment"
@@ -526,6 +574,26 @@
                 <option value={piece.id}>
                   {piece.title}{piece.composer_name ? ` · ${piece.composer_name}` : ''}
                 </option>
+              {/each}
+            </select>
+
+            <select
+              aria-label="How this segment was practised"
+              disabled={busy}
+              value={segment.practice_kind && kindCounts(segment.practice_kind_basis)
+                ? segment.practice_kind
+                : ''}
+              onchange={(event) => {
+                const value = (event.currentTarget as HTMLSelectElement).value;
+                onkinds(segment.id, {
+                  action: 'set',
+                  kind: value === '' ? null : (value as PracticeKind),
+                });
+              }}
+            >
+              <option value="">— how practised? —</option>
+              {#each PRACTICE_KINDS as entry (entry.id)}
+                <option value={entry.id}>{entry.label}</option>
               {/each}
             </select>
 
