@@ -608,12 +608,26 @@ def scenario_wrong_and_silence(browser) -> None:
     page.wait_for_function("() => document.querySelectorAll('.notes .note.wrong_pitch').length > 0", timeout=30_000)
     check(True, "wrong pitches highlighted live in the note strip")
 
-    # And on the notation itself.
+    # And on the notation itself. One red notehead is not "wrong pitches are coloured red",
+    # which is what `> 0` accepted; the notation and the strip below it have to agree on how
+    # many notes are wrong. Polled rather than slept, because the score paints as the notes
+    # arrive and a fixed wait would be either flaky or slow.
     wrong = page.evaluate(HEX_TO_RGB, "#b91c1c")
-    live_counts = page.evaluate(NOTE_FILL_COUNTS)
+    wrong_in_strip = 0
+    red = 0
+    for _ in range(40):
+        live_counts = page.evaluate(NOTE_FILL_COUNTS)
+        red = live_counts.get(wrong, 0)
+        wrong_in_strip = page.evaluate(
+            "() => document.querySelectorAll('.notes .note.wrong_pitch').length"
+        )
+        if wrong_in_strip > 0 and red >= wrong_in_strip:
+            break
+        page.wait_for_timeout(250)
     check(
-        live_counts.get(wrong, 0) > 0,
-        f"wrong pitches are coloured red on the score ({live_counts})",
+        wrong_in_strip > 0 and red >= wrong_in_strip,
+        f"wrong pitches are coloured red on the score, matching the strip "
+        f"({red} red, {wrong_in_strip} flagged)",
     )
     click_button(page, "Stop & score")
     wait_for_phase(page, "result", timeout=60_000)
@@ -2611,9 +2625,14 @@ def scenario_playback(browser) -> None:
     after_stop = page.evaluate("() => window.__fakeMidi.noteOns().length")
     page.wait_for_timeout(900)
     still = page.evaluate("() => window.__fakeMidi.noteOns().length")
+    # Both being zero is the *pass* condition here: any note-on after Stop is the bug. The
+    # audit read this as vacuously true, and requiring a non-zero count was tried and is
+    # wrong — it would demand the very note-ons that must not arrive. The vacuous case is
+    # already excluded by `84 in started` above, which proves playback was producing notes
+    # before the forget.
     check(
-        still == after_stop,
-        f"and nothing further is sent afterwards ({after_stop} -> {still})",
+        still == after_stop == 0,
+        f"and nothing further is sent afterwards (0 expected, got {after_stop} then {still})",
     )
 
     # --- seeking into a long sitting ---
@@ -2623,8 +2642,10 @@ def scenario_playback(browser) -> None:
     page.mouse.click(box["x"] + box["width"] * 0.85, box["y"] + box["height"] / 2)
     page.wait_for_timeout(900)
     sought = page.evaluate("() => window.__fakeMidi.noteOns()")
+    # `len(sought) < total_notes` was also true when seeking played *nothing*, which is the
+    # failure it was meant to catch.
     check(
-        len(sought) < total_notes,
+        0 < len(sought) < total_notes,
         f"clicking the strip plays from there rather than from the beginning "
         f"({len(sought)} of {total_notes} notes so far)",
     )

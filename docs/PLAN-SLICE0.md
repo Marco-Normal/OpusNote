@@ -340,6 +340,28 @@ is deleted instead.
 
 ## Task 4 — Fix the four that pass while the feature is broken
 
+**Landed, with one of the four rejected.** Two rewrites stand and one was reverted after it
+failed against working code:
+
+- **The seek check** — `len(sought) < total_notes` accepted seeking that played *nothing*.
+  Now `0 < len(sought) < total_notes`: the seek has to produce notes and fewer than all of
+  them.
+- **The score-colour check** — `live_counts.get(wrong, 0) > 0` accepted one red notehead as
+  proof that wrong notes are red. It now polls until the notation agrees with the strip
+  below it and requires `red >= flagged > 0`, so the two displays have to tell the same
+  story. Polling replaced a fixed wait as a side effect.
+- **The after-Stop check — rejected as an audit false positive.** The audit called
+  `still == after_stop` vacuously true when both are zero. It is not vacuous: both being zero
+  *is* the pass condition, because any note-on after Stop is the bug. Requiring a non-zero
+  count was tried, and the scenario failed against working code with `(0 -> 0)` — exactly
+  right behaviour and exactly the wrong assertion. The audit's own note for a neighbouring
+  check ("mitigated because `len(played) > 0` precedes them") applies here too: `84 in
+  started` above proves playback was producing notes before the forget. The check now says
+  `still == after_stop == 0` and its comment records why.
+
+That the strengthened version failed against correct code is the useful part: it is the
+standing rule catching a bad repair rather than a bad test.
+
 **Files:** modify `backend/tools/e2e_browser.py` (`:614`, `:1923` already covered, `:2482`,
 `:2497`).
 
