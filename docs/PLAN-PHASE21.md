@@ -173,9 +173,9 @@ def test_the_blur_positions_are_where_the_blurs_are() -> None:
         note(500, 65, 200),   # a triad that does not contain C: blur at 500
         note(500, 67, 200),
         note(500, 69, 200),
-        note(1_500, 70, 200),  # another arrival over the ringing notes: blur at 1500
-        note(1_500, 74, 200),
-        note(1_500, 77, 200),
+        note(1_500, 71, 200),  # a chord sharing only one class with what is ringing: blur at 1500
+        note(1_500, 73, 200),
+        note(1_500, 76, 200),
     ]
     stretches = intervals([(0, 127), (3_000, 0)])
     assert blur_attacks(notes, stretches) == [500, 1_500]
