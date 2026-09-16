@@ -1510,9 +1510,18 @@ the pedal unit test and the strengthened store invariant. `reload_everything_aft
 (restoring `await load()` in `edit()`) fails the browser assertion *"but not the matcher's accuracy,
 which a label cannot change"*.
 
-Verified: backend **866 passed**; frontend 76; `svelte-check` clean; build clean; the practice-log
+**One gap closed after the first green run, because the user's own library is in it.** The column is
+new, so a sitting segmented *before* Phase 21 has the blur count and no places — which is the state
+their 14-blur sitting is in, and exactly what the feature exists to fix. Rather than a startup
+migration that recomputes every sitting on every machine (including ones that never open the Log),
+the first read of a sitting brings its own cache up to date: `ensure_segments` already decides "these
+segments exist", so it is the one place that knows the work is needed. `drop_blur_backfill.sh`
+falsifies it.
+
+Verified: backend **867 passed**; frontend 76; `svelte-check` clean; build clean; the practice-log
 scenario passes with six new assertions, including that an edit refreshes the totals and does **not**
-fetch `/autotag/quality` or `/api/status/system`; `./check.sh --full` green in **548 s**.
+fetch `/autotag/quality` or `/api/status/system`; three falsifications run; `./check.sh --full` green
+in **548 s** before the backfill, and re-run after it.
 
 Impact on the other side: planning documents were corrected for running this out of order —
 `SCHEMA_VERSION` is now 3, so PLAN-PHASE20D's "2 → 3" is 3 → 4 and PLAN-PHASE20E's "3 → 4" is 4 → 5
