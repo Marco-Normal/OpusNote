@@ -876,3 +876,60 @@ def test_segmenting_a_second_sitting_does_not_erase_the_first_s_metrics(client) 
     assert after is not None, "a second sitting must not erase the first one's metrics"
     assert after["median_tempo"] == before["median_tempo"]
     assert after["pedal_changes"] == before["pedal_changes"]
+
+
+def test_a_kind_a_person_set_survives_a_split_on_both_halves(client) -> None:
+    """A boundary edit is administrative; it must not erase half of a person's answer.
+
+    Found while planning 20c: `split_segment` copied `source` and `workout_id` to the new
+    half and not `practice_kind`, so tagging a segment and then splitting it silently
+    dropped the tag on one half — and the undo in 20c could never restore what was never
+    carried.
+    """
+    sitting = recent_sitting(client, [0, 7_000, 14_000])
+    segment_id = segment_of(client, sitting)["id"]
+    client.patch(
+        f"/api/practice/segments/{segment_id}/kind", json={"action": "set", "kind": "memory"}
+    )
+    split = client.post(f"/api/practice/segments/{segment_id}/split", json={"at_ms": 7_000})
+    assert split.status_code == 200, split.text
+    halves = {(s["practice_kind"], s["practice_kind_basis"]) for s in split.json()}
+    assert halves == {("memory", "manual")}, f"both halves keep the tag ({halves})"
+
+
+def test_merging_keeps_a_kind_from_whichever_half_carries_one(client) -> None:
+    sitting = recent_sitting(client, [0, 7_000, 14_000])
+    segment_id = segment_of(client, sitting)["id"]
+    client.patch(
+        f"/api/practice/segments/{segment_id}/kind", json={"action": "set", "kind": "memory"}
+    )
+    halves = client.post(
+        f"/api/practice/segments/{segment_id}/split", json={"at_ms": 7_000}
+    ).json()
+    left, right = halves[0], halves[1]
+    # Clear the earlier half, so the later one is the only carrier and the merge has to
+    # reach past its "earlier wins" preference to keep the answer at all.
+    client.patch(f"/api/practice/segments/{left['id']}/kind", json={"action": "set", "kind": None})
+    merged = client.post(
+        f"/api/practice/segments/{left['id']}/merge", json={"other_id": right["id"]}
+    )
+    assert merged.status_code == 200, merged.text
+    segment = next(s for s in merged.json() if s["id"] == left["id"])
+    assert (segment["practice_kind"], segment["practice_kind_basis"]) == ("memory", "manual")
+
+
+def test_an_unanswered_offer_is_not_carried_across_a_split(client, conn) -> None:
+    """An offer is a question about the whole stretch; the halves are what makes it doubtful."""
+    sitting = recent_sitting(client, [0, 7_000, 14_000])
+    segment_id = segment_of(client, sitting)["id"]
+    conn.execute(
+        "UPDATE segments SET practice_kind = 'slow', practice_kind_basis = 'offered' WHERE id = ?",
+        (segment_id,),
+    )
+    conn.commit()
+    halves = client.post(
+        f"/api/practice/segments/{segment_id}/split", json={"at_ms": 7_000}
+    ).json()
+    assert all(s["practice_kind"] is None for s in halves), (
+        f"an unanswered proposal is not inherited by a half ({halves})"
+    )

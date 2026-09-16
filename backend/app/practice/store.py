@@ -819,12 +819,27 @@ def list_sittings(limit: int = 20, db_path: Path | None = None) -> list[SittingS
 def _segment_or_raise(conn: sqlite3.Connection, segment_id: int) -> sqlite3.Row:
     row = conn.execute(
         "SELECT id, sitting_id, start_ms, end_ms, piece_id, source, workout_id,"
-        " confidence, identified_by FROM segments WHERE id = ?",
+        " confidence, identified_by, practice_kind, practice_kind_basis"
+        " FROM segments WHERE id = ?",
         (segment_id,),
     ).fetchone()
     if row is None:
         raise NotFound(f"no segment {segment_id}")
     return row
+
+
+def _counted_kind(row: sqlite3.Row) -> tuple[str | None, str | None]:
+    """A row's practice kind, but only when a person actually settled it.
+
+    An ``offered`` kind is the app's question about the *whole* stretch, so it is not
+    something a boundary edit may carry to either half — the halves are exactly what makes
+    the question doubtful, and the offer pass will ask again on its own terms. A kind a
+    person chose is theirs, and cutting a segment administratively must not silently drop
+    half their answer.
+    """
+    if row["practice_kind_basis"] in ("manual", "accepted"):
+        return row["practice_kind"], row["practice_kind_basis"]
+    return None, None
 
 
 def _settle_label(
@@ -918,22 +933,27 @@ def split_segment(
         left_end = max(int(item["onset_ms"]) + int(item["duration_ms"]) for item in left)
         right_end = max(int(item["onset_ms"]) + int(item["duration_ms"]) for item in right)
 
+        inherit_kind, inherit_basis = _counted_kind(row)
         conn.execute(
-            "UPDATE segments SET start_ms = ?1, end_ms = ?2 WHERE id = ?3",
-            (int(left[0]["onset_ms"]), left_end, segment_id),
+            "UPDATE segments SET start_ms = ?1, end_ms = ?2,"
+            " practice_kind = ?3, practice_kind_basis = ?4 WHERE id = ?5",
+            (int(left[0]["onset_ms"]), left_end, inherit_kind, inherit_basis, segment_id),
         )
         # The new half inherits *what the activity was* — source and workout —
         # because splitting a boundary says nothing about which piece it is, and
         # a piece label would have to arbitrarily belong to one side.
         conn.execute(
-            "INSERT INTO segments (sitting_id, start_ms, end_ms, source, workout_id)"
-            " VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO segments (sitting_id, start_ms, end_ms, source, workout_id,"
+            " practice_kind, practice_kind_basis)"
+            " VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             (
                 sitting_id,
                 int(right[0]["onset_ms"]),
                 right_end,
                 row["source"],
                 row["workout_id"],
+                inherit_kind,
+                inherit_basis,
             ),
         )
         _refresh_metrics(conn, sitting_id)
@@ -969,15 +989,25 @@ def merge_segments(
             raise InvalidRequest("segments are not adjacent")
 
         from_low = low["piece_id"] is not None
+        # The kind follows the same rule as the piece label: whichever half carries one
+        # wins, and the earlier half is preferred when both do. An offer is not carried,
+        # for the reason `_counted_kind` gives.
+        low_kind, low_basis = _counted_kind(low)
+        high_kind, high_basis = _counted_kind(high)
+        merged_kind = low_kind if low_kind is not None else high_kind
+        merged_basis = low_basis if low_kind is not None else high_basis
         conn.execute(
             "UPDATE segments SET start_ms = ?1, end_ms = ?2, piece_id = ?3,"
-            " confidence = ?4, identified_by = ?5 WHERE id = ?6",
+            " confidence = ?4, identified_by = ?5, practice_kind = ?6,"
+            " practice_kind_basis = ?7 WHERE id = ?8",
             (
                 int(low["start_ms"]),
                 int(high["end_ms"]),
                 low["piece_id"] if from_low else high["piece_id"],
                 low["confidence"] if from_low else high["confidence"],
                 low["identified_by"] if from_low else high["identified_by"],
+                merged_kind,
+                merged_basis,
                 int(low["id"]),
             ),
         )
