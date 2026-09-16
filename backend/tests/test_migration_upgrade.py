@@ -72,7 +72,7 @@ EXPECTED_COLUMNS: dict[str, set[str]] = {
     "segment_metrics": {
         "segment_id", "duration_s", "note_count", "median_tempo", "mean_velocity",
         "velocity_stddev", "restarts", "pedal_changes", "pedal_down_ratio",
-        "pedal_blur", "pedal_basis", "median_velocity", "velocity_range",
+        "pedal_blur", "pedal_blur_ms", "pedal_basis", "median_velocity", "velocity_range",
         "mean_velocity_low", "mean_velocity_high",
     },
     "segments": {
@@ -461,6 +461,18 @@ def test_the_upgraded_database_gains_the_practice_kind_columns() -> None:
     conn = db.connect(path)
     try:
         assert {"practice_kind", "practice_kind_basis"} <= _columns(conn, "segments")
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
+    finally:
+        conn.close()
+
+
+def test_the_upgraded_database_gains_the_blur_positions() -> None:
+    """Phase 21: where the blurs were, on a database that predates the column."""
+    path = _build_fixture_db("blur-columns.sqlite3")
+    db.init_db(path)
+    conn = db.connect(path)
+    try:
+        assert "pedal_blur_ms" in _columns(conn, "segment_metrics")
         assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
     finally:
         conn.close()

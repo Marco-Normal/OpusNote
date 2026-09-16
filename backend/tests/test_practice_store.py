@@ -800,3 +800,39 @@ def test_a_sitting_with_no_pedal_rows_reports_no_basis(fresh_db) -> None:
     assert metrics.pedal_basis is None, "not recorded, as distinct from not used"
     assert metrics.pedal_changes == 0
     assert metrics.pedal_blur == 0
+
+
+def test_the_stored_blur_positions_are_where_the_stored_count_says(fresh_db) -> None:
+    """One number and the places it is made of, from one pass over the same data.
+
+    The invariant the cache exists to keep. A count alone cannot be acted on — "nine blurs" in a
+    two-thousand-note segment says nothing about where to look — and a count that disagreed with
+    its own positions would be worse than either.
+    """
+    sitting_id = store.ingest(
+        EventBatch(
+            tz_offset_minutes=0,
+            source="web_midi",
+            events=[
+                # Released at 200 under the pedal, so the pedal is holding C.
+                WireNote(epoch_ms=BASE_MS, pitch=60, velocity=70, duration_ms=200, channel=0),
+                # A triad sharing no pitch class with it, arriving over the ringing note.
+                WireNote(epoch_ms=BASE_MS + 1_000, pitch=65, velocity=70, duration_ms=200, channel=0),
+                WireNote(epoch_ms=BASE_MS + 1_000, pitch=67, velocity=70, duration_ms=200, channel=0),
+                WireNote(epoch_ms=BASE_MS + 1_000, pitch=69, velocity=70, duration_ms=200, channel=0),
+            ],
+            pedals=[
+                WirePedal(epoch_ms=BASE_MS, value=127, channel=0),
+                WirePedal(epoch_ms=BASE_MS + 2_000, value=0, channel=0),
+            ],
+        )
+    ).sitting_id
+    store.ensure_segments(sitting_id)
+
+    metrics = store._segment_rows(connect(), sitting_id)[0].metrics
+    assert metrics is not None
+    assert metrics.pedal_blur >= 1, (
+        "the fixture must actually produce a blur, or this asserts nothing"
+    )
+    assert metrics.pedal_blur_ms == [1_000], "the blur was at the triad"
+    assert metrics.pedal_blur == len(metrics.pedal_blur_ms)

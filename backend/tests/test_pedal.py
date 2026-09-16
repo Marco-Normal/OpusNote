@@ -10,6 +10,7 @@ from __future__ import annotations
 from app.practice.pedal import (
     BASIS_OBSERVED,
     PEDAL_DOWN,
+    blur_attacks,
     blurs,
     changes,
     down_ratio,
@@ -191,3 +192,41 @@ def test_the_register_split_is_around_middle_c() -> None:
     low, high = register_balance(notes)
     assert low == 70.0, "48 and 55 are below middle C"
     assert high == 100.0, "72 is above it"
+
+
+def test_the_blur_positions_are_where_the_blurs_are() -> None:
+    """Two blurs, and the onsets they happened at — a count alone cannot be acted on.
+
+    The second chord shares exactly one pitch class with what is ringing, so it still brings
+    three new ones; a chord that shared two would be an ornament, not a blur, and this test
+    would be asserting the wrong rule.
+    """
+    notes = [
+        note(0, 60, 200),      # released at 200, so the pedal is holding it
+        note(500, 65, 200),    # a triad that does not contain C: blur at 500
+        note(500, 67, 200),
+        note(500, 69, 200),
+        note(1_500, 71, 200),  # and another over what is now ringing: blur at 1500
+        note(1_500, 73, 200),
+        note(1_500, 76, 200),
+    ]
+    stretches = intervals([(0, 127), (3_000, 0)])
+    assert blur_attacks(notes, stretches) == [500, 1_500]
+    assert blurs(notes, stretches) == 2, "and the count is their length"
+
+
+def test_the_count_and_the_positions_can_never_disagree() -> None:
+    """One owner: `blurs` is the length of `blur_attacks`, not a second loop over the same rule."""
+    notes = [
+        note(0, 60, 200),
+        note(500, 65, 200),
+        note(500, 67, 200),
+        note(500, 69, 200),
+    ]
+    stretches = intervals([(0, 127), (2_000, 0)])
+    assert blurs(notes, stretches) == len(blur_attacks(notes, stretches)) == 1
+
+
+def test_no_pedal_means_no_positions_either() -> None:
+    assert blur_attacks([note(0, 60, 200)], []) == []
+    assert blur_attacks([], intervals([(0, 127), (1_000, 0)])) == []

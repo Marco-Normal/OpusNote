@@ -30,7 +30,7 @@ from .workout.schema import WORKOUT_SCHEMA, migrate as migrate_workouts
 #: *end* of :func:`init_db`, so a database can say which version of the app made it and
 #: an older build can refuse it instead of reading columns it does not understand. Bump
 #: this whenever a migration changes the shape an older reader could not honour.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (

@@ -127,6 +127,9 @@ class SegmentMetricsOut(BaseModel):
     pedal_down_ratio: float | None = None
     #: Attacks that brought new harmony over notes the pedal was already holding.
     pedal_blur: int | None = None
+    #: Where the blurs were, in ms relative to the sitting, ascending. `pedal_blur` is its
+    #: length: the count tells you whether to look, these tell you where.
+    pedal_blur_ms: list[int] = Field(default_factory=list)
     #: Which harmony source produced `pedal_blur`. NULL means the sitting has no pedal
     #: rows at all — imported history — which is not the same as "the pedal was not
     #: used". Stored rather than re-derived so a score attached later cannot

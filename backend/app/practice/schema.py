@@ -149,6 +149,12 @@ CREATE TABLE IF NOT EXISTS segment_metrics (
     pedal_changes    INTEGER,
     pedal_down_ratio REAL,
     pedal_blur       INTEGER,
+    -- Where those attacks were, as a JSON array of ms relative to the sitting, ascending.
+    -- `pedal_blur` above is its length. Stored together because `_refresh_metrics` has the
+    -- notes and the pedal stream in hand when it computes both, so a position costs nothing
+    -- to keep — while re-deriving it on the detail read would put a pass over `note_events`
+    -- on the read the timeline uses most.
+    pedal_blur_ms    TEXT,
     pedal_basis      TEXT,
     -- Touch, at MIDI controller resolution. Comparable with itself over weeks; not a
     -- claim about loudness, and not comparable with another instrument's.
@@ -176,6 +182,7 @@ ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("segment_metrics", "pedal_changes", "INTEGER"),
     ("segment_metrics", "pedal_down_ratio", "REAL"),
     ("segment_metrics", "pedal_blur", "INTEGER"),
+    ("segment_metrics", "pedal_blur_ms", "TEXT"),
     ("segment_metrics", "pedal_basis", "TEXT"),
     ("segment_metrics", "median_velocity", "REAL"),
     ("segment_metrics", "velocity_range", "REAL"),

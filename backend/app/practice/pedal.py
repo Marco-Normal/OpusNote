@@ -73,6 +73,10 @@ class PedalMetrics:
     changes: int
     down_ratio: float
     blur: int
+    #: Where the blur attacks were, in ms relative to the sitting, ascending. `blur` is
+    #: `len(blur_at_ms)` and is never computed separately, so the number and the places cannot
+    #: disagree — which is the failure a second loop would eventually produce.
+    blur_at_ms: tuple[int, ...] = ()
 
 
 def intervals(pedals: list[tuple[int, int]], end_ms: int | None = None) -> list[PedalInterval]:
@@ -122,8 +126,10 @@ def down_ratio(pedals: list[tuple[int, int]], span_ms: int) -> float:
     return round(min(1.0, max(0.0, covered / span_ms)), 3)
 
 
-def blurs(notes: list[Note], stretches: list[PedalInterval]) -> int:
-    """Attacks that brought new harmony over notes the pedal was already holding.
+def blur_attacks(notes: list[Note], stretches: list[PedalInterval]) -> list[int]:
+    """Where the blur attacks were, in ms relative to the sitting, ascending.
+
+    A blur is an attack that brought new harmony over notes the pedal was already holding.
 
     A blur is counted at an attack inside a pedal-down stretch when both hold:
 
@@ -137,12 +143,16 @@ def blurs(notes: list[Note], stretches: list[PedalInterval]) -> int:
     holding its own damper, and that is playing, not pedalling. This is the proxy the
     module docstring describes — it observes the pitches, and it does not know the
     harmony.
+
+    The positions are returned rather than only counted because a count with no places cannot
+    be acted on: "nine blurs" in a two-thousand-note segment says nothing about where to look,
+    and this loop already knows.
     """
     if not notes or not stretches:
-        return 0
+        return []
 
     ordered = sorted(notes, key=lambda note: (note.epoch_ms, note.pitch))
-    total = 0
+    found: list[int] = []
     for stretch in stretches:
         # The attacks inside this stretch, clustered the same way `metrics.attacks`
         # clusters them so a chord counts once.
@@ -169,8 +179,18 @@ def blurs(notes: list[Note], stretches: list[PedalInterval]) -> int:
                 continue
             arriving = {note.pitch % 12 for note in cluster}
             if len(arriving - held) >= PEDAL_BLUR_MIN_NEW:
-                total += 1
-    return total
+                found.append(attack_ms)
+    return found
+
+
+def blurs(notes: list[Note], stretches: list[PedalInterval]) -> int:
+    """How many blur attacks there were. The places are in :func:`blur_attacks`.
+
+    Defined as that list's length rather than by a second loop, so the number and the positions
+    cannot disagree — which is the failure a stored cache of the two would otherwise show up as,
+    eventually, in the one place nobody looks.
+    """
+    return len(blur_attacks(notes, stretches))
 
 
 def segment_pedal(
@@ -191,11 +211,13 @@ def segment_pedal(
     if notes:
         span = max(note.end_ms for note in notes) - min(note.epoch_ms for note in notes)
     stretches = intervals(pedals, span)
+    found = blur_attacks(notes, stretches)
     return PedalMetrics(
         recorded=True,
         changes=changes(pedals),
         down_ratio=down_ratio(pedals, span),
-        blur=blurs(notes, stretches),
+        blur=len(found),
+        blur_at_ms=tuple(found),
     )
 
 
