@@ -479,6 +479,30 @@ paths named. Then run normally.
 
 ## Task 8 — Condition waits instead of fixed sleeps
 
+**Partially landed, deliberately.** One site converted; the rest enumerated rather than
+guessed at.
+
+**Done: the 22-second poll sleep.** `scenario_practice_log` installed a fetch counter to prove
+the Log view refreshes itself and then slept a fixed 22,000 ms — passing the counter it had
+just built. It now waits on `window.__logPolls > 0` with a 30-second ceiling and asserts the
+count afterwards. Verified: `practice_log` runs in **24 s** where it took roughly 2 m 20 s,
+and the assertion still reports the poll it waited for.
+
+**Remaining, with what each would need:**
+
+| Sites | What they wait for | Why it is not a one-line change |
+| --- | --- | --- |
+| the seven playback reads (`noteOns()` after fixed waits) | outgoing MIDI reaching a count | needs a per-scenario expectation of *which* notes, not just "more than none" |
+| the layout settles after the 200 ms debounce | a rendered SVG at a stable height | the renderer reports no "settled" signal; adding one is a small production change and this slice is scoped to the harness |
+| the capture-cadence sleeps against a 2,000 ms flush | the next flush | the flush is internal to the client; a condition would have to be exposed |
+
+Two of the three need something from the product — a `data-layout-settled` attribute, a
+visible flush counter — and adding those is not a harness repair. They are the first items of
+a follow-up rather than something to improvise here.
+
+The rule the plan set still holds and is worth repeating: where a sleep is genuinely a settle
+time and no condition exists, leaving it with a comment saying so beats a flaky wait.
+
 **Files:** modify `backend/tools/e2e_browser.py` (the 56 `wait_for_timeout` sites).
 
 **Scope, deliberately partial.** Replace only where a condition exists that can be waited

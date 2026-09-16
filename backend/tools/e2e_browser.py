@@ -2270,9 +2270,14 @@ def scenario_practice_log(browser) -> None:
     play_phrase(page, [77, 79, 81])
     page.wait_for_timeout(2_600)
     page.evaluate("() => window.__fakeMidi.unplugAll()")
-    # The poll interval is 20 s: waiting past one tick proves the poll is running
-    # rather than that something else happened to re-read the page.
-    page.wait_for_timeout(22_000)
+    # Wait on the counter rather than outlasting the interval. The poll is 20 s, and this
+    # used to sleep a fixed 22 s — the counter it had just installed was right there to wait
+    # on. Same proof, and it returns as soon as the poll happens instead of always costing
+    # the full interval.
+    try:
+        page.wait_for_function("() => (window.__logPolls || 0) > 0", timeout=30_000)
+    except PlaywrightTimeout:
+        pass
 
     polls = page.evaluate("() => window.__logPolls || 0")
     check(polls > 0, f"the dashboard refreshes itself while it is open ({polls} polled reads)")
