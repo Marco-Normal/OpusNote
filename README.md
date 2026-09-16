@@ -143,6 +143,14 @@ moved.
   labels. Each segment row has two fields: the **piece** it was, and **Split at** — a
   position to cut the segment in two, typed as a clock (`1:30:12`) or in seconds
   (`5412`), which is what the *Split here* button then does.
+- **How you practised is a second axis from what you played.** Each segment can be
+  marked run-through, slow, section, hands-separate, from memory, warm-up or other, and
+  *How the time was spent* splits logged minutes by it — segments nobody characterised
+  keep their own bucket, so the split still adds up to the log. The app will **offer**
+  *slow* (this was well under your usual note rate for the piece) or *section* (you
+  stopped and started repeatedly) as a question with Yes/No beside it. An offer counts
+  for nothing until you answer it and never overwrites a kind you chose, and
+  hands-separate is never guessed: a register balance is not a measurement of the hands.
 - **Workouts** are declared, not inferred: *Start workout* in the banner, play,
   *Finish workout*. Everything inside the window is labelled sight-reading rather
   than mistaken for ordinary practice, and a finished workout links to the sitting

@@ -2093,6 +2093,33 @@ def scenario_practice_log(browser) -> None:
         == str(target["id"]),
         "and the tag survives a re-read",
     )
+
+    # --- how it was practised is a second axis from what it was ---
+    with page.expect_response(
+        lambda r: "/api/practice/segments/" in r.url and r.url.endswith("/kind")
+    ):
+        page.select_option(
+            'select[aria-label="How this segment was practised"] >> nth=0', "slow"
+        )
+    page.wait_for_timeout(600)
+    check(
+        page.locator("[data-kind='slow']").count() == 1,
+        "a practice kind set by hand is drawn on the timeline",
+    )
+    check(
+        page.evaluate(
+            "() => document.querySelector('select[aria-label=\"How this segment was practised\"]').value"
+        )
+        == "slow",
+        "and it survives a re-read",
+    )
+    split = page.inner_text("[data-kind-split]")
+    check("Slow" in split, f"and the log dashboard splits logged time by kind ({split!r})")
+    check(
+        "Not characterised" in split,
+        "while the segment nobody characterised keeps its own bucket, so the split reconciles",
+    )
+
     bars = page.evaluate(
         """() => [...document.querySelectorAll('.bars li')].map((item) => item.innerText)"""
     )

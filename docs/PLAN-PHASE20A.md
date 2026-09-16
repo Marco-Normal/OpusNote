@@ -4,7 +4,38 @@
 with decisions 20-D1 and 20-D2. That section owns what and why; this document owns the how and
 must not be edited to match drift in it.
 
-**Status:** planned.
+**Status: landed.** All five tasks implemented and verified. Two deviations and two findings are
+recorded below; the acceptance bullets in `ECOSYSTEM.md` § 20a all hold.
+
+**Deviations from this plan, and why.**
+
+1. **Committed per task, not once at Task 5.5.** `backend/tools/falsify.sh` refuses a dirty tree
+   *and* reverts a break with `git checkout -- .`, and falsifications are specified in Tasks 1 and
+   3. One commit per verified task is therefore both the only workable order and what the plan's own
+   execution route implies.
+2. **The 20a store work shipped with a defect fix in one commit.** See finding 1; they are the same
+   file and the commit is only coherent as "the feature plus the defect it needed fixed". The commit
+   message and the code comment name the defect explicitly.
+3. **A break-script needle was wrong and was fixed** (`drop_kind_basis_guard.sh` assumed `CASE` sat
+   on its own line; in the query it shares the line with `SELECT`). `falsify.sh` correctly refused to
+   call the non-applying break a falsification, which is the tooling working as designed.
+
+**Findings.**
+
+1. **A pre-existing metrics wipe, found by this slice.** `_refresh_metrics` ended with
+   `DELETE FROM segment_metrics WHERE segment_id NOT IN (SELECT id FROM segments WHERE sitting_id = ?)`,
+   which deletes every *other* sitting's metrics, not this sitting's stale rows. Introduced in
+   `2ee5003` (the Phase 1-7 port). Segmenting one sitting silently emptied every earlier sitting's
+   `segment_metrics`, taking the piece tempo trend and Phase 18b's per-segment pedal and touch
+   figures with it. The `slow` offer needs another sitting's `median_tempo` to have survived at all,
+   which is how it surfaced. Fixed at the owner (now the orphan sweep the comment always claimed),
+   with a regression guard and a break script. Existing databases have already lost those derived
+   rows; the repair is to re-segment or re-ingest the affected sittings, since nothing in them is
+   un-recomputable.
+2. **The plan's own Task 3 test fixtures were wrong in two ways**, corrected during execution: the
+   windowed analytics start from today, so the 2023 fixtures used elsewhere are asserted as
+   *excluded* (these tests seed a recent, closed sitting instead); and a recent sitting has no
+   segments until it is closed, because segmentation deliberately waits out the silence gap.
 
 **Goal.** A segment records what was played and for how long, never *how*. Add one deliberate
 axis — `run_through / slow / section / hands_separate / memory / warm_up / other` — that a person

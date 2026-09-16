@@ -1253,3 +1253,62 @@ passed with the guard deleted.
 Impact on the other side: none — planning only. Anyone about to start 20a should read
 `docs/PLAN-PHASE20A.md` first; `ECOSYSTEM.md` § Phase 20 remains the what/why, and the plan does not
 restate it. 20b-20e are not planned yet.
+
+## 2026-09-16 — sight-reading agent — Phase 20a landed (practice kinds), and a pre-existing metrics wipe found by it
+
+Scope: `backend/app/practice/{schema,models,store,api,kinds}.py`, `backend/app/db.py`,
+`backend/tests/{test_practice_kinds,test_practice_api,test_migration_upgrade}.py`,
+`backend/tools/{falsifications/,e2e_browser.py}`, `frontend/src/lib/{types,api,kinds}.ts`,
+`frontend/src/lib/kinds.test.ts`, `frontend/src/components/{SegmentTimeline,PracticeLogView}.svelte`,
+`README.md`, `docs/PLAN-PHASE20A.md`.
+
+Did: implemented `docs/PLAN-PHASE20A.md` in full — a second axis on a segment, `practice_kind` plus
+`practice_kind_basis`, with `SCHEMA_VERSION` 1 -> 2; the pure taxonomy and offer rules in
+`practice/kinds.py`; `offer_practice_kinds` / `set_practice_kind` / `kinds_breakdown` in the store;
+`PATCH /api/practice/segments/{id}/kind`; the kind select and offer row on the timeline; and the
+kind split in *How the time was spent* with the uncharacterised bucket shown so it reconciles.
+
+**A defect this uncovered, which predates the slice (introduced in `2ee5003`, the Phase 1-7 port).**
+`_refresh_metrics` ended with
+`DELETE FROM segment_metrics WHERE segment_id NOT IN (SELECT id FROM segments WHERE sitting_id = ?)`
+— "not a segment of *this* sitting", which is every *other* sitting's segment. Segmenting one
+sitting therefore deleted every earlier sitting's metrics, and with them the piece tempo trend
+(`tempo_series`) and the per-segment pedal and touch figures (Phase 18b's whole payload). The 20a
+offer path is what found it, because "slower than usual for this piece" needs another sitting's
+`median_tempo` to have survived at all. Fixed at the owner: the delete is now the orphan sweep its
+comment always claimed — `segment_id NOT IN (SELECT id FROM segments)` — with a regression guard
+(`test_segmenting_a_second_sitting_does_not_erase_the_first_s_metrics`) and a break script. **Anyone
+with an existing database has already lost those metric rows for past sittings; they are derived,
+so the repair is to re-segment or re-ingest the affected sittings, not to restore a backup.**
+
+**Two deviations from the plan, both required.**
+1. The plan called for one slice commit (Task 5.5), but `falsify.sh` refuses a dirty tree and
+   reverts with `git checkout -- .`, and falsifications run in Tasks 1 and 3. Committed per task
+   instead: one commit per verified task, which is what the plan's own execution route implies.
+2. The metrics fix shipped inside the Task 3 commit rather than its own, because it and the 20a
+   store work are the same file and the same commit is only coherent as "the feature plus the
+   defect it needed fixed". The commit message and the code comment name the defect explicitly.
+
+A third, smaller correction: the `drop_kind_basis_guard.sh` needle assumed `CASE` sat on its own
+line, but in the real query it shares the line with `SELECT`, so the script could not apply its
+break. `falsify.sh` correctly refused to call that a falsification; the needle and the plan's copy
+of the snippet are fixed.
+
+**Falsified, not merely green** — five breaks, each observed to fail and then restored:
+`drop_practice_kind_added_column` (caught by the parity test and the explicit column test),
+a temporary `hands_separate` return in `offer_for` (caught by the closed-set property test),
+`drop_kind_basis_guard` (caught by `test_an_offer_is_a_question_until_it_is_answered`),
+`let_inference_overwrite_manual` (caught by `test_inference_never_overwrites_a_kind_a_person_chose`),
+`wipe_other_sittings_metrics` (caught by the metrics regression guard), and a temporary
+`kindCounts` change in `lib/kinds.ts` (caught by the frontend unit).
+
+Verified: backend 858 passing; frontend 76 passing; `svelte-check` 0 errors; build clean; the
+practice-log browser scenario passes with four new assertions ("Slow · 0.1 min · 1 segment" beside
+"Not characterised · 0 min · 1 segment"); `./check.sh --full` green.
+
+Impact on the other side: two additive nullable columns on `segments`, one new route, and two
+additive response fields (`SegmentSummary.practice_kind*`, `AnalyticsSummary.kinds`). `source` and
+`workout_id` are unchanged and sight-reading is still owned by them alone — it is deliberately not
+one of the seven kinds. `BACKUP_VERSION` is unchanged (the guarantee is one-directional). A
+database created by this build reports `user_version = 2`, so an older build refuses it rather than
+misreading it. `resegment` still discards kinds along with labels, and still asks first.

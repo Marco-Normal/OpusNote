@@ -200,7 +200,7 @@ sessionizer and segmentation move across as-is with their tests.
 | 9 | **LAN server** | A planted notebook serving the whole app on the local network: `deploy/`, kiosk autostart, capture heartbeat, upload cap, concurrent-write hardening. | medium |
 | 18 | **The data the logger already has** | 18a: the journal joins the measurement — a sitting link, a real editor, a calendar series. 18b: the pedal, touch and register numbers that are recorded and unused. **Landed.** | medium |
 | 19 | **Playing back what was actually played** | A stale same-pitch note-off silences re-struck notes at the pedal-up — 1,747 notes in the owner's own sessions. Plus one owner for the pedal threshold. **Landed.** | S–M |
-| 20 | **Deliberate practice, the piano-side toolkit, and audio takes** | *How* a segment was practised (20a); hands-free control from the unused sostenuto pedal, count-in choice, real URLs and a command palette (20b); undo and a humane streak (20c); journal and library depth (20d); low-bitrate audio takes captured in-app (20e). Five slices, independently shippable. **Planned.** | medium–high |
+| 20 | **Deliberate practice, the piano-side toolkit, and audio takes** | *How* a segment was practised (20a); hands-free control from the unused sostenuto pedal, count-in choice, real URLs and a command palette (20b); undo and a humane streak (20c); journal and library depth (20d); low-bitrate audio takes captured in-app (20e). Five slices, independently shippable. **20a landed; 20b–20e planned.** | medium–high |
 
 Phases 1-2 are the useful minimum: they get the library out of the Rust app's
 directory and into a browser, which is most of what you asked for.
@@ -1358,7 +1358,12 @@ nothing at all.
 load-bearing: the hands-free gesture is what arms audio capture from the piano bench
 without reaching for the computer.
 
-#### 20a — practice kinds (A1, A3)
+#### 20a — practice kinds (A1, A3) — landed
+
+**Implementation plan:** [`PLAN-PHASE20A.md`](./PLAN-PHASE20A.md), which records the two deviations
+and the two findings from executing this section — including a pre-existing metrics wipe in
+`_refresh_metrics` (introduced in `2ee5003`) that this slice's baseline check surfaced and that is
+now fixed with a regression guard.
 
 **Problem.** A segment records what was played and for how long, never how. A stumbling
 run-through at tempo and a careful slow pass over eight bars are the same row. The one
