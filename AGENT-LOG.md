@@ -899,3 +899,176 @@ Evidence, on the owner's own backup (the 42-minute sitting, 18,688 notes):
 
 Impact: no behaviour change. The measurement is now reproducible rather than remembered,
 so the threshold can be re-argued when the corpus or the matcher changes.
+
+## 2026-09-15 — sight-reading agent — Phase 19: a re-struck note is no longer silenced by the pedal
+
+Scope: `frontend/src/lib/playback.ts`, `playback.test.ts`, `pianoPlayer.ts`, `midi.ts`;
+`docs/ECOSYSTEM.md`. Nothing outside the frontend, and no schema or contract change.
+
+The owner reported that holding a note and clearing the pedal leaves it ringing in real
+life but not in playback, and suspected the PX-870's continuous pedal. Diagnosed against
+their own backup (7 sittings, 84,709 notes, 209,072 pedal moves) rather than from the code
+path, which is the only reason the real cause was found.
+
+Did:
+
+- **The continuous pedal is captured correctly and consumed per the MIDI spec.** All 128 CC
+  values are in the log, spread across the range — genuinely continuous, not a switch. Every
+  consumer then applies the specification's own switch rule (0–63 off, 64–127 on), so
+  half-pedalling reads as released. Measured: 23.9%, 9.1% and 10.2% of pedal time sits in
+  that partial band. Recorded as a limitation rather than "fixed", because modelling a
+  damper from CC values would be inventing a claim about the instrument.
+- **The actual defect: MIDI note-off is per pitch, and the player emitted one note-on/off
+  pair per stored note.** `sustained()` extends a released note to the pedal-up, which is
+  correct, but that routinely carries it past a re-strike of the same key — and the stale
+  note-off then silenced the note the hand was still holding, exactly at the pedal-up. On
+  the owner's sessions that was **1,747 notes**, median loss 407 ms, worst 14.5 s of a held
+  note silenced after 27 ms.
+- **Fix:** `resolveOverlaps()` in `playback.ts` — a pure function ending each note where the
+  same key is struck again, which is what a re-struck string does — applied once in
+  `PianoPlayer.play()` so the MIDI path, the sampled piano and the FM voice all consume the
+  same list. Fixing the MIDI encoder alone would have left the sampler wrong; fixing each
+  caller would have left the next caller wrong.
+- **`PEDAL_DOWN` had two owners** (`playback.ts` and `midi.ts` wrote `64` out separately).
+  It stays in `playback.ts` and is now imported. It did not move to `types.ts` because that
+  would have made `playback.ts` — which runs under Node's test loader — need
+  `allowImportingTsExtensions` project-wide for one constant.
+- Verified with the shipped functions over the owner's real sittings: **1,747 cut-short
+  notes before, 0 after**, worst loss 14.494 s → 0. Seven new tests; 72 passing, zero
+  `svelte-check` errors, build clean.
+
+Also found while reading, not fixed and not part of this phase: `CaptureClient.flush()`
+aliases its batch array (`const batch = this.buffer`) and then slices by the aliased length
+after awaiting, so anything captured during the in-flight request is discarded. Recorded as
+defect 4 of Phase 18a.
+
+Impact on the other side: none. No table, column, endpoint or wire format changed. The fix
+is entirely in the playback path, which also means it applies **retroactively** — every
+sitting already in the log gets the corrected playback, because the pedal interpretation is
+derived at play time and the stored data was never wrong.
+
+## 2026-09-15 — sight-reading agent — the browser suite does run here, and Phase 19 is now covered by it
+
+Scope: `backend/tools/e2e_browser.py`, `docs/ECOSYSTEM.md`. Corrects the previous entry,
+which stopped short of the browser suite for a reason that turned out to be false.
+
+Did:
+
+- **`scenario_playback` gained the re-strike case.** A new fixture seeds a sitting whose
+  pedal carries a strike past a re-strike of the same key (pitch 79: released at 800 ms,
+  pedal up at 2000 ms, struck again at 1200 ms and held to 5200 ms), plays it through the
+  piano, and asserts with a new `__fakeMidi.samePitchOverlaps()` that the scheduled stream
+  never has two note-ons for a pitch before a note-off. That is the wiring half — the unit
+  tests own `resolveOverlaps` itself, and this is what proves the player applies it and
+  orders the clamped release first.
+- **The assertion was falsified before it was trusted.** With the `resolveOverlaps` call
+  removed from `play()`, it fails: "1 overlapping pairs". Restored: 0. All twelve scenarios
+  pass on a fresh database.
+
+**A correction, recorded rather than quietly dropped.** The previous entry said the browser
+suite could not be run here. That was wrong, and the way it was wrong matters. A standalone
+`p.chromium.launch()` probe failed with "Executable doesn't exist at
+`…/chromium_headless_shell-1234`", and that was read as a property of the suite. It is not:
+`e2e_browser.py` passes `executable_path="/usr/bin/chromium"` and never uses Playwright's
+bundled build at all. **The probe did not reproduce how the harness launches**, so its
+result said nothing about the harness. The lesson is the one this suite exists to teach — a
+check that does not exercise the real path is not evidence, whether it passes or fails.
+No chromium install is needed; the system Chromium 148 is what the suite already uses.
+
+- One unrelated observation from the full run, not investigated and not caused by this
+  change: on the *accumulated* e2e database (many sittings from repeated runs), one
+  `POST /api/practice/events` failed with `sqlite3.OperationalError: database is locked`
+  past the 5 s `busy_timeout`, which surfaced as a console error in scenario 3. A fresh
+  database runs the whole suite clean, so this is a robustness question about contention on
+  a grown log rather than a regression. Worth a look before it is met on the piano machine.
+
+Impact on the other side: none. Test harness and documentation only.
+
+## 2026-09-16 — sight-reading agent — Phase 18 landed: the journal joins the measurement, and the logged pedal is read
+
+Scope: `backend/app/repertoire/{schema,models,store,api}.py`,
+`backend/app/practice/{schema,models,store,pedal}.py`, `frontend/src/lib/{types,api,state.svelte,capture}.ts`,
+`frontend/src/components/{RepertoireView,SegmentTimeline,CalendarHeatmap}.svelte`,
+`backend/tests/{test_pedal,test_practice_store,test_practice_api,test_repertoire}.py`,
+`backend/tools/e2e_browser.py`, `docs/ECOSYSTEM.md`.
+
+Two slices. The organising finding was the same in both: the app already stored facts it
+never read. `pedal_events` was written on every CC64 move and read by exactly one caller, for
+playback. `mean_velocity` and `velocity_stddev` were computed, persisted and served, and
+rendered nowhere. `PATCH /api/repertoire/journal/{id}` was implemented, tested, and called by
+no component.
+
+**18a — the seam between playing and writing.**
+
+- `piece_journal.sitting_id`, nullable, `ON DELETE SET NULL`. Linked to the **sitting** and
+  not to a segment, because `resegment` deletes and rebuilds every segment of a sitting — a
+  segment-level link would be destroyed by the app's own correction action.
+- The journal is a `<textarea>` that edits in place through the PATCH that had been dead
+  since it was written, and its date defaults to the **local** date rather than
+  `toISOString()`, which is UTC and offers yesterday through the whole evening.
+- *Write about this* on a timeline segment parks a draft in the app state, switches to
+  Repertoire and attaches the sitting with the measured arithmetic. **The prose box stays
+  empty** — the app has no language model and will not put words in the player's mouth.
+- Written minutes joined the calendar as a **second series**, drawn as a border rather than
+  another shade so the fill still means "minutes the piano heard". A day with prose and no
+  notes reads as its own state. The two are never summed, which is the rule the per-piece
+  view already followed.
+- Journal `content` joined the library search, and a new `GET /api/repertoire/journal`
+  provides a cross-piece feed — which is also what the detail pane shows when no piece is
+  selected, and that used to be blank.
+
+**Four defects, fixed at their owners.**
+
+1. `SittingDetail.closed` derived "closed" from the clock alone and disagreed with
+   `ensure_segments`, which also honours `closed_ms`. One question, now answered once.
+2. `close_open_sitting` returned a bare `None` for both "nothing open" and "still playing",
+   so a client could not tell a finished session from a USB blip. It returns a `CloseOutcome`
+   now. **Seven existing assertions changed** to read `.sitting_id` and the new reason, and
+   they are stronger for it.
+3. `identification_outcomes.segment_id` was `NOT NULL ... ON DELETE CASCADE`, so
+   re-segmenting destroyed the matcher's track record — the one thing that table exists to
+   keep. Now nullable `SET NULL`, via a table rebuild, since SQLite cannot alter a
+   constraint.
+4. `CaptureClient.flush()` did `const batch = this.buffer` — a *reference* — and then sliced
+   by the aliased length after awaiting, so anything played during the request was silently
+   discarded. Copied now.
+
+**18b — the measurements the app already had the data for.**
+
+- `app/practice/pedal.py`, pure functions beside `metrics.py`: intervals from the raw CC64
+  stream, threshold **crossings rather than message counts** (a continuous pedal sends
+  dozens of values per press), the down-ratio, the blur count, and the touch figures.
+- Eight additive columns on `segment_metrics`, written by `_refresh_metrics` — approach B.
+  The table stays a cache of a pure function, which is what `metrics.py` already promises.
+- `pedal_basis` is **stored, not re-derived**, so a score attached in March cannot
+  retroactively relabel January's observed number. That is the seam the owner asked for, and
+  the score path itself is explicitly out of scope.
+- A sitting with no pedal rows reports *not recorded* through that basis rather than a zero.
+  Imported history has no pedal events at all, and a figure over it would report a fault that
+  was never observed.
+- Register balance is **worded as registers, not as hands**. The piano sends both hands on
+  one channel; it reports, it does not judge.
+
+**Verified.**
+
+- Backend **811 passing** (19 pedal units, 2 metric-integration, 7 journal, 5 for the defect
+  fixes). Frontend **72 passing**, `svelte-check` clean, build clean.
+- The migrations were exercised against a **real pre-18 database** — the e2e one, seven
+  columns in `segment_metrics` and a `NOT NULL` outcome reference — with a row planted in the
+  old shape first. Every column was added, the nullable rebuild ran, and the planted row
+  survived with its action and score intact.
+- All twelve browser scenarios pass, with three new assertions (editing an entry in place,
+  the cross-piece feed, and the "pedal not recorded" state).
+
+**A judgement worth recording.** The blur metric is the one place this phase makes a claim
+about playing from indirect evidence, and the definition is deliberately narrow: it counts an
+attack only when the pedal is *demonstrably* holding something — notes whose key was released
+inside that stretch — and the attack brings at least a triad that the pedal is not already
+holding. A key still held is playing, not pedalling, and is not counted. The proxy is labelled
+as one everywhere it appears.
+
+Impact on the other side: none. Two additive columns on `piece_journal` and `segment_metrics`;
+one constraint widened on `identification_outcomes`; no endpoint removed and no wire format
+changed. The JSON backup picks all of it up automatically, since the table list is read from
+`sqlite_master`. `backend/data/real-backup.json` is the owner's real practice log, refreshed
+by hand and kept out of git, for measuring against actual practice rather than a fixture.

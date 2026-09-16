@@ -5,8 +5,8 @@ Rust app" premise of
 [`INTEGRATION-practice-logger.md`](./INTEGRATION-practice-logger.md), which
 remains accurate about *what exists today* but is no longer the destination.
 
-Status: **decided; Phases 1-13 and 15-17 are landed.** See §9 and §10 for what each one
-delivered.
+Status: **decided; Phases 1-13 and 15-19 are landed.** See §9 and §10 for what each
+delivered, and §10 for the Phase 18 and 19 specifications.
 
 ---
 
@@ -198,6 +198,8 @@ sessionizer and segmentation move across as-is with their tests.
 | 14 | **More musical content** | Unusual meters, clef reading, dynamics and articulation depth. | medium |
 | 10 | **Playback** | Hear a scored attempt back (either hand, or the exercise as written) and hear a logged sitting or segment from the practice log, with a playhead. | low |
 | 9 | **LAN server** | A planted notebook serving the whole app on the local network: `deploy/`, kiosk autostart, capture heartbeat, upload cap, concurrent-write hardening. | medium |
+| 18 | **The data the logger already has** | 18a: the journal joins the measurement — a sitting link, a real editor, a calendar series. 18b: the pedal, touch and register numbers that are recorded and unused. **Landed.** | medium |
+| 19 | **Playing back what was actually played** | A stale same-pitch note-off silences re-struck notes at the pedal-up — 1,747 notes in the owner's own sessions. Plus one owner for the pedal threshold. **Landed.** | S–M |
 
 Phases 1-2 are the useful minimum: they get the library out of the Rust app's
 directory and into a browser, which is most of what you asked for.
@@ -966,6 +968,380 @@ difficulty will surface inside `hand_position`'s rating.
 
 Dynamics: notation first, velocity scoring later, because scoring a dynamic is a new
 contract — `ExpectedNote` carries no velocity today.
+
+### Phase 18 — landed (the data the logger already has)
+
+Chosen by the user from a survey of the logger, in preference to making the log a coach
+(score-aware practice map, hotspots, coverage) and to planning the next session (goals,
+milestones, a daily plan). Both remain on the list; this phase is the one where the work
+is mostly *finishing* what capture already produces.
+
+Two slices, split the way Phase 13 was, because they are independently shippable and
+independently verifiable. The organising finding is the same in both: **the app already
+records facts it never reads.** `pedal_events` is written on every CC64 move and read by
+exactly one caller — `sitting_notes`, for playback. `mean_velocity` and
+`velocity_stddev` are computed per segment, persisted, served in `SegmentMetricsOut`, and
+rendered nowhere. `identification_outcomes` keeps four columns
+(`guessed_piece_id`, `resolved_piece_id`, `accepted`, `score`) that no query reads.
+`PATCH /api/repertoire/journal/{id}` is implemented, tested, and called by no component.
+
+#### 18a — the seam between playing and writing
+
+**Problem.** Practice is measured automatically and written down manually, and nothing
+joins the two. `piece_journal` is dated prose plus an optional `practice_minutes`, and the
+piano knows the same session to the millisecond. Every journal aggregate in the app is
+`SUM(practice_minutes)` per piece, and `calendar()` is built from `sittings` alone, so
+written time is invisible in every calendar and streak view. The entry itself is a
+single-line `<input>` that can be deleted but not edited.
+
+**Design.**
+
+- `piece_journal.sitting_id INTEGER REFERENCES sittings(id) ON DELETE SET NULL` —
+  additive, nullable, no backfill. `SET NULL` rather than `CASCADE` because deleting a
+  sitting must never delete prose. The link is to the **sitting**, not the segment:
+  `resegment` deletes and rebuilds every segment in a sitting, so a segment-level link
+  would be destroyed by the app's own correction action. Sitting-level survives it.
+- The entry form becomes a `<textarea>` that edits in place through the PATCH that already
+  exists. Save on Cmd/Ctrl+Enter; Cancel restores. The delete-and-retype path goes away.
+- `SittingDetail` gains **Write about this**, which opens the piece's form with the sitting
+  attached and a header drawn from stored numbers — minutes, tempo against the piece's own
+  previous segments, restarts, and the longest pause. **The prose box stays empty.** The
+  app has no language model, and a generated entry would put words in the player's mouth;
+  the draft is the arithmetic, not the sentence.
+- The calendar gains written minutes **as a second series, never summed with measured
+  minutes**. The README already states the rule and its reason — a session can be both
+  played and written about, and adding them counts it twice — and this phase must not
+  quietly reverse it. A day with prose and no notes reads *written, not measured*. The
+  streak stays sitting-based, for the reason Phase 6 gave.
+- **The reconciliation names which minute it means.** Two definitions already coexist:
+  the dashboard's `total_minutes`, `today_minutes` and the source split use *sitting
+  wall-clock span*, while `by_piece` and `piece_practice` use *summed segment note-span*.
+  They do not agree. The per-piece "you wrote N min, the piano heard M" therefore uses
+  the segment-span figure, because that is the one attributed to the piece, and says so.
+  Reconciling the two definitions themselves is out of scope and is not pretended here.
+- Journal `content` joins the library search, which today matches only title, composer and
+  opus. A `GET /api/repertoire/journal?limit=` gives a cross-piece recent-entries feed;
+  the whole journal is currently inlined, unpaginated, into `PieceDetail`.
+- The journal date defaults to the **local** date. It is `toISOString().slice(0, 10)`
+  today, which is UTC, and so is off by one for anyone east or west of it.
+
+**Four defects in the same files, fixed here because they are the same surface:**
+
+1. `SittingDetail.closed` is computed from the clock (`ended_ms + sitting_gap < now`) and
+   ignores `closed_ms`, so a sitting closed by switching the piano off reports
+   `closed: false` while `ensure_segments` treats it as closed. One predicate, one owner.
+2. `SittingCloseResult.reason` cannot express *still playing*: the store distinguishes it
+   and the route collapses both `None` cases into "nothing open to close", so the client
+   cannot tell a blip from a finished session.
+3. `resegment` runs `DELETE FROM segments WHERE sitting_id = ?`, and both
+   `identification_outcomes` and `segment_metrics` cascade. Re-segmenting therefore
+   destroys the evidence that `identification_outcomes` exists to keep, and the
+   *Recognising what you played* panel quietly loses its denominators. Either the outcomes
+   survive a re-segment or the panel reports that they were reset; losing them in silence
+   is the one option that is not allowed.
+4. **`CaptureClient.flush()` loses whatever arrives during the request.** It does
+   `const batch = this.buffer` — a *reference*, not a copy — and then, after awaiting the
+   ingest, does `this.buffer = this.buffer.slice(batch.length)`. Notes and pedal moves
+   captured while the request was in flight were pushed onto that same array, so
+   `batch.length` is no longer the number that was sent and those arrivals are sliced
+   away. The window is one round trip (usually a few milliseconds, but a locked database
+   or a slow LAN widens it), the loss is silent, and `lastSentAt` is misreported from the
+   same aliasing. The fix is to take the length before awaiting, or copy the batch.
+
+#### 18b — the measurements the app already takes
+
+**Where the new numbers live — approach B.** `segment_metrics` gains the columns, written
+by `_refresh_metrics`, rather than being recomputed on every read (A) or moving to a second
+table (C). `metrics.py` already states the governing rule — these are pure functions of
+the note list, so the table is a *cache and never the truth* — and that is exactly what a
+new column has to be. It also keeps `calendar()` and `by_piece()` aggregating in SQL
+instead of re-deriving the whole history on every dashboard load, which is what A costs.
+
+**A new owner for one purpose.** The pedal work lands in `practice/pedal.py`, a sibling of
+`metrics.py`, as pure functions over `(notes, pedal_moves)`. It is justified rather than
+folded in because 18b makes `metrics.py`'s scope ambiguous: that module is documented as
+"five metrics, the practice-logger's MVP set", and pedal *intervals* plus a harmonic
+judgement are a different concern with a different future. The raw CC64 stream stays raw;
+intervals are a projection, never a second stored truth.
+
+- `pedal_changes`, `pedal_down_ratio`, and **pedal blur**.
+- **"No pedal recorded" is a third state, not a zero.** `legacy.py` imports `note_events`
+  and never reads a pedal table, so imported sittings have no `pedal_events` at all. A
+  pedal figure computed over them would report a fault that was never observed. The metric
+  therefore distinguishes *not recorded* from *recorded and none used*, the same
+  distinction `media.state` already makes between *pending* and *missing*.
+- Soft pedal (CC67), sostenuto (CC66) and note-off velocity are not captured at all; this
+  slice does not pretend otherwise.
+
+**The harmonic question is a named seam with exactly one owner.** Without a score the app
+cannot know the harmony — only which pitches are sounding. So *blur* can only mean "a
+pedal-down span in which the sounding pitch-class set changed". That is a proxy, in the
+same class as `median_tempo` being a note rate rather than a metronome reading, and it is
+labelled as one.
+
+When a MusicXML score is attached to a piece, the same question can be answered from the
+score's own chord and measure boundaries instead of inferred from the sounding pitches. The
+seam is therefore one function answering one question — *where does the harmony change?* —
+with a recorded `basis`:
+
+| basis | Where the boundaries come from | Available |
+| --- | --- | --- |
+| `observed` | pitch-class set changes in the sounding notes | now |
+| `score` | chord and measure boundaries from the attached MusicXML, aligned to the performance | when alignment exists |
+
+Three rules make that extension cheap without building any of it now:
+
+1. **The basis is stored, not re-derived** — `segment_metrics.pedal_basis`. A score
+   attached in March must not retroactively relabel January's blur as score-derived, which
+   is the same rule that makes `identified_by`, `media.state` and the `legacy_id`
+   provenance columns trustworthy.
+2. **Bases are never mixed in one series.** The piece's pedal trend draws one basis at a
+   time, because an observed number and a score number are not the same measurement.
+3. **The blur is derived, so a future recompute needs no migration of results** — only a
+   backfill pass that re-derives with a different basis, which is precisely what
+   `POST /api/practice/autotag` already is for labels.
+
+The alignment work itself stays out of scope and is not pretended into existence. Mapping
+a performance onto a score is the same problem as the practice map, and it is where the
+real cost of a score-aware logger lives — this slice buys the seam, not the capability.
+
+**Touch, finally rendered.** `mean_velocity` and `velocity_stddev` appear in the timeline,
+with `median_velocity` and a dynamic range beside them. Labelled the way tempo already is:
+MIDI velocity is a controller value, not decibels, so it is comparable with itself over
+weeks and is not a claim about loudness. **Register balance** splits by pitch as an
+explicitly-stated proxy for hands, because the piano sends both hands on one channel and
+`note_events.channel` is write-only.
+
+#### Decisions taken
+
+| ID | Question | Decision | Consequence |
+| --- | --- | --- | --- |
+| 18-D1 | Does a journal entry belong to a sitting or a piece? | **The piece owns it; the sitting is an optional link** | Imported entries stay valid with no backfill, an entry survives re-segmentation, and "write about this sitting" is a convenience rather than a home |
+| 18-D2 | Are measured and written minutes summed? | **Never** — a second series, and the reconciliation names which measured figure it means | Preserves the Phase 6 rule; a prose-only day is visible as written-not-measured |
+| 18-D3 | Where do the pedal and touch numbers live? | **`segment_metrics` columns**, derived in `practice/pedal.py` | Aggregable in SQL; the table stays a cache of a pure function, as `metrics.py` already promises |
+| 18-D4 | Is pedal blur a judgement about the player? | **No — a reported proxy with a recorded basis**, and no score path until alignment exists | The same restraint the latency suggestion and the autotag bands follow: nothing is asserted silently |
+
+#### Acceptance — 18a
+
+- *Write about this* on a sitting produces an entry carrying that sitting's id, and its
+  measured header reconciles with the segment metrics it was drawn from.
+- The entry is editable in place; the browser suite exercises
+  `PATCH /api/repertoire/journal/{id}`, which no component calls today.
+- Deleting a sitting leaves its entries with `sitting_id` NULL; re-segmenting a sitting
+  leaves them linked.
+- Written and measured minutes render as separate series and are never added; a day with
+  prose and no notes reads *written, not measured*.
+- Search finds an entry by a word that appears only in `content`.
+- With the machine set to a non-UTC offset, the date field defaults to the local date.
+
+#### Acceptance — 18b
+
+- Pedal intervals derived from the raw stream match the raw moves for a fixture, and a
+  pedal-down with no matching up closes at the end of the sitting rather than being lost.
+- A sitting with no `pedal_events` reports *not recorded*; it never reports zero changes.
+- Blur is computed for the `observed` basis and the basis is persisted. Re-running the
+  derivation with a different basis leaves existing rows' basis untouched.
+- `mean_velocity`, `velocity_stddev` and `median_velocity` are rendered, and nothing
+  derived from velocity is labelled as loudness.
+- Register balance states that it is inferred from register, not from hands.
+
+**Effort:** 18a S–M, 18b M. **Depends on:** nothing — every table it needs already exists.
+
+**Non-goals, stated so the plan cannot drift:** aligning a performance to a score (the
+practice map), generating journal prose, per-hand attribution, and any claim about
+dynamics that is not a MIDI controller value.
+
+#### Landed
+
+**18a.** `piece_journal.sitting_id` (nullable, `ON DELETE SET NULL`); the journal is a
+`<textarea>` that edits in place through the PATCH that had been written, tested and called
+by nothing; *Write about this* on a timeline segment parks a draft in the app state, switches
+to Repertoire and attaches the sitting with the measured arithmetic — the prose box stays
+empty, because the app has no language model and will not put words in the player's mouth.
+Written minutes joined the calendar as a **second series**, drawn as a border rather than
+another shade so the heat still means "minutes the piano heard" and nothing else, and a day
+with prose and no notes reads as its own state. Journal `content` joined the library search
+and gained a cross-piece feed, which is also what the detail pane shows when no piece is
+selected — it used to be blank. The date default is the local date, not `toISOString()`.
+
+Three defects fixed at their owners: `SittingDetail.closed` now asks the same question
+`ensure_segments` asks instead of reading the clock alone; `close_open_sitting` returns a
+`CloseOutcome` so *still playing* is distinguishable from *nothing open* (seven existing
+assertions changed, and they now check the reason rather than only the id); and
+`identification_outcomes.segment_id` is `ON DELETE SET NULL`, so re-segmenting no longer
+destroys the matcher's track record. A fourth, in the client: `CaptureClient.flush()` copied
+its batch by reference and sliced by the aliased length, discarding whatever was played during
+the request.
+
+**18b.** `app/practice/pedal.py` — pure functions beside `metrics.py`: intervals from the raw
+CC64 stream, threshold crossings rather than message counts, the down-ratio, the blur count,
+and the touch figures. Eight additive columns on `segment_metrics`, written by
+`_refresh_metrics`, which is approach B and keeps the table a cache of a pure function as
+`metrics.py` already promises. `pedal_basis` is stored rather than re-derived, so a score
+attached later cannot retroactively relabel an observed number. A sitting with no pedal rows
+reports *not recorded* through that basis rather than a zero, which is how imported history
+is kept from reading as a fault that was never observed. The timeline renders pedal changes,
+blur, median velocity and register balance, each with the label that says what it is:
+**register balance is worded as registers, not as hands**, because that is what it measures.
+
+**Verified.** Backend 811 passing (19 new pedal units, 2 metric-integration, 7 journal, 5 for
+the defect fixes). Frontend 72 passing, `svelte-check` clean, build clean. All twelve browser
+scenarios pass. The migrations were exercised against a **real pre-18 database** — the e2e
+one, whose `segment_metrics` had seven columns and whose `identification_outcomes.segment_id`
+was `NOT NULL` — with a row planted in the old shape first: every column was added, the
+nullable rebuild ran, and the planted row survived it with its action and score intact.
+
+### Phase 19 — landed (playing back what was actually played)
+
+Found by using Phase 10's playback at the instrument, and diagnosed from the owner's own
+backup (7 sittings, 84,709 notes, 209,072 pedal moves) rather than from the code path. The
+report was: *holding a note and lifting the pedal, the note lingers on in real life because
+the key is still down, but in playback it vanishes.*
+
+#### Root cause
+
+**MIDI note-off is per pitch, and the player emits one note-on/note-off pair per stored
+note.** `pianoPlayer.sendMidi` schedules `note-on(pitch)` and `note-off(pitch)` for each
+event independently. When two notes of the same pitch overlap in time, the earlier note's
+note-off silences the later one — MIDI has no way to say "this off belongs to that on".
+
+`sustained()` is what makes the overlap common, and it is not itself at fault. Extending a
+released note to the pedal-up is correct piano behaviour, but it lengthens that note past a
+later re-strike of the same key. Measured on the real sessions:
+
+| | |
+| --- | --- |
+| Same-pitch overlaps created by the pedal extension | 2,841 – 7,119 per sitting |
+| Notes audibly silenced early by a stale note-off | **1,747** across the four pedalled sittings |
+| Median duration lost | 407 ms |
+| Losses over 200 ms | 968 |
+| Worst case | a note held 14.5 s, silenced after **27 ms** |
+
+The mechanism reproduces the report exactly: the stale note-off is scheduled at the
+pedal-up, so *the note the key is still holding dies at the moment the pedal is cleared*.
+
+#### Design
+
+- **One pure function, one call site.** `resolveOverlaps(notes)` in `playback.ts` — already
+  the module whose docstring claims this class of arithmetic, because it is "tedious to
+  check by ear and trivial to check in a test". Per pitch it clamps each note's end to the
+  next note's onset on that pitch, which is what a re-struck string physically does.
+  `pianoPlayer.play()` applies it once, so the Tone path and the MIDI path, and every
+  caller, are covered by construction — a fix in the MIDI encoder alone would leave the
+  sampler wrong, and a fix in each caller would leave the next caller wrong.
+- **Verified before planning it**: replaying the owner's four pedalled sittings through
+  the proposed transform takes the cut-short count from **1,747 to 0**.
+- **Retirement.** The per-note note-off scheduling is replaced, not kept behind a flag:
+  there is no instrument for which the un-normalised list is correct.
+- **Ordering detail to pin with a test:** a clamped note-off and the next note-on share a
+  timestamp, so the off must be submitted first. That is the standard re-trigger idiom, but
+  it is exactly the kind of thing that is silently wrong on one instrument only.
+
+#### The continuous pedal: captured, consumed binarily
+
+The suspicion was right, and the honest answer has two halves.
+
+**It is captured continuously.** All 128 CC values are present in the log, spread across the
+range — this is a genuine continuous pedal streaming its position, not a switch with
+occasional intermediate values. Nothing collapses it on the way to the database, and
+`pedal_events.value` is stored raw.
+
+**Then every consumer collapses it at `value >= 64`,** which is the MIDI specification's
+own rule for a switch controller: 0–63 is off, 64–127 is on. That is the correct
+interoperable reading — it is what makes a plain on/off pedal work at all — but on a
+continuous pedal it means **half-pedalling reads as fully released.** Measured over the
+pedal time in the owner's sittings: 23.9%, 9.1% and 10.2% of it sits in the partial band,
+during which a note released under the pedal is not held by playback at all.
+
+Two things follow, and neither is a new damper model — inventing one would be inventing a
+claim about the instrument, which is the thing this project refuses to do:
+
+1. **The threshold has two owners and must have one.** `PEDAL_DOWN = 64` in `playback.ts`
+   and `second >= 64` in `midi.ts` are the same decision written twice, which is the defect
+   class Phase 16 and Phase 17 each already had to fix once. One named constant, one owner.
+2. **The gap is recorded, not papered over.** The partial-band share becomes a stated
+   limitation on the pedal metrics of 18b, in the same voice as "tempo is a note rate, not
+   a metronome reading".
+
+#### The pedal is not sent to the output, and that is deliberate
+
+The player emits no CC64 at all — verified across the whole frontend: the only controller
+messages it sends are all-notes-off and all-sound-off on Stop. Through-the-piano playback
+therefore has no pedal; the pedal is already baked into each note's duration by
+`sustained()`. Sending it as well would double the pedalling. That is the right design, but
+it is currently nowhere written down, so it reads as an omission — which is how the whole
+of Phase 10 started.
+
+#### Acceptance
+
+- Replaying a fixture containing a pedal-extended note overlapped by a re-strike of the same
+  pitch produces no same-pitch overlap in the scheduled material, and the later note keeps
+  its full key-held duration.
+- The regression is pinned on the count, not on a screenshot: the four pedalled sittings
+  from the owner's backup go from 1,747 cut-short notes to 0, and the check is a unit test
+  over a synthesised fixture rather than a dependency on the backup.
+- The player's own wiring is checked in the browser, not assumed: `scenario_playback` plays
+  such a sitting through the piano and asserts the scheduled stream never overlaps on a
+  pitch — and that assertion fails when the normalisation is removed.
+- Both instruments are covered by one test, because both consume the same normalised list.
+- A plain on/off pedal and a continuous pedal produce identical playback for the same
+  gestures, since the binary rule is the specification's and is applied in one place.
+- Stopping still silences everything, including notes whose clamped off was moved earlier.
+
+**Effort:** S–M. **Depends on:** nothing; it is independent of 18a and 18b, and could ship
+first if the playback defect is the more annoying of the two.
+
+#### Landed
+
+`resolveOverlaps` is in `playback.ts` and applied once in `PianoPlayer.play()`, so the MIDI
+path, the sampled piano and the FM voice all consume the same normalised list and no caller
+can forget it. `PEDAL_DOWN` is exported from `playback.ts` and imported by `midi.ts` — it
+stays at the owner it already had rather than moving into `types.ts`, because `playback.ts`
+is reachable from the Node test runner and a runtime import there would have needed
+`allowImportingTsExtensions` turned on for the whole project to support one constant.
+Seven tests, and the frontend suite is 72 passing with `svelte-check` clean. The browser
+suite gained one scenario assertion and all twelve scenarios pass.
+
+Verified against the owner's own backup with the shipped functions rather than a
+re-implementation of them — `sustained()` then `resolveOverlaps()` over the four pedalled
+sittings:
+
+| sitting | notes | pedal moves | cut short before | after |
+| --- | --- | --- | --- | --- |
+| 2 | 18,688 | 36,200 | 297 | 0 |
+| 5 | 18,444 | 58,302 | 423 | 0 |
+| 6 | 18,600 | 52,322 | 493 | 0 |
+| 7 | 20,454 | 62,248 | 534 | 0 |
+| **total** | | | **1,747** | **0** |
+
+Worst loss 14.494 s before, 0 after.
+
+**Retirement:** the per-note note-off scheduling is gone rather than kept behind a flag.
+There is no instrument for which an overlapping same-pitch list is correct, so there is
+nothing to retain and no trigger to schedule.
+
+**What this does not fix, and does not claim to:** the partial-pedal band still reads as
+released, and the pedal is still not sent to the output. Both are recorded above as
+decisions rather than defects.
+
+**The browser scenario covers the wiring, and was falsified before it was trusted.**
+`scenario_playback` now seeds a sitting whose pedal carries a strike past a re-strike of the
+same key — pitch 79, released at 800 ms, pedal up at 2000 ms, struck again at 1200 ms and
+held to 5200 ms — plays it through the piano, and asserts that the scheduled stream for that
+pitch never has two note-ons before a note-off. `__fakeMidi.samePitchOverlaps()` reads the
+timestamps `send()` already records, so no new harness was needed. Removing the
+`resolveOverlaps` call from `play()` makes it fail with "1 overlapping pairs"; restoring it
+gives 0. All twelve scenarios pass on a fresh database.
+
+**A wrong conclusion, kept because it is instructive.** The first attempt to run the suite
+used a standalone `p.chromium.launch()` probe, which failed with "Executable doesn't exist
+at `…/chromium_headless_shell-1234`", and that was written up here as "the browser suite
+cannot be run on this machine". It can: `e2e_browser.py` passes
+`executable_path="/usr/bin/chromium"` and never touches Playwright's bundled build at all.
+The probe did not reproduce how the harness actually launches, and a conclusion drawn from
+a test that does not match the real path is worth nothing — which is the same failure the
+scenarios exist to catch, arriving from the other direction. The system Chromium (148) is
+fine and no install is needed.
 
 ### Still open, from the earlier brainstorm
 
