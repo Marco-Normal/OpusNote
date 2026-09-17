@@ -13,6 +13,18 @@
   let showLatency = $state(false);
   let draftLatency = $state(app.latencyMs);
   let showPorts = $state(false);
+  let showPedals = $state(false);
+
+  /** The three pedals a piano may send, and whether this one has. */
+  const PEDALS: { cc: number; label: string }[] = [
+    { cc: 64, label: 'Damper (right)' },
+    { cc: 66, label: 'Sostenuto (middle)' },
+    { cc: 67, label: 'Soft (left)' },
+  ];
+
+  function pedalState(cc: number): string {
+    return app.seenControllers.includes(cc) ? 'sends this' : 'not seen yet';
+  }
 
   /**
    * What playback comes out of.
@@ -90,6 +102,9 @@
       {#if app.devices.length > 0}
         <button class="ghost tiny" onclick={() => (showPorts = !showPorts)}>
           Ports ({app.devices.length})
+        </button>
+        <button class="ghost tiny" data-pedals-trigger onclick={() => (showPedals = !showPedals)}>
+          Pedals
         </button>
       {/if}
     {/if}
@@ -250,6 +265,28 @@
         </li>
       {/each}
     </ul>
+  {/if}
+
+  {#if showPedals}
+    <div class="row wrap latency" data-pedals>
+      <span class="muted small">
+        Press each pedal once. A pedal the piano does not send cannot be bound to anything,
+        so this is a report rather than a promise. One press of the sostenuto starts or
+        finishes a workout; two taps of the damper in silence arm and stop audio capture.
+      </span>
+      {#each PEDALS as pedal (pedal.cc)}
+        <span
+          class="pill"
+          class:good={app.seenControllers.includes(pedal.cc)}
+          data-pedal={pedal.cc}
+        >
+          {pedal.label} · CC{pedal.cc} · {pedalState(pedal.cc)}
+        </span>
+      {/each}
+      {#if app.pedalActionNote}
+        <span class="muted small" data-pedal-note>{app.pedalActionNote}</span>
+      {/if}
+    </div>
   {/if}
 
   {#if showLatency}

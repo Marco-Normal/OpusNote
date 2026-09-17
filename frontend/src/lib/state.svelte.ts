@@ -10,6 +10,7 @@ import { AudioCaptureClient } from './audioCapture';
 import { CaptureClient, type CaptureStatus } from './capture';
 import { MidiInput, type MidiDeviceInfo, type MidiOutputInfo } from './midi';
 import { fingerprint, type PortSnapshot } from './midiDevice';
+import { PedalGesture, type ControllerMove, type HandsfreeAction } from './pedalGesture';
 import { PianoPlayer, sharedPlayer, unlockOnFirstGesture, type Instrument } from './pianoPlayer';
 import type { AppView, HostInfo, PianoStatus, Profile, Workout } from './types';
 
@@ -334,6 +335,61 @@ class AppState {
   workout = $state<Workout | null>(null);
   workoutError = $state<string | null>(null);
 
+  /**
+   * True while a scored attempt is running.
+   *
+   * The hands-free switch is inert then: the sostenuto pedal is not played, but it *can*
+   * be pressed mid-piece, and a gesture that ends a workout in the middle of a run would
+   * be worse than no gesture at all. The views that own a run set this.
+   */
+  exerciseActive = $state(false);
+
+  /** Which controller numbers the connected piano has actually sent. A report. */
+  seenControllers = $state<number[]>([]);
+
+  /** What the last hands-free action did, for the device bar to show. */
+  pedalActionNote = $state<string | null>(null);
+
+  private readonly pedalGesture = new PedalGesture();
+
+  setExerciseActive(active: boolean): void {
+    this.exerciseActive = active;
+  }
+
+  /** Feed one controller move to the recogniser, then act on what it decided. */
+  handleController(move: ControllerMove): void {
+    const action = this.pedalGesture.accept(move, this.lastNoteMs);
+    this.seenControllers = [...this.pedalGesture.seen].sort((a, b) => a - b);
+    if (action === null || this.exerciseActive) return;
+    void this.runHandsfree(action);
+  }
+
+  /**
+   * What the pedals do.
+   *
+   * Two actions: the dedicated pedals toggle a workout, and the damper's double tap
+   * toggles audio capture — which is the split the acceptance criteria ask for, and the
+   * reason this is one dispatch rather than two paths. Capture is only armed through the
+   * same `toggleAudioCapture` the button uses, so the pedal inherits its guards (the log
+   * must be running, the server must report its gap) rather than bypassing them.
+   */
+  async runHandsfree(action: HandsfreeAction): Promise<void> {
+    if (action === 'toggle_audio_capture') {
+      await this.toggleAudioCapture();
+      this.pedalActionNote = this.audioArmed
+        ? 'Recording takes from the pedal'
+        : 'Take recording stopped from the pedal';
+      return;
+    }
+    if (this.workout?.running) {
+      await this.finishWorkout();
+      this.pedalActionNote = 'Workout finished from the pedal';
+      return;
+    }
+    await this.startWorkout();
+    this.pedalActionNote = 'Workout started from the pedal';
+  }
+
   /** What the server can tell us about this machine and this request. */
   host = $state<HostInfo | null>(null);
   /**
@@ -525,6 +581,10 @@ class AppState {
       this.midi.onOutputs((outputs) => {
         this.outputs = outputs;
       });
+      // The raw controller stream: read-only, and separate from the pedal stream the
+      // practice log consumes. Registered here because this is where every other MIDI
+      // handler is wired, inside the `midiWired` guard.
+      this.midi.onController((move) => this.handleController(move));
       // Playback through the piano is wired once, here: the player is shared and the
       // output can appear or vanish with the device, so the sink asks each time
       // rather than holding a port reference that may be gone.

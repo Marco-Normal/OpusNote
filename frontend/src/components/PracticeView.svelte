@@ -147,6 +147,15 @@
     void renderer.setDark(dark).then(() => renderer?.colorByExpectedIndex(liveStatuses));
   });
 
+  // The hands-free switch is inert while a run is being scored, and only then. Derived from
+  // the phase so every transition is covered without being poked into each one separately.
+  $effect(() => {
+    app.setExerciseActive(phase === 'countin' || phase === 'playing' || phase === 'submitting');
+  });
+
+  // Leaving the view mid-run must not leave the switch inert for the rest of the session.
+  onDestroy(() => app.setExerciseActive(false));
+
   async function loadExercise(): Promise<void> {
     reset(false);
     phase = 'loading';
