@@ -384,6 +384,11 @@ def update_passage(passage_id: int, body: PassageUpdate) -> PassageOut:
         current = store.get_passage(conn, passage_id)
         if current is None:
             raise HTTPException(status_code=404, detail=f"no passage {passage_id}")
+        # The columns are NOT NULL, so an explicit null is refused rather than merged: the
+        # merge below would return None and the comparison would raise instead of answering.
+        for key in ("start_bar", "end_bar"):
+            if key in changes and changes[key] is None:
+                raise HTTPException(status_code=422, detail=f"{key} cannot be null")
         start = changes.get("start_bar", current["start_bar"])
         end = changes.get("end_bar", current["end_bar"])
         if end < start:

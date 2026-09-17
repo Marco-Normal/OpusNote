@@ -271,6 +271,14 @@ class PassageCreate(BaseModel):
             raise ValueError("end_bar must not be before start_bar")
         return self
 
+    @model_validator(mode="after")
+    def _loop_is_named(self) -> "PassageCreate":
+        # `source='loop'` claims where the passage came from. Naming no loop would make that
+        # a claim about nothing, which is worse than saying it was typed.
+        if self.source == "loop" and self.media_id is None:
+            raise ValueError("a passage from a loop must name the recording")
+        return self
+
 
 class PassageUpdate(BaseModel):
     """PATCH body. Unset fields are left alone; an explicit null clears the column."""

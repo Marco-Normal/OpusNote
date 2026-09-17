@@ -411,6 +411,9 @@ def delete_piece(conn: sqlite3.Connection, piece_id: int) -> tuple[int, dict[str
         "media_rows": conn.execute(
             "SELECT COUNT(*) FROM media WHERE piece_id = ?", (piece_id,)
         ).fetchone()[0],
+        "passages": conn.execute(
+            "SELECT COUNT(*) FROM piece_passages WHERE piece_id = ?", (piece_id,)
+        ).fetchone()[0],
     }
     cursor = conn.execute("DELETE FROM pieces WHERE id = ?", (piece_id,))
     return cursor.rowcount, counts
@@ -512,7 +515,7 @@ def delete_journal_entry(conn: sqlite3.Connection, entry_id: int) -> int:
 def get_journal_entry(conn: sqlite3.Connection, entry_id: int) -> dict[str, Any] | None:
     row = conn.execute(
         "SELECT id, piece_id, entry_date, content, practice_minutes, sitting_id,"
-        " tags, difficulty, fluency, media_id"
+        " tags, difficulty, fluency, media_id, created_at"
         " FROM piece_journal WHERE id = ?",
         (entry_id,),
     ).fetchone()
@@ -666,9 +669,12 @@ def list_journal_entries(
 ) -> list[dict[str, Any]]:
     """The newest entries across the whole library.
 
-    `tag` matches a *label*, never the prose: the stored array is written with
-    `db.json_dump`'s compact separators, so a tag always appears quoted and adjacent to its
-    own quotation marks, and `%"coda"%` cannot match the word "coda" in a sentence.
+    `tag` matches a *label*, never the prose, and it is matched **through the JSON** rather
+    than by a LIKE over the stored text. The column holds `db.json_dump`'s output, which
+    escapes non-ASCII (`café` is stored as `caf\\u00e9`), quotes and backslashes — so a LIKE
+    would fail on exactly the labels a player is most likely to use — and it would treat `%`
+    and `_` in the tag as wildcards. `json_each` compares the decoded label, so a chip the
+    player clicked always finds its own entry. Case-insensitive, which only ever helps.
     """
     clauses: list[str] = []
     params: list[Any] = []
@@ -677,8 +683,11 @@ def list_journal_entries(
         pattern = f"%{search}%"
         params.extend([pattern, pattern, pattern])
     if tag:
-        clauses.append("j.tags LIKE ?")
-        params.append(f'%"{tag}"%')
+        clauses.append(
+            "j.tags IS NOT NULL AND EXISTS"
+            " (SELECT 1 FROM json_each(j.tags) WHERE json_each.value = ? COLLATE NOCASE)"
+        )
+        params.append(tag)
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     params.append(max(1, min(limit, 500)))
     rows = conn.execute(

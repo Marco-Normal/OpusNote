@@ -558,7 +558,7 @@ def test_deleting_a_piece_reports_what_went_with_it(client):
     )
     result = client.delete(f"/api/repertoire/pieces/{piece['id']}").json()
     assert result["deleted"] is True
-    assert result["cascaded"] == {"journal_entries": 1, "media_rows": 0}
+    assert result["cascaded"] == {"journal_entries": 1, "media_rows": 0, "passages": 0}
     assert client.get(f"/api/repertoire/pieces/{piece['id']}").status_code == 404
 
 
@@ -1621,3 +1621,53 @@ def test_passages_sort_the_never_touched_first(client) -> None:
     )
     rows = client.get(f"/api/repertoire/pieces/{piece['id']}").json()["passages"]
     assert [row["label"] for row in rows] == ["untouched", "worked"]
+
+
+def test_the_tag_filter_matches_the_label_exactly(client) -> None:
+    """A tag is a label, so the filter matches the label and nothing that merely looks like one.
+
+    The stored array is JSON text, so a naive LIKE is matched against *escaped* text: an
+    accented tag is stored as `caf\\u00e9`, a quote as `a\\"b`, and `%`/`_` are wildcards that
+    match far more than the label. Matching through the JSON itself is what makes the filter
+    agree with the chip the player clicked.
+    """
+    piece = client.post("/api/repertoire/pieces", json={"title": "Accents"}).json()
+    client.post(
+        f"/api/repertoire/pieces/{piece['id']}/journal",
+        json={"entry_date": "2026-03-09", "content": "x", "tags": ["café", 'a"b', "a%b", "ab"]},
+    )
+
+    def found(tag: str) -> list[str]:
+        return [
+            row["piece_title"]
+            for row in client.get("/api/repertoire/journal", params={"tag": tag}).json()
+        ]
+
+    assert found("café") == ["Accents"], "an accented label is found"
+    assert found('a"b') == ["Accents"], "and a quoted one"
+    assert found("a%b") == ["Accents"], "and one with a percent sign in it"
+    assert found("%") == [], "but % is a label, not a wildcard"
+    assert found("a_b") == [], "and _ is not one either"
+    assert found("AB") == ["Accents"], "the match is case-insensitive, which only helps"
+
+
+def test_a_passage_patch_refuses_a_null_bar(client) -> None:
+    """Both bars are NOT NULL, so an explicit null is a 422 rather than a broken comparison."""
+    piece = client.post("/api/repertoire/pieces", json={"title": "Nulls"}).json()
+    passage = client.post(
+        f"/api/repertoire/pieces/{piece['id']}/passages",
+        json={"start_bar": 1, "end_bar": 4},
+    ).json()
+    for body in ({"start_bar": None}, {"end_bar": None}):
+        response = client.patch(f"/api/repertoire/passages/{passage['id']}", json=body)
+        assert response.status_code == 422, f"{body} must be refused ({response.text})"
+
+
+def test_a_loop_passage_must_name_the_loop(client) -> None:
+    """`source='loop'` claims provenance; naming no loop is a claim about nothing."""
+    piece = client.post("/api/repertoire/pieces", json={"title": "Loops"}).json()
+    response = client.post(
+        f"/api/repertoire/pieces/{piece['id']}/passages",
+        json={"start_bar": 1, "end_bar": 4, "source": "loop"},
+    )
+    assert response.status_code == 422, response.text
