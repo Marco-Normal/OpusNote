@@ -33,6 +33,7 @@ export class AudioCaptureClient {
   private takenThroughMs: number | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private busy = false;
+  private starting = false;
 
   deviceState: CaptureDeviceState = 'unknown';
   lastError: string | null = null;
@@ -49,7 +50,11 @@ export class AudioCaptureClient {
   ) {}
 
   async start(): Promise<void> {
-    if (this.timer !== null) return;
+    // `timer` is only set once the device is in hand, so without `starting` a second click while
+    // the permission prompt is open would ask for a second stream, overwrite `this.stream`, and
+    // leave the first microphone live with nothing holding it.
+    if (this.timer !== null || this.starting) return;
+    this.starting = true;
     this.lastError = null;
     // Everything heard before the switch was armed is already in the past; a take opens on the
     // next note, not on a stale one that arrived while nothing was recording.
@@ -66,6 +71,8 @@ export class AudioCaptureClient {
       this.lastError = cause instanceof Error ? cause.message : String(cause);
       this.onStatus();
       return;
+    } finally {
+      this.starting = false;
     }
     this.timer = setInterval(() => void this.tick(), TICK_MS);
     this.onStatus();
