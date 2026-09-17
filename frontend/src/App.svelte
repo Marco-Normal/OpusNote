@@ -10,6 +10,7 @@
   import ThemeControls from './components/ThemeControls.svelte';
   import WorkoutBar from './components/WorkoutBar.svelte';
   import { app } from './lib/state.svelte';
+  import CommandPalette from './components/CommandPalette.svelte';
   import type { AppView } from './lib/types';
   import type { Route } from './lib/route';
 
@@ -21,8 +22,63 @@
     { id: 'repertoire', label: 'Repertoire' },
   ];
 
+  let paletteOpen = $state(false);
+
   function go(route: Route): void {
     app.navigate(route);
+    paletteOpen = false;
+  }
+
+  /**
+   * Global shortcuts.
+   *
+   * Three rules, all of which exist because a piano app gets typed into almost never and
+   * played into constantly:
+   *
+   * * a shortcut never fires while a field has focus, so the palette's own box and the
+   *   split-position input keep working;
+   * * Escape always closes, whatever has focus;
+   * * space is a *request* to the view, and is inert during a scored attempt, because the
+   *   one thing a stray key must not do is disturb a run.
+   */
+  function onKeydown(event: KeyboardEvent): void {
+    if (event.key === 'Escape' && paletteOpen) {
+      event.preventDefault();
+      paletteOpen = false;
+      return;
+    }
+
+    const target = event.target as HTMLElement | null;
+    const typing =
+      target !== null &&
+      (target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.tagName === 'SELECT' ||
+        target.isContentEditable);
+    if (typing) return;
+
+    if (event.key === '/') {
+      event.preventDefault();
+      paletteOpen = true;
+      return;
+    }
+    if (event.key === 'k' && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      paletteOpen = true;
+      return;
+    }
+
+    const index = Number(event.key);
+    if (Number.isInteger(index) && index >= 1 && index <= tabs.length) {
+      event.preventDefault();
+      go({ name: tabs[index - 1].id });
+      return;
+    }
+
+    if (event.key === ' ' && app.view === 'practice' && !app.exerciseActive) {
+      event.preventDefault();
+      app.requestShortcut('start');
+    }
   }
 
   onMount(() => {
@@ -60,6 +116,12 @@
             {tab.label}
           </button>
         {/each}
+        <button
+          class="ghost tiny"
+          aria-keyshortcuts="/"
+          data-palette-trigger
+          onclick={() => (paletteOpen = true)}>Search</button
+        >
       </nav>
       <ThemeControls />
     </div>
@@ -98,7 +160,11 @@
   </footer>
 </div>
 
-<svelte:window onhashchange={() => app.syncFromHash()} />
+<svelte:window onhashchange={() => app.syncFromHash()} onkeydown={onKeydown} />
+
+{#if paletteOpen}
+  <CommandPalette onclose={() => (paletteOpen = false)} onnavigate={go} />
+{/if}
 
 <style>
   .shell {

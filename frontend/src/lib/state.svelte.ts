@@ -397,6 +397,27 @@ class AppState {
   /** What the last hands-free action did, for the device bar to show. */
   pedalActionNote = $state<string | null>(null);
 
+  /**
+   * A one-shot request from a keyboard shortcut to the view that owns the action.
+   *
+   * The keyboard and the button must go through the same code, and the store cannot start
+   * an exercise itself — the score renderer, the count-in and the note capture all live in
+   * the view. So the shortcut asks, and the view answers.
+   */
+  shortcutRequest = $state<{ name: 'start' | 'stop'; at: number } | null>(null);
+
+  requestShortcut(name: 'start' | 'stop'): void {
+    this.shortcutRequest = { name, at: Date.now() };
+  }
+
+  /** A view takes the request it handles, exactly once. */
+  consumeShortcut(): 'start' | 'stop' | null {
+    if (this.shortcutRequest === null) return null;
+    const name = this.shortcutRequest.name;
+    this.shortcutRequest = null;
+    return name;
+  }
+
   private readonly pedalGesture = new PedalGesture();
 
   setExerciseActive(active: boolean): void {

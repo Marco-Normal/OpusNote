@@ -159,6 +159,14 @@
   // Leaving the view mid-run must not leave the switch inert for the rest of the session.
   onDestroy(() => app.setExerciseActive(false));
 
+  // The keyboard asks; the view answers. Space never reaches here during a run, because
+  // the shell checks `app.exerciseActive` before asking.
+  $effect(() => {
+    const request = app.consumeShortcut();
+    if (request === 'start' && phase === 'ready') void start();
+    if (request === 'stop' && (phase === 'countin' || phase === 'playing')) void finish();
+  });
+
   async function loadExercise(): Promise<void> {
     reset(false);
     phase = 'loading';

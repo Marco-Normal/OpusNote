@@ -348,3 +348,50 @@ th {
     animation-duration: 0.01ms !important;
   }
 }
+
+/* The command palette: the app's only overlay. */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 45%);
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 12vh;
+  z-index: 50;
+}
+
+.palette {
+  width: min(42rem, 92vw);
+  max-height: 70vh;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.palette .query {
+  width: 100%;
+  font-size: 1rem;
+  padding: 0.6rem 0.7rem;
+}
+
+.palette ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.palette h4 {
+  margin: 0.4rem 0 0.1rem;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.palette li button {
+  width: 100%;
+  text-align: left;
+}
