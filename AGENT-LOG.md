@@ -1606,13 +1606,25 @@ shipped without 20b's pedal arm/stop gesture, so the device-bar button is the on
 `GET /api/repertoire/pieces/{id}` now writes (it may attach waiting takes); it is idempotent and
 bounded by the unplaced takes in the library, and it is the same "read path that writes" pattern
 `ensure_segments` already uses. No route changed shape, no table was added, `BACKUP_VERSION` is
-unchanged, and the recording upload still writes `source='uploaded'`. Residual risk worth naming: the
-recorder polls once a second, so a take can miss up to the first second of the phrase that opened it;
-that is quality, which 20-D4 explicitly does not make an acceptance criterion.
+unchanged, and the recording upload still writes `source='uploaded'`.
 
-Verified: backend **880 passed**; frontend 81; `svelte-check` clean; build clean; the new
-`takes` browser scenario passes ten assertions against a fake microphone, including that the take is
-attached to the piece, the playing and the passage, and that 0.5× reaches the element with the
-same-pitch readout; four falsifications run and caught their breaks
+**One acceptance bullet is measured unmet, and it is a spec/plan conflict rather than a slip.**
+ECOSYSTEM § 20e asks for "a take whose duration is within a second of the notes it covers". The plan
+cuts a take on the server's own silence gap, which necessarily appends that whole gap to the file, so
+the file is the phrase *plus* the silence that ended it. Measured in the browser run: take 64 is
+**7.99 s for a 0.350 s passage** (7.64 s of trailing silence) and take 65 is **8.95 s for 0.350 s**.
+Attaching, playing and comparing are all unaffected — the take is a correct recording, just a padded
+one — and nothing in the plan's six decisions asks for a trim. Closing it means cutting the stored
+audio to the last note at upload (the notes are already ingested, so `note_events` can supply the
+end; `store_recording` would need a limit), which is a change to the shared pipeline and outside what
+the plan authorized, so it is recorded here rather than done quietly. A second, smaller residual: the
+recorder polls once a second, so a take can miss up to the first second of the phrase that opened it —
+quality, which 20-D4 explicitly does not make an acceptance criterion.
+
+Verified: backend **880 passed**; frontend 81; `svelte-check` clean; build clean; the new `takes`
+browser scenario passes fifteen assertions against a fake microphone, including that two takes attach
+to *their own* passages rather than both to the first, that both render for comparison, that 0.5×
+reaches one element and leaves the other alone with the same-pitch readout, and that a loop marker
+saved on one take leaves the other unmarked; four falsifications run and caught their breaks
 (`drop_media_source_column.sh`, `drop_capture_segment_link.sh`, `drop_take_catch_up.sh`,
 `cut_takes_at_the_wrong_gap.sh`); `./check.sh --full` green in **566 s**.

@@ -1546,6 +1546,15 @@ attach it — the same reasoning the note wire format already uses; and that att
 **catch-up**, not something the upload can finish, because segments are made only once a sitting has
 closed. This slice landed before 20b–20d at the user's request, so the phase is not complete.
 
+**One acceptance bullet below is not met, and it is left stated rather than quietly dropped.** The
+first bullet asks for a take "whose duration is within a second of the notes it covers". A take is
+cut on the silence gap, so the gap that ended the phrase is inside the file: measured in the browser
+run, a 0.35 s passage produced a 7.99 s take. Everything else the bullet names — that playing
+produces a take, and that it attaches to the right segment — holds, and was verified with two
+passages to prove each take finds its own. Closing the duration half means trimming the stored audio
+to the last note at upload, which the plan did not authorize and no decision asks for; see
+`AGENT-LOG.md` 2026-09-17.
+
 **Problem.** Every recording in the library got there by upload, and the piano's own
 pen-drive recording already exists — so in-app capture is not an archive. It is the
 convenience layer: the take you want to send someone, or hear once, without finding a

@@ -2007,60 +2007,106 @@ def scenario_takes(browser) -> None:
     page.wait_for_selector('[data-audio-device="ready"]', timeout=15_000)
     check(True, "the switch reports the microphone it actually got")
 
-    # --- a phrase is recorded, and the take is cut on the server's own silence rule ---
-    with page.expect_response(
-        lambda r: "/api/repertoire/takes" in r.url and r.request.method == "POST",
-        timeout=30_000,
-    ):
-        play_phrase(page, [60, 64, 67])
-        # The take closes once the segment gap has elapsed, and the recorder only notices on
-        # its next tick: the wait is the gap the server reports plus a margin for that tick,
-        # rather than a number that goes stale the moment SRT_SEGMENT_GAP_S is changed.
-        page.wait_for_timeout((gap_s + 3) * 1000)
+    # --- two phrases are recorded, each take cut on the server's own silence rule ---
+    # Two, not one: a take must attach to *its* passage, and a single take cannot tell a
+    # correct attachment from an attachment that always picks the sitting's first segment.
+    take_ids: list[int] = []
+    for pitches in ([60, 64, 67], [65, 69, 72]):
+        with page.expect_response(
+            lambda r: "/api/repertoire/takes" in r.url and r.request.method == "POST",
+            timeout=30_000,
+        ) as uploaded:
+            play_phrase(page, pitches)
+            # The take closes once the segment gap has elapsed, and the recorder only notices on
+            # its next tick: the wait is the gap the server reports plus a margin for that tick,
+            # rather than a number that goes stale the moment SRT_SEGMENT_GAP_S is changed.
+            page.wait_for_timeout((gap_s + 3) * 1000)
+        take_ids.append(uploaded.value.json()["id"])
 
-    # --- the take arrived before its segment existed, which is the state the recorder is in ---
-    # Segments are only made once a sitting closes, and the take was cut seconds after the last
-    # note while the sitting stayed open for the five-minute gap. Closing is the piano going
-    # away; the read below is what attaches the take, because nothing here runs on a timer.
+    # --- the takes arrived before their segments existed, which is the state the recorder is in ---
+    # Segments are only made once a sitting closes, and a take is cut seconds after the last note
+    # while the sitting stays open for the five-minute gap. Closing is the piano going away; the
+    # read below is what attaches the takes, because nothing here runs on a timer.
     closed = api("/api/practice/sittings/close", "POST")
     check(closed["closed"] is True, "the playing closes when it is finished")
     detail = api(f"/api/practice/sittings/{closed['sitting_id']}")
-    check(len(detail["segments"]) >= 1, "and it segments into the passage that was played")
-    segment = detail["segments"][0]
-    api(f"/api/practice/segments/{segment['id']}", "PATCH", {"piece_id": piece["id"]})
+    check(len(detail["segments"]) == 2, "and it segments into the two passages that were played")
+    for segment in detail["segments"]:
+        api(f"/api/practice/segments/{segment['id']}", "PATCH", {"piece_id": piece["id"]})
 
-    captured = [
+    media = [
         row
         for row in api(f"/api/repertoire/pieces/{piece['id']}")["media"]
         if row["source"] == "captured"
     ]
-    check(len(captured) == 1, f"the take is attached to the piece ({len(captured)})")
-    check(captured[0]["sitting_id"] is not None, "and to the playing it was cut from")
-    check(captured[0]["segment_id"] == segment["id"], "and to the passage it was played in")
+    captured = sorted(media, key=lambda row: row["id"])
+    check(len(captured) == 2, f"both takes are attached to the piece ({len(captured)})")
+    check(
+        [row["segment_id"] for row in captured] == [seg["id"] for seg in detail["segments"]],
+        "and each is attached to the passage it was played in, not to the other",
+    )
+    check(
+        all(row["sitting_id"] == closed["sitting_id"] for row in captured),
+        "and to the playing they were cut from",
+    )
 
-    # --- and it plays, at a speed that does not change it ---
+    # --- two of them compare, each with its own controls ---
     click_button(page, "Repertoire")
     page.wait_for_selector(".row-piece", timeout=20_000)
     page.locator(".row-piece", has_text=piece["title"]).first.click()
     page.wait_for_selector(".detail-title", timeout=10_000)
     page.wait_for_selector(f'[data-take="{captured[0]["id"]}"]', timeout=20_000)
+    check(page.locator("[data-take]").count() == 2, "both takes are listed under the piece")
+    for take_id in take_ids:
+        page.locator(f'[data-take="{take_id}"]').get_by_role(
+            "button", name="Compare", exact=True
+        ).click()
+    page.wait_for_timeout(300)
+    check(
+        page.locator("[data-take]").count() == 2,
+        "and comparing two shows both players rather than replacing them",
+    )
+
+    # --- one plays at half speed without changing the file, or the other take ---
+    first, second = captured[0]["id"], captured[1]["id"]
     # The speed control lives in the player's toolbar, which is rendered only once the waveform
     # is open — so the toggle is part of the path, not an optional extra.
-    page.click(f'[data-take="{captured[0]["id"]}"] [data-waveform-toggle]')
-    page.wait_for_selector('[data-take] select[aria-label="Playback speed"]', timeout=10_000)
-    page.select_option('[data-take] select[aria-label="Playback speed"]', "0.5")
+    page.click(f'[data-take="{first}"] [data-waveform-toggle]')
+    page.wait_for_selector(f'[data-take="{first}"] select[aria-label="Playback speed"]', timeout=10_000)
+    page.select_option(f'[data-take="{first}"] select[aria-label="Playback speed"]', "0.5")
     page.wait_for_timeout(300)
     check(
         page.evaluate(
-            f"() => document.querySelector('[data-take=\"{captured[0]['id']}\"] audio').playbackRate"
+            f"() => document.querySelector('[data-take=\"{first}\"] audio').playbackRate"
         )
         == 0.5,
         "half speed is applied to the element",
     )
     check(
+        page.evaluate(
+            f"() => document.querySelector('[data-take=\"{second}\"] audio').playbackRate"
+        )
+        == 1,
+        "and the take being compared against is left alone",
+    )
+    check(
         page.locator('[data-rate-note="same-pitch"]').count() == 1,
         "and the readout says whether pitch is held",
     )
+
+    # --- a loop marker belongs to the take it was set on ---
+    page.click(f'[data-take="{first}"] [data-set-a]')
+    page.wait_for_timeout(1_000)
+    marked = sorted(
+        [
+            row
+            for row in api(f"/api/repertoire/pieces/{piece['id']}")["media"]
+            if row["source"] == "captured"
+        ],
+        key=lambda row: row["id"],
+    )
+    check(marked[0]["loop_start_s"] is not None, "a loop marker is saved on the take it was set on")
+    check(marked[1]["loop_start_s"] is None, "and the other take keeps its own, unmarked")
 
     check(not errors, f"no console errors ({errors})")
     page.close()
