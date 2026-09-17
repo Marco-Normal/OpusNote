@@ -114,6 +114,21 @@ a piece's detail you can add journal entries, edit it, attach a score, upload a
 recording and delete it. All of it works from any machine on the LAN except deleting,
 which is piano-machine only (see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)).
 
+Journal entries carry **tags** and two ratings — how hard it felt and how well it went — and the
+journal feed can be filtered by a tag. A tag matches the label you wrote, never a word that happens
+to appear in the prose. An entry can also point at the **recording** it is about (*Write about this
+take*), and deleting the recording leaves the prose alone.
+
+**Passages to work on** live on the piece: a bar range and a note ("bars 12–14, the left-hand
+leaps"), with *Worked on it* stamping the date so the untouched ones stay at the top. The app cannot
+find these for you — it cannot see your score — but a passage can record that it was seeded from a
+recording's A/B loop. The library can be sorted by **last played**, **least time invested** or
+**most time invested**, several pieces can be selected and re-statused at once, and the filters and
+sort you choose are remembered.
+
+A piece you set to **paused** stops appearing in *Neglected*: the status is your decision, and the
+list was arguing with it.
+
 **Scores** go in beside the recordings: a **PDF** is shown in the browser's own viewer,
 and **MusicXML** is engraved in the app by the same renderer the exercises use. Neither
 is re-encoded — the file you attach is the file you read — and both are checked on

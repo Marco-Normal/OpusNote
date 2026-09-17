@@ -126,7 +126,7 @@ still own a package each.
 One database, three domains:
 
 ```
-repertoire     composers, pieces, piece_journal, media
+repertoire     composers, pieces, piece_journal, piece_passages, media
 practice       sittings, note_events, segments, segment_metrics, identification_corrections
 sight-reading  users, skills, user_skills, exercises, exercise_skills, performances, workouts
 ```
@@ -1358,10 +1358,13 @@ nothing at all.
 
 **Order, and why: 20a → 20b → 20c → 20d → 20e.** The 20b-before-20e dependency is
 load-bearing: the hands-free gesture is what arms audio capture from the piano bench
-without reaching for the computer. **20e landed before 20b–20d**, at the user's request,
-so it is missing the pedal arm/stop gesture 20b was to add; the device-bar button is the
-only way to arm capture today. `SCHEMA_VERSION` is 4 as a result, and 20d's planned
-"3 → 4" must become 4 → 5 when it lands.
+without reaching for the computer. The order was not followed: **20e landed first**, then
+**20b**, then **20d**, so the three now meet where they always had to — `runHandsfree`
+dispatches the workout toggle and the capture toggle, and 20b's gesture therefore arms and
+stops takes. `SCHEMA_VERSION` is 5 (20e took it 3 → 4, 20d took it 4 → 5). **20c is the
+only slice still planned.**
+
+**Landed: 20a, 20b, 20d, 20e. Planned: 20c.**
 
 #### 20a — practice kinds (A1, A3) — landed
 
@@ -1497,7 +1500,7 @@ pianist needs.
   missed days reset it; today still does not count against you.
 - The weekly target needs no request beyond the existing summary.
 
-#### 20d — journal and library depth (A2, C1–C4) — planned
+#### 20d — journal and library depth (A2, C1–C4) — landed
 
 **Implementation plan:** [`PLAN-PHASE20D.md`](./PLAN-PHASE20D.md). It records three things this
 section left implicit: a new table is a **loud failure in the browser tier** until it is named in

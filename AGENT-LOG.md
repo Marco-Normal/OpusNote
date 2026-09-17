@@ -1729,3 +1729,71 @@ bars reaching the metronome and surviving a reload, no console errors); four com
 run and all four caught their breaks (`drop_handsfree_silence_gate.sh` at the unit tier;
 `drop_controller_stream.sh`, `ignore_count_in_preference.sh` and `misroute_a_piece.sh` against the
 built frontend); `./check.sh --full` green.
+
+## 2026-09-17 — sight-reading agent — Phase 20d landed (journal and library depth), the last slice but 20c
+
+Scope: `backend/app/repertoire/{schema,models,store,api}.py`, `backend/app/{db,practice/{store,api}}.py`,
+`backend/tests/{test_migration_upgrade,test_repertoire,test_practice_api}.py`,
+`backend/tools/e2e_browser.py`, `backend/tools/falsifications/` (four new scripts),
+`frontend/src/lib/{types,api}.ts`, `frontend/src/components/{RepertoireView,PassageList}.svelte`,
+`README.md`, `docs/ECOSYSTEM.md`.
+
+Did: four additive `piece_journal` columns (`tags`, `difficulty`, `fluency`, `media_id`), one new
+table (`piece_passages`), three repertoire routes and one thin practice read. A **tag** is a JSON
+array in one column and the feed filters by label; an entry carries two ratings (how hard it felt,
+how well it went) and can point at the take it was written about; a **focus passage** is a bar range
+with a note and a *Worked on it* button; the library sorts by last played or by time invested, edits
+status in bulk, and remembers the filters and sort. `neglected()` now reports `active` pieces only,
+so a piece the player deliberately paused stops nagging — a defect the 20d survey found rather than
+a feature. `SCHEMA_VERSION` 4 → 5; `BACKUP_VERSION` unchanged (the table list is derived, and an
+older document simply carries no rows for the new table).
+
+**The one boundary a reviewer should check (20-D7).** Nothing here claims to know a score. The bars
+are the player's own; `source`/`media_id` record that a passage was seeded from a recording's A/B
+loop, not a seconds-to-bars conversion the app cannot make; and `last_worked_on` is only ever set by
+a button. `PassageOut.source` is the evidence, and the panel's empty state says in words that the app
+cannot find passages for you.
+
+**A reviewer found three real defects, each fixed with a test seen to fail first.** (1) The tag
+filter used `LIKE` over the stored JSON, which `db.json_dump` escapes — so `café` was stored as
+`caf\u00e9` and a chip the player clicked found nothing, `"` and `\` broke the same way, and `%`/`_`
+acted as wildcards that matched other labels. It now matches through `json_each` with `COLLATE
+NOCASE`: exact labels, escape-proof, wildcard-proof, case-insensitive.
+(2) `PATCH /passages/{id}` with an explicit `null` bar was a 500 — the pair-merge returned `None`
+and the comparison raised. Both columns are `NOT NULL`, so a null is now a 422.
+(3) Deleting a piece cascaded its passages but did not report them, against the route's own
+docstring; `cascaded` now carries `passages`. Also tightened while there: `source='loop'` must name
+the recording it came from (a claim about provenance with no loop is a claim about nothing), and
+`get_journal_entry` now selects `created_at` so a write response matches the read.
+
+**Two things the plan could not settle, because it was written before 20b and 20e.** The
+`ignore_the_tag_filter.sh` break script targeted the old LIKE and had to be rewritten for the new
+predicate; and the browser assertions needed adapting in four places where the plan's sketch did not
+match the built UI: the feed had no tag pills (so the tag is now one shared `{#entryMeta}`
+snippet used by the journal and the feed), the create form's *Add* is disabled without content
+so the scenario has to type an entry, the neglected list is `.neglected` rather than `.review`, and
+the passage assertions had to wait for the *state* rather than the always-present section — reading
+it straight after the POST raced the refresh and read the empty state. `scenario_repertoire` also
+has to come back to the piece after the Log-tab assertion, because the rest of that scenario works
+on it.
+
+Impact on the other side: **20c is now the only planned slice in Phase 20.** The repertoire domain
+still owns `media`, `piece_journal` and now `piece_passages`, and reads practice tables read-only;
+the practice route exposes `by_piece` rather than duplicating it, so the library's "least time
+invested" and the Log's dashboard cannot disagree — `test_the_piece_practice_read_agrees_with_the_dashboard`
+asserts they are equal field for field. A new table is a loud failure in the browser tier until it is
+named in `e2e_browser.DATA_TABLES`, which is why `piece_passages` is in the schema task.
+
+**One residual, named rather than papered over.** `RepertoireView.svelte` is **1,864 lines**, past
+the ~1,600 its risk table names as the point to stop adding sections. Extracting the library list, as
+that table prescribes, would not bring it under the line — the component owns the library list, the
+piece detail, the journal, the media list and now the passage panel, and a partial extraction would
+add a dozen new props and bindings for no measurable gain. The next addition to it should extract
+the library list or the journal panel as a whole, not add a sixth section.
+
+Verified: backend **898 passed**; frontend 97; `svelte-check` clean; build clean; `scenario_repertoire`
+passes its four new assertions (the entry carries the tag and the difficulty it was given, the feed
+filters by a tag, the passage is listed with the player's bars and *Worked on it* stops it reading
+as untouched, and a paused piece is left out of Neglected); four committed falsifications run and all
+four caught their breaks (`drop_journal_added_column.sh`, `let_paused_pieces_nag.sh`,
+`ignore_the_tag_filter.sh`, `forget_the_passage_provenance.sh`); `./check.sh --full` green.
