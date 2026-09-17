@@ -294,6 +294,13 @@ export interface Recording {
    * missing  — in neither place
    */
   state: 'present' | 'pending' | 'missing';
+  /** 'uploaded' for a file that arrived by hand, 'captured' for audio the app recorded. */
+  source: 'uploaded' | 'captured';
+  /** The playing this take came from, when it was recorded here. */
+  sitting_id: number | null;
+  segment_id: number | null;
+  /** Absolute epoch ms the take started at, for placing it against the notes. */
+  captured_start_ms: number | null;
 }
 
 export interface PieceSummary {

@@ -6,6 +6,7 @@
  */
 
 import { api } from './api';
+import { AudioCaptureClient } from './audioCapture';
 import { CaptureClient, type CaptureStatus } from './capture';
 import { MidiInput, type MidiDeviceInfo, type MidiOutputInfo } from './midi';
 import { fingerprint, type PortSnapshot } from './midiDevice';
@@ -86,6 +87,19 @@ class AppState {
   midiAutoConnected = $state(false);
   /** True when the browser refused MIDI until the user asks for it. */
   midiNeedsGesture = $state(false);
+
+  /**
+   * The last note any port has heard, or null.
+   *
+   * The same evidence the device bar shows, read by the audio switch: a take opens on the first
+   * note and closes on the server's silence gap, so "is anything being played?" has one answer.
+   */
+  get lastNoteMs(): number | null {
+    const heard = this.ports
+      .map((port) => port.lastNoteMs)
+      .filter((value): value is number => value !== null);
+    return heard.length > 0 ? Math.max(...heard) : null;
+  }
 
   private midiWired = false;
   private reconnectTimer: ReturnType<typeof setInterval> | null = null;
@@ -252,6 +266,51 @@ class AppState {
     lastError: null,
     lastSentAt: null,
   });
+
+  /** The standing audio switch. Off until it is armed, and off again on a reload. */
+  audioCapture: AudioCaptureClient | null = null;
+  audioArmed = $state(false);
+  audioDevice = $state<'unknown' | 'ready' | 'unavailable' | 'denied'>('unknown');
+  audioNote = $state<string | null>(null);
+  takesCaptured = $state(0);
+
+  async toggleAudioCapture(): Promise<void> {
+    if (this.audioArmed) {
+      this.audioCapture?.stop();
+      this.audioArmed = false;
+      this.audioNote = null;
+      return;
+    }
+    // From the server, every time: audio cut somewhere else than the notes would disagree
+    // with them about where a passage ended, and a local constant would be that disagreement
+    // waiting to happen. A server that cannot say refuses the arming rather than guessing.
+    const status = await api.practice.status().catch(() => null);
+    if (status === null) {
+      this.audioNote =
+        'the server did not report its segment gap, so a take could be cut in the wrong place';
+      return;
+    }
+    if (this.audioCapture === null) {
+      this.audioCapture = new AudioCaptureClient(
+        () => this.lastNoteMs,
+        () => status.segment_gap_s * 1000,
+        async (blob, startedMs) => {
+          await api.repertoire.uploadTake(blob, startedMs);
+          // The takes list is per piece and the library view owns it; this only refreshes the
+          // number the device bar reports, so a capture cannot leave a stale count behind.
+          this.takesCaptured += 1;
+        },
+        () => {
+          this.audioDevice = this.audioCapture?.deviceState ?? 'unknown';
+          this.audioNote = this.audioCapture?.lastError ?? null;
+        },
+      );
+    }
+    await this.audioCapture.start();
+    this.audioArmed = this.audioCapture.deviceState === 'ready';
+    this.audioDevice = this.audioCapture.deviceState;
+    this.audioNote = this.audioCapture.lastError;
+  }
 
   /** The running or most recent workout, for the banner and the streak. */
   workout = $state<Workout | null>(null);

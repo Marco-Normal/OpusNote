@@ -267,6 +267,14 @@ export const api = {
     deleteRecording: (mediaId: number) =>
       request<DeleteResult>(`/repertoire/media/${mediaId}`, { method: 'DELETE' }),
 
+    /** Upload one captured take. The server works out the sitting and the segment. */
+    uploadTake: (blob: Blob, startedMs: number) => {
+      const form = new FormData();
+      form.append('file', blob, 'take.webm');
+      form.append('started_ms', String(startedMs));
+      return requestForm<Recording>('/repertoire/takes', form);
+    },
+
     /**
      * Attach a score. Its own endpoint rather than the recording one: a score is
      * validated by its content and stored untouched, so it never reaches ffmpeg.

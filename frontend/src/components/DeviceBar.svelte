@@ -98,6 +98,42 @@
       Latency {app.latencyMs} ms
     </button>
 
+    <!--
+      The audio switch. It asks the server for the segment gap every time it is armed,
+      so a take is cut where the notes are cut rather than at a constant copied here.
+      The readout below is not decoration: a machine with no input, a refused
+      permission and a working microphone are three different facts, and the failure
+      it avoids is a switch that looks armed and records nothing.
+    -->
+    <button
+      class="ghost"
+      data-audio-capture={app.audioArmed ? 'armed' : 'off'}
+      onclick={() => void app.toggleAudioCapture()}
+    >
+      {app.audioArmed ? 'Recording takes' : 'Record takes'}
+    </button>
+    {#if app.audioArmed}
+      <span class="pill good" data-audio-device="ready">
+        microphone ready · mono Opus, about 14 MB/hour
+      </span>
+    {:else if app.audioDevice === 'unavailable'}
+      <span class="pill bad" data-audio-device="unavailable">
+        no audio input on this machine — nothing can be recorded
+      </span>
+    {:else if app.audioDevice === 'denied'}
+      <span class="pill bad" data-audio-device="denied">
+        the browser refused the microphone; on the piano machine the kiosk policy grants it
+      </span>
+    {/if}
+    {#if app.takesCaptured > 0}
+      <span class="muted small" data-takes-captured={app.takesCaptured}>
+        {app.takesCaptured} take{app.takesCaptured === 1 ? '' : 's'} recorded
+      </span>
+    {/if}
+    {#if app.audioNote}
+      <span class="muted small" data-audio-note>{app.audioNote}</span>
+    {/if}
+
     <span
   class="row sound"
   data-sound
