@@ -1277,7 +1277,9 @@ def neglected(conn: sqlite3.Connection, limit: int = 8) -> list[NeglectedPiece]:
         LEFT JOIN composers c ON c.id = p.composer_id
         LEFT JOIN segments g ON g.piece_id = p.id
         LEFT JOIN sittings s ON s.id = g.sitting_id
-        WHERE p.status != 'completed'
+        -- `active` only. `paused` is a deliberate decision by the player and `completed` is a
+        -- piece that is done; reporting either as neglected is the list arguing with them.
+        WHERE p.status = 'active'
         GROUP BY p.id
         ORDER BY (last_played IS NOT NULL), last_played ASC
         LIMIT ?

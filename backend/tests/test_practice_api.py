@@ -941,3 +941,21 @@ def test_the_practice_status_reports_the_segment_gap(client) -> None:
 
     body = client.get("/api/practice/status").json()
     assert body["segment_gap_s"] == settings.segment_gap_s
+
+
+def test_a_paused_piece_does_not_nag(client, conn) -> None:
+    """`paused` is a status the player chose; the neglected list must honour it.
+
+    Found while planning 20d: the query filtered `!= 'completed'`, so a piece deliberately
+    set aside was reported as neglected for ever — the opposite of what the status is for.
+    """
+    seed_piece(conn, "Active Etude")
+    conn.execute("INSERT INTO pieces (title, status) VALUES ('Paused Etude', 'paused')")
+    conn.commit()
+
+    titles = [
+        row["title"]
+        for row in client.get("/api/practice/analytics/summary?days=30").json()["neglected"]
+    ]
+    assert "Active Etude" in titles
+    assert "Paused Etude" not in titles, f"a paused piece must not be reported ({titles})"
