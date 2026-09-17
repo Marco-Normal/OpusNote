@@ -1874,4 +1874,6 @@ bench`) caught it end to end at "and the soft pedal, which is played, leaves the
 `drop_the_pedal_binding_readout.sh` (new) likewise caught only the panel-text assertion, so that
 string is not resting on a check nobody has seen fail; `frontend/dist` was rebuilt after each
 browser falsification, since it is gitignored and `falsify.sh` leaves the broken bundle in it;
-`./check.sh --fast` green.
+`./check.sh --fast` green in 72s, and `./check.sh --full` green in 518s (backend suite, coverage, the
+whole browser tier and the mutation report) against commit `3aee82c`; this paragraph is the only
+change after it.
