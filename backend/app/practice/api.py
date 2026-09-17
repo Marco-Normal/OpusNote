@@ -30,6 +30,7 @@ from .models import (
     PracticeImportReport,
     PracticeKindRequest,
     PracticeStatus,
+    PiecePractice,
     PiecePracticeDetail,
     ResegmentRequest,
     SegmentSummary,
@@ -265,6 +266,21 @@ def analytics_summary(
             "workouts_this_week": stats["workouts_this_week"],
         }
     )
+
+
+@router.get("/pieces", response_model=list[PiecePractice])
+def piece_practice_list(
+    days: int = Query(default=365, ge=1, le=3650),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> list[PiecePractice]:
+    """Per-piece logged practice, for callers that want only this.
+
+    `days` is explicit rather than implied: the library's "least time invested" sort asks for
+    the widest window it can, and a caller that wanted the Log's default would otherwise get
+    a year of it by accident. The numbers come from the same `by_piece` the dashboard uses,
+    so the two can never disagree.
+    """
+    return store.by_piece(conn, days)
 
 
 @router.get("/pieces/{piece_id}", response_model=PiecePracticeDetail)

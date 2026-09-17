@@ -959,3 +959,23 @@ def test_a_paused_piece_does_not_nag(client, conn) -> None:
     ]
     assert "Active Etude" in titles
     assert "Paused Etude" not in titles, f"a paused piece must not be reported ({titles})"
+
+
+def test_the_piece_practice_read_agrees_with_the_dashboard(client, conn) -> None:
+    """Two reads of one number must be one number.
+
+    The library sorts by this, and the Log draws it; if they disagree, one of them is lying
+    about how much a piece has cost.
+    """
+    sitting = recent_sitting(client, FAST_OFFSETS)
+    piece_id = seed_piece(conn, "Sorted Etude")
+    client.patch(
+        f"/api/practice/segments/{segment_of(client, sitting)['id']}",
+        json={"piece_id": piece_id},
+    )
+
+    listed = client.get("/api/practice/pieces?days=365").json()
+    from_dashboard = client.get("/api/practice/analytics/summary?days=365").json()["by_piece"]
+
+    assert listed == from_dashboard, "the two reads agree, field for field"
+    assert listed and listed[0]["title"] == "Sorted Etude"
