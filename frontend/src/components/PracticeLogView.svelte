@@ -156,6 +156,7 @@
 
   async function select(id: number): Promise<void> {
     selectedId = id;
+    app.reflect({ name: 'log', entity: { kind: 'sitting', id } });
     try {
       detail = await api.practice.sitting(id);
     } catch (cause) {
@@ -205,6 +206,12 @@
       importing = false;
     }
   }
+
+  // Open the sitting a link asked for, once. `consumeEntity` clears the request.
+  $effect(() => {
+    const id = app.consumeEntity('sitting');
+    if (id !== null && id !== selectedId) void select(id);
+  });
 
   $effect(() => {
     // Re-read when the window changes or a performance is scored, so the log

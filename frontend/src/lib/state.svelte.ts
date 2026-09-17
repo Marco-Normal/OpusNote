@@ -11,6 +11,7 @@ import { CaptureClient, type CaptureStatus } from './capture';
 import { MidiInput, type MidiDeviceInfo, type MidiOutputInfo } from './midi';
 import { fingerprint, type PortSnapshot } from './midiDevice';
 import { PedalGesture, type ControllerMove, type HandsfreeAction } from './pedalGesture';
+import { parseRoute, routeHash, type Route, type RouteEntity } from './route';
 import { PianoPlayer, sharedPlayer, unlockOnFirstGesture, type Instrument } from './pianoPlayer';
 import type { AppView, HostInfo, PianoStatus, Profile, Workout } from './types';
 
@@ -91,6 +92,25 @@ function readStoredLatency(): number {
 
 class AppState {
   view = $state<AppView>('practice');
+
+  /** The address of what is on screen, and what the URL says. */
+  route = $state<Route>({ name: 'practice' });
+
+  /**
+   * An entity a `syncFromHash` asked to open, waiting for the view that owns it.
+   *
+   * One-shot: the view takes it and it is cleared, so a later re-render cannot re-open
+   * something the player has since closed.
+   */
+  pendingEntity = $state<RouteEntity | null>(null);
+
+  /**
+   * The last hash this app wrote itself.
+   *
+   * `location.hash = …` fires `hashchange` asynchronously, so without this the app would
+   * treat its own write as a navigation request and re-open what it had just described.
+   */
+  private lastWrittenHash: string | null = null;
 
   /** One MIDI input shared by every view; connecting twice would double events. */
   readonly midi = new MidiInput();
@@ -448,7 +468,7 @@ class AppState {
   /** Ask for a journal entry about a sitting, and go where it can be written. */
   writeAboutSitting(pieceId: number, sittingId: number, measured: string | null): void {
     this.journalDraft = { pieceId, sittingId, measured };
-    this.view = 'repertoire';
+    this.navigate({ name: 'repertoire' });
   }
 
   /**
@@ -494,8 +514,7 @@ class AppState {
     }
   }
 
-  setCountInBars(value: number): void {
-    if (value !== 0 && value !== 1 && value !== 2) return;
+  setCountInBars(value: number): void {    if (value !== 0 && value !== 1 && value !== 2) return;
     this.countInBars = value;
     try {
       localStorage.setItem(COUNT_IN_BARS_STORAGE_KEY, String(value));
@@ -520,6 +539,60 @@ class AppState {
     } catch {
       // As above.
     }
+  }
+
+  /**
+   * Move the app, and say so in the URL.
+   *
+   * A hash assignment pushes a history entry, which is exactly what makes the Back
+   * button work; `replaceState` would break the thing this exists for.
+   */
+  navigate(route: Route): void {
+    this.route = route;
+    this.view = route.name;
+    this.pendingEntity = route.entity ?? null;
+    if (typeof location === 'undefined') return;
+    const hash = routeHash(route);
+    if (location.hash === hash) return;
+    this.lastWrittenHash = hash;
+    location.hash = hash;
+  }
+
+  /** Describe state that has already changed, without asking any view to open anything. */
+  reflect(route: Route): void {
+    this.route = route;
+    if (typeof location === 'undefined') return;
+    const hash = routeHash(route);
+    if (location.hash === hash) return;
+    this.lastWrittenHash = hash;
+    location.hash = hash;
+  }
+
+  /** The URL changed from outside: Back, forward, or a pasted link. */
+  syncFromHash(): void {
+    if (typeof location === 'undefined') return;
+    if (this.lastWrittenHash === location.hash) {
+      this.lastWrittenHash = null;
+      return;
+    }
+    const parsed = parseRoute(location.hash);
+    if (parsed === null) return;
+    this.route = parsed;
+    this.view = parsed.name;
+    this.pendingEntity = parsed.entity ?? null;
+  }
+
+  /**
+   * A view takes the entity it was asked to open, exactly once.
+   *
+   * Returns null when the pending entity belongs to another view or has already been
+   * taken, so a view can call it unconditionally from an effect.
+   */
+  consumeEntity(kind: RouteEntity['kind']): number | null {
+    if (this.pendingEntity?.kind !== kind) return null;
+    const id = this.pendingEntity.id;
+    this.pendingEntity = null;
+    return id;
   }
 
   async bootstrap(): Promise<void> {

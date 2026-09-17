@@ -56,6 +56,7 @@
   async function openAttempt(id: number): Promise<void> {
     try {
       attempt = await api.performance(id);
+      app.reflect({ name: 'stats', entity: { kind: 'attempt', id } });
     } catch (cause) {
       error = cause instanceof Error ? cause.message : String(cause);
     }
@@ -78,6 +79,12 @@
   $effect(() => {
     app.revision;
     void load();
+  });
+
+  // Open the attempt a link asked for, once. `consumeEntity` clears the request.
+  $effect(() => {
+    const id = app.consumeEntity('attempt');
+    if (id !== null && id !== attempt?.performance_id) void openAttempt(id);
   });
 
   async function reset(): Promise<void> {
@@ -183,7 +190,7 @@
     {#if !stats.summary.calibration_complete}
       <div class="row">
         <span class="pill warn">Calibration incomplete — ratings are still rough</span>
-        <button onclick={() => (app.view = 'calibrate')}>Calibrate</button>
+        <button onclick={() => app.navigate({ name: 'calibrate' })}>Calibrate</button>
       </div>
     {/if}
   {/if}

@@ -129,6 +129,17 @@
       segments = new Map();
       return;
     }
+    await show(pieceId);
+  }
+
+  /**
+   * Load a piece without the click-to-close toggle.
+   *
+   * `open()` closes a row that is already open, which is right for a click and wrong for a
+   * deep link: following `#/repertoire/piece/12` for the piece already on screen must leave
+   * it open, not shut it.
+   */
+  async function show(pieceId: number): Promise<void> {
     detailLoading = true;
     error = null;
     try {
@@ -142,6 +153,13 @@
       detailLoading = false;
     }
   }
+
+  // Open the piece a link asked for, once. `consumeEntity` clears the request, so this
+  // cannot re-open something the player has since closed.
+  $effect(() => {
+    const id = app.consumeEntity('piece');
+    if (id !== null) void show(id);
+  });
 
   /**
    * The segments the open piece's takes were played in.
@@ -595,7 +613,16 @@
               class="row-piece"
               class:selected={detail?.id === piece.id}
               aria-expanded={detail?.id === piece.id}
-              onclick={() => void open(piece.id)}
+              onclick={() => {
+                // Describe the state the click is about to produce, not the one it is in: a
+                // second click closes the piece, and the URL must not keep naming it.
+                app.reflect(
+                  detail?.id === piece.id
+                    ? { name: 'repertoire' }
+                    : { name: 'repertoire', entity: { kind: 'piece', id: piece.id } },
+                );
+                void open(piece.id);
+              }}
             >
               <span class="title">
                 {piece.title}
@@ -652,7 +679,13 @@
                   onclick={() => (confirmingDelete = true)}>Delete</button
                 >
               {/if}
-              <button class="ghost" onclick={() => (detail = null)}>Close</button>
+              <button
+                class="ghost"
+                onclick={() => {
+                  detail = null;
+                  app.reflect({ name: 'repertoire' });
+                }}>Close</button
+              >
             </div>
           </div>
 
@@ -685,7 +718,7 @@
                   onclick={() => {
                     if (!detail) return;
                     app.pinKey(suggestion.suggested_key, detail.title);
-                    app.view = 'practice';
+                    app.navigate({ name: 'practice' });
                   }}
                 >
                   Practise in {suggestion.suggested_key}

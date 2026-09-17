@@ -11,6 +11,7 @@
   import WorkoutBar from './components/WorkoutBar.svelte';
   import { app } from './lib/state.svelte';
   import type { AppView } from './lib/types';
+  import type { Route } from './lib/route';
 
   const tabs: { id: AppView; label: string }[] = [
     { id: 'practice', label: 'Practice' },
@@ -20,7 +21,14 @@
     { id: 'repertoire', label: 'Repertoire' },
   ];
 
+  function go(route: Route): void {
+    app.navigate(route);
+  }
+
   onMount(() => {
+    // A pasted link has to be honoured before the first paint of a view, so this runs
+    // with the other boot work rather than in an effect that may fire twice.
+    app.syncFromHash();
     void app.bootstrap().then(() => app.startMidi());
   });
 
@@ -47,7 +55,7 @@
           <button
             class:active={app.view === tab.id}
             aria-current={app.view === tab.id ? 'page' : undefined}
-            onclick={() => (app.view = tab.id)}
+            onclick={() => go({ name: tab.id })}
           >
             {tab.label}
           </button>
@@ -89,6 +97,8 @@
     setting or with the piano's own sound off for the cleanest MIDI timing.
   </footer>
 </div>
+
+<svelte:window onhashchange={() => app.syncFromHash()} />
 
 <style>
   .shell {

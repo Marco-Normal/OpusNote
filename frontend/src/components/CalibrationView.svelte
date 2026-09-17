@@ -242,7 +242,7 @@
         profile from the Progress tab lets you calibrate again.
       </p>
       <div class="row">
-        <button class="primary" onclick={() => (app.view = 'practice')}>Go to practice</button>
+        <button class="primary" onclick={() => app.navigate({ name: 'practice' })}>Go to practice</button>
         <button onclick={reset}>Run calibration again</button>
       </div>
     {:else}
@@ -259,7 +259,7 @@
     <h2>Calibration complete</h2>
     <p class="muted">Your skill ratings are set. From here every exercise adapts to your results.</p>
     <div class="row">
-      <button class="primary" onclick={() => (app.view = 'practice')}>Start practising</button>
+      <button class="primary" onclick={() => app.navigate({ name: 'practice' })}>Start practising</button>
       <button onclick={() => void app.refreshProfile()}>Refresh profile</button>
     </div>
   </section>
