@@ -1483,6 +1483,74 @@ def scenario_repertoire(browser) -> None:
     page.wait_for_selector(".detail-title", timeout=10_000)
     check(True, "and an entry in the feed leads back to its piece")
 
+    # --- tags, ratings: the journal is filterable and comparable ---
+    page.fill('.journal-form textarea[aria-label="Journal entry"]', "The coda needs slow work.")
+    page.fill('.journal-form input[aria-label="Tags for this entry"]', "coda, slow")
+    page.select_option('.journal-form select[aria-label="How hard it felt"]', "4")
+    with page.expect_response(lambda r: "/journal" in r.url and r.request.method == "POST"):
+        page.click("[data-journal-add]")
+    page.wait_for_timeout(500)
+    check(
+        page.locator("[data-tag='coda']").count() >= 1,
+        "the entry carries the tag it was given",
+    )
+    check(
+        page.locator("[data-difficulty='4']").count() >= 1,
+        "and the difficulty it was given",
+    )
+
+    # --- the feed filters by a *label*, and the label is a control you can click ---
+    page.click(".row-piece.selected")
+    page.wait_for_selector("[data-journal-feed]", timeout=10_000)
+    page.fill('[aria-label="Filter the journal by tag"]', "coda")
+    page.wait_for_timeout(600)
+    check(
+        page.locator("[data-journal-feed] [data-tag='coda']").count() >= 1,
+        "the feed can be filtered by a tag",
+    )
+
+    # --- a passage, and the bars are the player's own ---
+    page.click("[data-feed-entry] .piece-link")
+    page.wait_for_selector(".detail-title", timeout=10_000)
+    page.fill('[aria-label="First bar"]', "12")
+    page.fill('[aria-label="Last bar"]', "14")
+    page.fill('[aria-label="Note"]', "left-hand leaps")
+    with page.expect_response(lambda r: r.url.endswith("/passages")):
+        click_button(page, "Add passage")
+    # Wait for the *state* rather than the section: the section is always in the DOM, so
+    # reading it straight after the POST would race the refresh and read the empty state.
+    page.wait_for_selector("[data-passage]", timeout=10_000)
+    check(
+        "bars 12\u201314" in page.inner_text("[data-passages]"),
+        "the passage is listed with the bars the player typed",
+    )
+    with page.expect_response(lambda r: "/passages/" in r.url):
+        click_button(page, "Worked on it")
+    page.wait_for_function(
+        "() => !document.querySelector('[data-passages]')"
+        ".textContent.includes('not worked on yet')",
+        timeout=10_000,
+    )
+    check(
+        "not worked on yet" not in page.inner_text("[data-passages]"),
+        "and marking it worked on stops it reading as untouched",
+    )
+
+    # --- a paused piece is not reported as neglected ---
+    api(f"/api/repertoire/pieces/{nocturne['id']}", "PATCH", {"status": "paused"})
+    click_button(page, "Log")
+    page.wait_for_selector("text=Neglected", timeout=20_000)
+    check(
+        nocturne["title"] not in page.inner_text(".neglected"),
+        "a paused piece is left out of the neglected list",
+    )
+
+    # Back to the piece the rest of this scenario works on.
+    click_button(page, "Repertoire")
+    page.wait_for_selector(".row-piece", timeout=20_000)
+    page.locator(".row-piece", has_text=nocturne["title"]).first.click()
+    page.wait_for_selector(".detail-title", timeout=10_000)
+
     # Editing a field changes only that field.
     click_button(page, "Edit")
     page.wait_for_selector(".editor", timeout=10_000)

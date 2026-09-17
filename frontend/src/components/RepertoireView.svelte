@@ -684,6 +684,26 @@
   });
 </script>
 
+{#snippet entryMeta(entry: JournalEntry)}
+  {#each entry.tags as tag (tag)}
+    <button
+      class="pill"
+      data-tag={tag}
+      title="Filter the journal by this tag"
+      onclick={() => (feedTag = tag)}>{tag}</button
+    >
+  {/each}
+  {#if entry.difficulty !== null}
+    <span class="pill mono" data-difficulty={entry.difficulty}>hard {entry.difficulty}/5</span>
+  {/if}
+  {#if entry.fluency !== null}
+    <span class="pill mono" data-fluency={entry.fluency}>went {entry.fluency}/5</span>
+  {/if}
+  {#if entry.media_id !== null}
+    <span class="pill" data-journal-take={entry.media_id}>written about a take</span>
+  {/if}
+{/snippet}
+
 <section class="card panel">
   <div class="spread wrap">
     <div>
@@ -1036,29 +1056,7 @@
                           >about a logged session</span
                         >
                       {/if}
-                      {#each entry.tags as tag (tag)}
-                        <button
-                          class="pill"
-                          data-tag={tag}
-                          title="Filter the journal by this tag"
-                          onclick={() => (feedTag = tag)}>{tag}</button
-                        >
-                      {/each}
-                      {#if entry.difficulty !== null}
-                        <span class="pill mono" data-difficulty={entry.difficulty}>
-                          hard {entry.difficulty}/5
-                        </span>
-                      {/if}
-                      {#if entry.fluency !== null}
-                        <span class="pill mono" data-fluency={entry.fluency}>
-                          went {entry.fluency}/5
-                        </span>
-                      {/if}
-                      {#if entry.media_id !== null}
-                        <span class="pill" data-journal-take={entry.media_id}>
-                          written about a take
-                        </span>
-                      {/if}
+                      {@render entryMeta(entry)}
                     </span>
                     <span class="row">
                       {#if editingEntry === entry.id}
@@ -1196,7 +1194,11 @@
               aria-label="Journal entry"
               required
             ></textarea>
-            <button type="submit" disabled={savingJournal || !journalContent.trim()}>
+            <button
+              type="submit"
+              data-journal-add
+              disabled={savingJournal || !journalContent.trim()}
+            >
               {savingJournal ? '…' : 'Add'}
             </button>
           </form>
@@ -1445,6 +1447,7 @@
                     {#if entry.practice_minutes}
                       <span class="pill">{entry.practice_minutes} min</span>
                     {/if}
+                    {@render entryMeta(entry)}
                   </div>
                   <p class="entry-body">{entry.content}</p>
                 </li>
