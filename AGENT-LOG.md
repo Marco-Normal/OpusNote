@@ -1615,7 +1615,14 @@ sweep's SELECT fixed a snapshot and a commit from another connection in between 
 retry, on a plain piece GET (reproduced with two threads in three lines). `db.transaction` gained
 `immediate=True` (`BEGIN IMMEDIATE`) and it is used by the sweep, by the take insert — which had the
 same read-then-write shape behind its documented 409 — and by `ensure_segments`, which a read route
-now calls. (2) Arming while the note log was paused produced takes the server refused and the client
+now calls. That last change made the pre-existing half of the defect surface immediately: the full
+tier then failed with `sqlite3.OperationalError: database is locked` at `practice/store.py`'s `ingest`,
+because **every** write transaction in the practice store reads a row and then writes what it read
+(`_find_sitting` then INSERT, `_segment_or_raise` then UPDATE, and so on), so each could have its
+snapshot invalidated by any other writer. All nine are now `BEGIN IMMEDIATE`, which is the invariant
+`db.transaction` documents; the full browser suite is green again. This is a pre-existing latent bug
+in a design that explicitly has two machines writing the file, not something written here — but a
+read route that writes is what made it reproducible. (2) Arming while the note log was paused produced takes the server refused and the client
 silently discarded, which is the exact failure 20e-D1 exists to prevent: the switch now refuses to arm
 without logging and MIDI, saying why, and pausing the log stops an armed switch rather than leaving it
 lying; the browser scenario asserts the refusal. (3) `close()` could strand itself for ever if the

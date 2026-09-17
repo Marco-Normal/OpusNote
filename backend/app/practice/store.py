@@ -177,7 +177,11 @@ def ingest(batch: EventBatch, db_path: Path | None = None) -> IngestResult:
     pedals_accepted = 0
     pedals_ignored = 0
     sitting_id: int | None = None
-    with db.transaction(db_path) as conn:
+    # `immediate`: every one of these reads a row and then writes what it read, and the app's
+    # own design has two machines writing this file. A deferred transaction would fix its snapshot
+    # at the first SELECT and then fail the write as "database is locked" if anything committed in
+    # between — SQLITE_BUSY_SNAPSHOT, which `busy_timeout` does not retry.
+    with db.transaction(db_path, immediate=True) as conn:
         for note in notes:
             row = _find_sitting(conn, note.epoch_ms, gap_ms)
             if row is None:
@@ -292,7 +296,11 @@ def close_open_sitting(
     was open" from "you are still playing" without asking a second question.
     """
     now = int(now_ms if now_ms is not None else time.time() * 1000)
-    with db.transaction(db_path) as conn:
+    # `immediate`: every one of these reads a row and then writes what it read, and the app's
+    # own design has two machines writing this file. A deferred transaction would fix its snapshot
+    # at the first SELECT and then fail the write as "database is locked" if anything committed in
+    # between — SQLITE_BUSY_SNAPSHOT, which `busy_timeout` does not retry.
+    with db.transaction(db_path, immediate=True) as conn:
         sitting = conn.execute(
             "SELECT id, ended_ms FROM sittings"
             " WHERE closed_ms IS NULL AND ended_ms >= ?"
@@ -643,7 +651,11 @@ def set_practice_kind(
     * ``decline`` clears an offer. Declining nothing is a deliberate no-op rather than a
       409: a double-click is not an error.
     """
-    with db.transaction(db_path) as conn:
+    # `immediate`: every one of these reads a row and then writes what it read, and the app's
+    # own design has two machines writing this file. A deferred transaction would fix its snapshot
+    # at the first SELECT and then fail the write as "database is locked" if anything committed in
+    # between — SQLITE_BUSY_SNAPSHOT, which `busy_timeout` does not retry.
+    with db.transaction(db_path, immediate=True) as conn:
         row = conn.execute(
             "SELECT id, sitting_id, practice_kind, practice_kind_basis FROM segments WHERE id = ?",
             (segment_id,),
@@ -925,7 +937,11 @@ def assign_piece(
     segment_id: int, piece_id: int | None, db_path: Path | None = None
 ) -> list[SegmentSummary]:
     """Tag a segment with a piece, or clear it with ``piece_id = None``."""
-    with db.transaction(db_path) as conn:
+    # `immediate`: every one of these reads a row and then writes what it read, and the app's
+    # own design has two machines writing this file. A deferred transaction would fix its snapshot
+    # at the first SELECT and then fail the write as "database is locked" if anything committed in
+    # between — SQLITE_BUSY_SNAPSHOT, which `busy_timeout` does not retry.
+    with db.transaction(db_path, immediate=True) as conn:
         row = _segment_or_raise(conn, segment_id)
         if piece_id is not None:
             known = conn.execute("SELECT 1 FROM pieces WHERE id = ?", (piece_id,)).fetchone()
@@ -942,7 +958,11 @@ def split_segment(
     segment_id: int, at_ms: int, db_path: Path | None = None
 ) -> list[SegmentSummary]:
     """Split at a sitting-relative instant; boundaries stay tight to notes."""
-    with db.transaction(db_path) as conn:
+    # `immediate`: every one of these reads a row and then writes what it read, and the app's
+    # own design has two machines writing this file. A deferred transaction would fix its snapshot
+    # at the first SELECT and then fail the write as "database is locked" if anything committed in
+    # between — SQLITE_BUSY_SNAPSHOT, which `busy_timeout` does not retry.
+    with db.transaction(db_path, immediate=True) as conn:
         row = _segment_or_raise(conn, segment_id)
         start_ms = int(row["start_ms"])
         end_ms = int(row["end_ms"])
@@ -999,7 +1019,11 @@ def merge_segments(
     """Merge two adjacent segments of one sitting."""
     if segment_id == other_id:
         raise InvalidRequest("cannot merge a segment with itself")
-    with db.transaction(db_path) as conn:
+    # `immediate`: every one of these reads a row and then writes what it read, and the app's
+    # own design has two machines writing this file. A deferred transaction would fix its snapshot
+    # at the first SELECT and then fail the write as "database is locked" if anything committed in
+    # between — SQLITE_BUSY_SNAPSHOT, which `busy_timeout` does not retry.
+    with db.transaction(db_path, immediate=True) as conn:
         first = _segment_or_raise(conn, segment_id)
         second = _segment_or_raise(conn, other_id)
         if int(first["sitting_id"]) != int(second["sitting_id"]):
@@ -1056,7 +1080,11 @@ def resegment_sitting(
     db_path: Path | None = None,
 ) -> list[SegmentSummary]:
     """Recompute boundaries, discarding them. The only destructive path."""
-    with db.transaction(db_path) as conn:
+    # `immediate`: every one of these reads a row and then writes what it read, and the app's
+    # own design has two machines writing this file. A deferred transaction would fix its snapshot
+    # at the first SELECT and then fail the write as "database is locked" if anything committed in
+    # between — SQLITE_BUSY_SNAPSHOT, which `busy_timeout` does not retry.
+    with db.transaction(db_path, immediate=True) as conn:
         sitting = conn.execute(
             "SELECT id FROM sittings WHERE id = ?", (sitting_id,)
         ).fetchone()
@@ -1840,7 +1868,11 @@ def autotag_unlabelled(db_path: Path | None = None) -> AutotagReport:
     matcher existed. It writes the confident band only, exactly like the automatic
     pass, so re-running it can never invent a label it would not have written.
     """
-    with db.transaction(db_path) as conn:
+    # `immediate`: every one of these reads a row and then writes what it read, and the app's
+    # own design has two machines writing this file. A deferred transaction would fix its snapshot
+    # at the first SELECT and then fail the write as "database is locked" if anything committed in
+    # between — SQLITE_BUSY_SNAPSHOT, which `busy_timeout` does not retry.
+    with db.transaction(db_path, immediate=True) as conn:
         rows = conn.execute(
             f"SELECT {_SEGMENT_COLUMNS} FROM segments g"
             " WHERE g.piece_id IS NULL"
@@ -1974,7 +2006,11 @@ def resolve_identification(
     if action not in {"accept", "reject", "dismiss"}:
         raise InvalidRequest(f"{action!r} is not an identification outcome")
 
-    with db.transaction(db_path) as conn:
+    # `immediate`: every one of these reads a row and then writes what it read, and the app's
+    # own design has two machines writing this file. A deferred transaction would fix its snapshot
+    # at the first SELECT and then fail the write as "database is locked" if anything committed in
+    # between — SQLITE_BUSY_SNAPSHOT, which `busy_timeout` does not retry.
+    with db.transaction(db_path, immediate=True) as conn:
         row = _segment_or_raise(conn, segment_id)
         inferred = row["identified_by"] == "similarity"
 
