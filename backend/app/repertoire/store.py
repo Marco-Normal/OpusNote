@@ -146,7 +146,74 @@ def get_piece(conn: sqlite3.Connection, piece_id: int) -> dict[str, Any] | None:
         )
     ]
     piece["media"] = list_media(conn, piece_id=piece_id)
+    piece["passages"] = list_passages(conn, piece_id)
     return piece
+
+
+def list_passages(conn: sqlite3.Connection, piece_id: int) -> list[dict[str, Any]]:
+    """A piece's focus passages, the least recently worked on first.
+
+    Never-touched passages sort first: "I have not looked at this at all" is a stronger
+    reason to be shown something than "I looked at it three weeks ago". Ties break on bar
+    number so the order is stable between reads.
+    """
+    rows = conn.execute(
+        """
+        SELECT id, piece_id, start_bar, end_bar, label, source, media_id,
+               created_at, last_worked_on
+        FROM piece_passages
+        WHERE piece_id = ?
+        ORDER BY (last_worked_on IS NOT NULL), last_worked_on ASC, start_bar ASC, id ASC
+        """,
+        (piece_id,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def create_passage(conn: sqlite3.Connection, piece_id: int, fields: dict[str, Any]) -> int:
+    cursor = conn.execute(
+        """
+        INSERT INTO piece_passages
+            (piece_id, start_bar, end_bar, label, source, media_id)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            piece_id,
+            fields["start_bar"],
+            fields["end_bar"],
+            fields.get("label"),
+            fields.get("source", "manual"),
+            fields.get("media_id"),
+        ),
+    )
+    return int(cursor.lastrowid)
+
+
+def get_passage(conn: sqlite3.Connection, passage_id: int) -> dict[str, Any] | None:
+    row = conn.execute(
+        "SELECT id, piece_id, start_bar, end_bar, label, source, media_id,"
+        " created_at, last_worked_on FROM piece_passages WHERE id = ?",
+        (passage_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def update_passage(conn: sqlite3.Connection, passage_id: int, changes: dict[str, Any]) -> int:
+    allowed = ("start_bar", "end_bar", "label", "last_worked_on")
+    updates = {key: value for key, value in changes.items() if key in allowed}
+    if not updates:
+        return conn.execute(
+            "SELECT COUNT(*) FROM piece_passages WHERE id = ?", (passage_id,)
+        ).fetchone()[0]
+    assignments = ", ".join(f"{column} = :{column}" for column in updates)
+    return conn.execute(
+        f"UPDATE piece_passages SET {assignments} WHERE id = :passage_id",
+        {**updates, "passage_id": passage_id},
+    ).rowcount
+
+
+def delete_passage(conn: sqlite3.Connection, passage_id: int) -> int:
+    return conn.execute("DELETE FROM piece_passages WHERE id = ?", (passage_id,)).rowcount
 
 
 def list_media(conn: sqlite3.Connection, *, piece_id: int | None = None) -> list[dict[str, Any]]:

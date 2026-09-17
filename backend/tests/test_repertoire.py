@@ -1551,3 +1551,73 @@ def test_a_journal_entry_can_point_at_a_take_and_survives_it_being_deleted(clien
     reread = client.get(f"/api/repertoire/pieces/{piece_id}").json()
     assert reread["journal"][0]["media_id"] is None, "deleting the take must not delete the prose"
     assert reread["journal"][0]["content"] == "take 3 is the one"
+
+
+def test_a_passage_can_be_typed_and_worked_on(client) -> None:
+    piece = client.post("/api/repertoire/pieces", json={"title": "Etude"}).json()
+    created = client.post(
+        f"/api/repertoire/pieces/{piece['id']}/passages",
+        json={"start_bar": 12, "end_bar": 14, "label": "left-hand leaps"},
+    )
+    assert created.status_code == 201, created.text
+    passage = created.json()
+    assert passage["source"] == "manual"
+    assert passage["media_id"] is None
+
+    worked = client.patch(
+        f"/api/repertoire/passages/{passage['id']}", json={"last_worked_on": "2026-03-07"}
+    )
+    assert worked.json()["last_worked_on"] == "2026-03-07"
+
+    detail = client.get(f"/api/repertoire/pieces/{piece['id']}").json()
+    assert detail["passages"][0]["label"] == "left-hand leaps"
+
+
+def test_a_passage_seeded_from_a_loop_records_the_recording(client) -> None:
+    piece = client.post("/api/repertoire/pieces", json={"title": "Ballade"}).json()
+    with db.transaction(settings.db_path) as conn:
+        conn.execute(
+            "INSERT INTO media (id, piece_id, kind, file_name, loop_start_s, loop_end_s)"
+            " VALUES (55, ?, 'recording', 'y.ogg', 12.0, 20.0)",
+            (piece["id"],),
+        )
+    created = client.post(
+        f"/api/repertoire/pieces/{piece['id']}/passages",
+        json={"start_bar": 9, "end_bar": 11, "source": "loop", "media_id": 55},
+    )
+    assert created.status_code == 201, created.text
+    passage = created.json()
+    assert passage["source"] == "loop", "the provenance is recorded, not guessed"
+    assert passage["media_id"] == 55
+
+    with db.transaction(settings.db_path) as conn:
+        conn.execute("DELETE FROM media WHERE id = 55")
+    after = client.get(f"/api/repertoire/pieces/{piece['id']}").json()["passages"][0]
+    assert after["media_id"] is None, "deleting the recording leaves the passage"
+    assert after["source"] == "loop", "and its provenance is still what it was"
+
+
+def test_a_passage_whose_end_is_before_its_start_is_refused(client) -> None:
+    piece = client.post("/api/repertoire/pieces", json={"title": "Waltz"}).json()
+    response = client.post(
+        f"/api/repertoire/pieces/{piece['id']}/passages",
+        json={"start_bar": 14, "end_bar": 12},
+    )
+    assert response.status_code == 422
+
+
+def test_passages_sort_the_never_touched_first(client) -> None:
+    piece = client.post("/api/repertoire/pieces", json={"title": "Sonata"}).json()
+    worked = client.post(
+        f"/api/repertoire/pieces/{piece['id']}/passages",
+        json={"start_bar": 1, "end_bar": 4, "label": "worked"},
+    ).json()
+    client.patch(
+        f"/api/repertoire/passages/{worked['id']}", json={"last_worked_on": "2026-03-08"}
+    )
+    client.post(
+        f"/api/repertoire/pieces/{piece['id']}/passages",
+        json={"start_bar": 30, "end_bar": 32, "label": "untouched"},
+    )
+    rows = client.get(f"/api/repertoire/pieces/{piece['id']}").json()["passages"]
+    assert [row["label"] for row in rows] == ["untouched", "worked"]

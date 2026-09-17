@@ -41,6 +41,9 @@ from .models import (
     JournalUpdate,
     MediaOut,
     MediaUpdate,
+    PassageCreate,
+    PassageOut,
+    PassageUpdate,
     PieceCreate,
     PieceDetail,
     PieceSummary,
@@ -346,6 +349,63 @@ def delete_journal_entry(entry_id: int) -> DeleteResult:
         deleted = store.delete_journal_entry(conn, entry_id)
     if deleted == 0:
         raise HTTPException(status_code=404, detail=f"no journal entry {entry_id}")
+    return DeleteResult(deleted=True)
+
+
+# --------------------------------------------------------------------------
+# Focus passages
+# --------------------------------------------------------------------------
+
+
+@router.post("/pieces/{piece_id}/passages", response_model=PassageOut, status_code=201)
+def create_passage(piece_id: int, body: PassageCreate) -> PassageOut:
+    """Add a passage to a piece.
+
+    `source='loop'` with a `media_id` records that the passage was seeded from that
+    recording's A/B markers. The bars are still the player's: the app has no score to convert
+    seconds into bars with, and inventing one would be a claim it cannot support.
+    """
+    with db.transaction(settings.db_path) as conn:
+        if not store.piece_exists(conn, piece_id):
+            raise HTTPException(status_code=404, detail=f"no piece {piece_id}")
+        _validate_media(conn, body.media_id)
+        passage_id = store.create_passage(conn, piece_id, body.model_dump())
+        row = store.get_passage(conn, passage_id)
+    assert row is not None
+    return PassageOut(**row)
+
+
+@router.patch("/passages/{passage_id}", response_model=PassageOut)
+def update_passage(passage_id: int, body: PassageUpdate) -> PassageOut:
+    changes = body.model_dump(exclude_unset=True)
+    if not changes:
+        raise HTTPException(status_code=422, detail="no fields to change")
+    with db.transaction(settings.db_path) as conn:
+        current = store.get_passage(conn, passage_id)
+        if current is None:
+            raise HTTPException(status_code=404, detail=f"no passage {passage_id}")
+        start = changes.get("start_bar", current["start_bar"])
+        end = changes.get("end_bar", current["end_bar"])
+        if end < start:
+            raise HTTPException(
+                status_code=422, detail=f"end_bar {end} is before start_bar {start}"
+            )
+        store.update_passage(conn, passage_id, changes)
+        row = store.get_passage(conn, passage_id)
+    assert row is not None
+    return PassageOut(**row)
+
+
+@router.delete(
+    "/passages/{passage_id}",
+    response_model=DeleteResult,
+    dependencies=[Depends(require_loopback)],
+)
+def delete_passage(passage_id: int) -> DeleteResult:
+    with db.transaction(settings.db_path) as conn:
+        deleted = store.delete_passage(conn, passage_id)
+    if deleted == 0:
+        raise HTTPException(status_code=404, detail=f"no passage {passage_id}")
     return DeleteResult(deleted=True)
 
 

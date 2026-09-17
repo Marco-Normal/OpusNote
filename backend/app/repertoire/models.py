@@ -100,6 +100,7 @@ class PieceDetail(PieceSummary):
     created_at: str | None = None
     journal: list[JournalEntryOut] = Field(default_factory=list)
     media: list[MediaOut] = Field(default_factory=list)
+    passages: list[PassageOut] = Field(default_factory=list)
 
 
 class ImportRequest(BaseModel):
@@ -237,6 +238,48 @@ class JournalUpdate(BaseModel):
     @classmethod
     def _update_tags(cls, value: list[str] | None) -> list[str] | None:
         return None if value is None else _clean_tags(value)
+
+
+#: Where a passage came from. `loop` means it was seeded from a recording's A/B markers, and
+#: `media_id` then names that recording; `manual` means it was typed. The app never converts
+#: seconds to bars — there is no score alignment (20-D7) — so seeding records provenance only.
+PassageSource = Literal["manual", "loop"]
+
+
+class PassageOut(BaseModel):
+    id: int
+    piece_id: int
+    start_bar: int
+    end_bar: int
+    label: str | None = None
+    source: PassageSource
+    media_id: int | None = None
+    created_at: str | None = None
+    last_worked_on: str | None = None
+
+
+class PassageCreate(BaseModel):
+    start_bar: int = Field(ge=1, le=10_000)
+    end_bar: int = Field(ge=1, le=10_000)
+    label: str | None = Field(default=None, max_length=200)
+    source: PassageSource = "manual"
+    media_id: int | None = None
+
+    @model_validator(mode="after")
+    def _ordered(self) -> "PassageCreate":
+        if self.end_bar < self.start_bar:
+            raise ValueError("end_bar must not be before start_bar")
+        return self
+
+
+class PassageUpdate(BaseModel):
+    """PATCH body. Unset fields are left alone; an explicit null clears the column."""
+
+    start_bar: int | None = Field(default=None, ge=1, le=10_000)
+    end_bar: int | None = Field(default=None, ge=1, le=10_000)
+    label: str | None = Field(default=None, max_length=200)
+    #: The date the player says they worked on it, or an explicit null to forget that.
+    last_worked_on: str | None = Field(default=None, pattern=DATE_PATTERN)
 
 
 class DeleteResult(BaseModel):
