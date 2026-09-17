@@ -7,6 +7,7 @@
     ImportReport,
     JournalEntry,
     PieceDetail,
+    PiecePractice,
     PieceSummary,
     PracticeSuggestion,
     RepertoireStatus,
@@ -18,10 +19,49 @@
   import LineChart from './LineChart.svelte';
   import ScoreViewer from './ScoreViewer.svelte';
   import RecordingPlayer from './RecordingPlayer.svelte';
+  import PassageList from './PassageList.svelte';
   import TakeList from './TakeList.svelte';
   import type { Loop } from '../lib/waveform';
 
   type Grouping = 'none' | 'composer' | 'difficulty';
+
+  const VIEW_STORAGE_KEY = 'srt.repertoire.view';
+  const SORT_KEYS = ['title', 'composer', 'last_played', 'least_time', 'most_time'] as const;
+  type SortKey = (typeof SORT_KEYS)[number];
+  const GROUPINGS = ['none', 'composer', 'difficulty'] as const;
+
+  /**
+   * The library's filters and sort, remembered across reloads.
+   *
+   * Validated rather than trusted: the value is whatever a previous version of this page
+   * wrote, and an unknown sort key would silently leave the list in an order nobody chose.
+   */
+  function readView(): { status: string; composer: string; grouping: Grouping; sort: SortKey } {
+    const fallback = {
+      status: '',
+      composer: '',
+      grouping: 'composer' as Grouping,
+      sort: 'title' as SortKey,
+    };
+    try {
+      const raw = localStorage.getItem(VIEW_STORAGE_KEY);
+      if (!raw) return fallback;
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      return {
+        status: typeof parsed.status === 'string' ? parsed.status : '',
+        composer: typeof parsed.composer === 'string' ? parsed.composer : '',
+        grouping: (GROUPINGS as readonly string[]).includes(parsed.grouping as string)
+          ? (parsed.grouping as Grouping)
+          : 'composer',
+        sort: (SORT_KEYS as readonly string[]).includes(parsed.sort as string)
+          ? (parsed.sort as SortKey)
+          : 'title',
+      };
+    } catch {
+      // Storage may be unavailable (private mode) or hold something that is not ours.
+      return fallback;
+    }
+  }
 
   let status = $state<RepertoireStatus | null>(null);
   let pieces = $state<PieceSummary[]>([]);
@@ -29,13 +69,17 @@
   let suggestions = $state<Map<number, PracticeSuggestion>>(new Map());
   let detail = $state<PieceDetail | null>(null);
 
+  const savedView = readView();
   let search = $state('');
-  let statusFilter = $state('');
-  let composerFilter = $state('');
-  let grouping = $state<Grouping>('composer');
+  let statusFilter = $state(savedView.status);
+  let composerFilter = $state(savedView.composer);
+  let grouping = $state<Grouping>(savedView.grouping);
+  let sort = $state<SortKey>(savedView.sort);
 
   let loading = $state(true);
   let detailLoading = $state(false);
+  /** A write that takes more than one request, so the controls that start it can wait. */
+  let busy = $state(false);
   let error = $state<string | null>(null);
   let importing = $state(false);
   // null = closed, 'new' = creating, a PieceDetail = editing that piece.
@@ -58,13 +102,29 @@
   let feedEntries = $state<JournalEntry[]>([]);
   let feedSearch = $state('');
   let feedTimer: ReturnType<typeof setTimeout> | null = null;
+  let feedTag = $state('');
+  let journalTags = $state('');
+  let journalDifficulty = $state<number | null>(null);
+  let journalFluency = $state<number | null>(null);
+  //: The take the entry being written is about, set by the recording's own button.
+  let journalTake = $state<number | null>(null);
+  let journalForm = $state<HTMLElement | null>(null);
+  let editTags = $state('');
+  let editDifficulty = $state<number | null>(null);
+  let editFluency = $state<number | null>(null);
+  /** Per-piece logged minutes, the widest window the read allows, for the effort sorts. */
+  let practiceByPiece = $state<PiecePractice[]>([]);
+  /** Multi-select for bulk status edits. */
+  let selected = $state<Set<number>>(new Set());
+  let bulkStatus = $state<'active' | 'paused' | 'completed'>('paused');
 
   $effect(() => {
     // Read `feedSearch` here so this re-runs when it changes, and pass the value into
     // the debounce so typing a word does not fire a query per keystroke.
     const term = feedSearch;
+    const tag = feedTag;
     if (feedTimer) clearTimeout(feedTimer);
-    feedTimer = setTimeout(() => void loadFeed(term), 200);
+    feedTimer = setTimeout(() => void loadFeed(term, tag), 200);
     return () => {
       if (feedTimer) clearTimeout(feedTimer);
     };
@@ -226,17 +286,142 @@
     confirmingDelete = false;
     // The cross-piece feed is on screen whenever no piece is selected, so a write
     // from either side has to show up in it.
-    void loadFeed(feedSearch);
+    void loadFeed(feedSearch, feedTag);
   }
 
-  async function loadFeed(term: string): Promise<void> {
+  async function loadFeed(term: string, tag = ''): Promise<void> {
     try {
-      feedEntries = await api.repertoire.journal({ limit: 40, search: term || undefined });
+      feedEntries = await api.repertoire.journal({
+        limit: 40,
+        search: term || undefined,
+        tag: tag || undefined,
+      });
     } catch {
       // The feed is a convenience on an otherwise empty pane. A failure here must not
       // take the whole view over with an error about something the user did not ask
       // for; the pane simply stays empty.
       feedEntries = [];
+    }
+  }
+
+  /** "coda, slow" → ["coda", "slow"]. The server trims and de-duplicates too. */
+  function parseTags(value: string): string[] {
+    return value
+      .split(',')
+      .map((tag) => tag.trim())
+      .filter((tag) => tag.length > 0);
+  }
+
+  const practiceIndex = $derived(new Map(practiceByPiece.map((row) => [row.piece_id, row])));
+
+  /**
+   * The library's order.
+   *
+   * A piece the practice read does not mention has no row at all rather than a zero —
+   * `by_piece` inner-joins segments — so absence is read as *never played, no minutes*.
+   * That is the strongest form of both answers and it is what puts an untouched piece
+   * first under "least time invested".
+   */
+  function sorted(rows: PieceSummary[]): PieceSummary[] {
+    const copy = [...rows];
+    if (sort === 'title') return copy.sort((a, b) => a.title.localeCompare(b.title));
+    if (sort === 'composer') {
+      return copy.sort((a, b) => (a.composer_name ?? '').localeCompare(b.composer_name ?? ''));
+    }
+    if (sort === 'last_played') {
+      return copy.sort((a, b) => {
+        const left = practiceIndex.get(a.id)?.last_played ?? '';
+        const right = practiceIndex.get(b.id)?.last_played ?? '';
+        return left === right ? a.title.localeCompare(b.title) : left.localeCompare(right);
+      });
+    }
+    const minutes = (id: number) => practiceIndex.get(id)?.minutes ?? 0;
+    return copy.sort((a, b) =>
+      sort === 'least_time'
+        ? minutes(a.id) - minutes(b.id) || a.title.localeCompare(b.title)
+        : minutes(b.id) - minutes(a.id) || a.title.localeCompare(b.title),
+    );
+  }
+
+  /** The widest window the read allows, so "least time invested" means what it says. */
+  async function loadPracticeByPiece(): Promise<void> {
+    practiceByPiece = await api.practice.piecePractice(3650).catch(() => []);
+  }
+
+  /**
+   * Bulk status, one request per piece.
+   *
+   * Sequential rather than parallel on purpose: this is a single-user library of tens of
+   * pieces, and a partial failure is easier to reason about when the requests are ordered.
+   */
+  async function applyBulk(): Promise<void> {
+    busy = true;
+    try {
+      for (const id of selected) {
+        await api.repertoire.updatePiece(id, { status: bulkStatus });
+      }
+      selected = new Set();
+      await load();
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : String(cause);
+    } finally {
+      busy = false;
+    }
+  }
+
+  // The filters and the sort persist, which is the "saved filters" this app actually needs.
+  $effect(() => {
+    try {
+      localStorage.setItem(
+        VIEW_STORAGE_KEY,
+        JSON.stringify({ status: statusFilter, composer: composerFilter, grouping, sort }),
+      );
+    } catch {
+      // Storage may be unavailable (private mode); the view still works for this session.
+    }
+  });
+
+  /** Write a journal entry about a take: set the date and the link, then show the form. */
+  function writeAboutTake(recordingId: number): void {
+    journalDate = localDate();
+    journalSitting = null;
+    journalTake = recordingId;
+    journalForm?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  async function addPassage(body: {
+    start_bar: number;
+    end_bar: number;
+    label: string | null;
+    source: 'manual' | 'loop';
+    media_id: number | null;
+  }): Promise<void> {
+    if (!detail) return;
+    try {
+      await api.repertoire.createPassage(detail.id, body);
+      await afterWrite(detail.id);
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : String(cause);
+    }
+  }
+
+  async function markWorkedOn(passageId: number): Promise<void> {
+    if (!detail) return;
+    try {
+      await api.repertoire.updatePassage(passageId, { last_worked_on: localDate() });
+      await afterWrite(detail.id);
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : String(cause);
+    }
+  }
+
+  async function removePassage(passageId: number): Promise<void> {
+    if (!detail) return;
+    try {
+      await api.repertoire.deletePassage(passageId);
+      await afterWrite(detail.id);
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : String(cause);
     }
   }
 
@@ -263,11 +448,19 @@
         content: journalContent.trim(),
         practice_minutes: journalMinutes,
         sitting_id: journalSitting,
+        tags: parseTags(journalTags),
+        difficulty: journalDifficulty,
+        fluency: journalFluency,
+        media_id: journalTake,
       });
       journalContent = '';
       journalMinutes = null;
       journalSitting = null;
       journalMeasured = null;
+      journalTags = '';
+      journalDifficulty = null;
+      journalFluency = null;
+      journalTake = null;
       await afterWrite(pieceId);
     } catch (cause) {
       error = cause instanceof Error ? cause.message : String(cause);
@@ -281,6 +474,9 @@
     editDate = entry.entry_date;
     editMinutes = entry.practice_minutes;
     editContent = entry.content;
+    editTags = entry.tags.join(', ');
+    editDifficulty = entry.difficulty;
+    editFluency = entry.fluency;
     error = null;
   }
 
@@ -298,6 +494,9 @@
         entry_date: editDate,
         content: editContent.trim(),
         practice_minutes: editMinutes,
+        tags: parseTags(editTags),
+        difficulty: editDifficulty,
+        fluency: editFluency,
       });
       editingEntry = null;
       await afterWrite(detail.id);
@@ -442,7 +641,7 @@
   );
 
   const groups = $derived.by(() => {
-    if (grouping === 'none') return [{ label: '', rows: visible }];
+    if (grouping === 'none') return [{ label: '', rows: sorted(visible) }];
     const buckets = new Map<string, PieceSummary[]>();
     for (const piece of visible) {
       const label =
@@ -455,7 +654,7 @@
     }
     return [...buckets.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([label, rows]) => ({ label, rows }));
+      .map(([label, rows]) => ({ label, rows: sorted(rows) }));
   });
 
   const suggestion = $derived(detail ? suggestions.get(detail.id) : undefined);
@@ -481,6 +680,7 @@
 
   $effect(() => {
     void load();
+    void loadPracticeByPiece();
   });
 </script>
 
@@ -598,9 +798,29 @@
         <option value="difficulty">Group by difficulty</option>
         <option value="none">No grouping</option>
       </select>
+      <select bind:value={sort} aria-label="Sort the library">
+        <option value="title">Title</option>
+        <option value="composer">Composer</option>
+        <option value="last_played">Last played</option>
+        <option value="least_time">Least time invested</option>
+        <option value="most_time">Most time invested</option>
+      </select>
       <span class="muted small">{visible.length} shown</span>
       <button class="primary" onclick={() => (editing = 'new')}>New piece</button>
     </div>
+
+    {#if selected.size > 0}
+      <div class="row wrap" data-bulk={selected.size}>
+        <span class="muted small">{selected.size} selected</span>
+        <select bind:value={bulkStatus} aria-label="Status for the selected pieces">
+          <option value="active">Active</option>
+          <option value="paused">Paused</option>
+          <option value="completed">Completed</option>
+        </select>
+        <button class="primary" disabled={busy} onclick={() => void applyBulk()}>Set status</button>
+        <button class="ghost" onclick={() => (selected = new Set())}>Clear</button>
+      </div>
+    {/if}
 
     <div class="split" class:with-detail={detail !== null}>
       <div class="list">
@@ -609,6 +829,18 @@
             <h4 class="group">{group.label}</h4>
           {/if}
           {#each group.rows as piece (piece.id)}
+            <div class="piece-line">
+            <input
+              type="checkbox"
+              checked={selected.has(piece.id)}
+              aria-label={`Select ${piece.title}`}
+              onclick={() => {
+                const next = new Set(selected);
+                if (next.has(piece.id)) next.delete(piece.id);
+                else next.add(piece.id);
+                selected = next;
+              }}
+            />
             <button
               class="row-piece"
               class:selected={detail?.id === piece.id}
@@ -639,6 +871,7 @@
                 {#if piece.score_count}𝄞 {piece.score_count}{/if}
               </span>
             </button>
+            </div>
           {/each}
         {/each}
 
@@ -803,6 +1036,29 @@
                           >about a logged session</span
                         >
                       {/if}
+                      {#each entry.tags as tag (tag)}
+                        <button
+                          class="pill"
+                          data-tag={tag}
+                          title="Filter the journal by this tag"
+                          onclick={() => (feedTag = tag)}>{tag}</button
+                        >
+                      {/each}
+                      {#if entry.difficulty !== null}
+                        <span class="pill mono" data-difficulty={entry.difficulty}>
+                          hard {entry.difficulty}/5
+                        </span>
+                      {/if}
+                      {#if entry.fluency !== null}
+                        <span class="pill mono" data-fluency={entry.fluency}>
+                          went {entry.fluency}/5
+                        </span>
+                      {/if}
+                      {#if entry.media_id !== null}
+                        <span class="pill" data-journal-take={entry.media_id}>
+                          written about a take
+                        </span>
+                      {/if}
                     </span>
                     <span class="row">
                       {#if editingEntry === entry.id}
@@ -840,6 +1096,24 @@
                         bind:value={editMinutes}
                         aria-label="Edit practice minutes"
                       />
+                      <input
+                        type="text"
+                        bind:value={editTags}
+                        placeholder="tags, comma separated"
+                        aria-label="Edit tags"
+                      />
+                      <select bind:value={editDifficulty} aria-label="Edit how hard it felt">
+                        <option value={null}>difficulty —</option>
+                        {#each [1, 2, 3, 4, 5] as value (value)}
+                          <option value={value}>{value}</option>
+                        {/each}
+                      </select>
+                      <select bind:value={editFluency} aria-label="Edit how well it went">
+                        <option value={null}>fluency —</option>
+                        {#each [1, 2, 3, 4, 5] as value (value)}
+                          <option value={value}>{value}</option>
+                        {/each}
+                      </select>
                       <textarea
                         rows="4"
                         bind:value={editContent}
@@ -857,6 +1131,7 @@
 
           <form
             class="journal-form"
+            bind:this={journalForm}
             onsubmit={(event) => {
               event.preventDefault();
               void addJournalEntry();
@@ -886,6 +1161,34 @@
                 aria-label="Practice minutes"
               />
             </div>
+            <div class="row">
+              <input
+                type="text"
+                bind:value={journalTags}
+                placeholder="tags, comma separated"
+                aria-label="Tags for this entry"
+              />
+              <select bind:value={journalDifficulty} aria-label="How hard it felt">
+                <option value={null}>difficulty —</option>
+                {#each [1, 2, 3, 4, 5] as value (value)}
+                  <option value={value}>{value}</option>
+                {/each}
+              </select>
+              <select bind:value={journalFluency} aria-label="How well it went">
+                <option value={null}>fluency —</option>
+                {#each [1, 2, 3, 4, 5] as value (value)}
+                  <option value={value}>{value}</option>
+                {/each}
+              </select>
+            </div>
+            {#if journalTake !== null}
+              <p class="muted small" data-journal-take-draft={journalTake}>
+                About take {journalTake}.
+                <button type="button" class="ghost tiny" onclick={() => (journalTake = null)}>
+                  Not about a take
+                </button>
+              </p>
+            {/if}
             <textarea
               rows="3"
               placeholder="What happened in this session?"
@@ -1037,6 +1340,12 @@
                       {recording}
                       onLoop={(next) => void saveLoop(recording.id, next)}
                     />
+                    <button
+                      class="ghost tiny"
+                      data-write-about-take={recording.id}
+                      title="Write a journal entry about this recording"
+                      onclick={() => writeAboutTake(recording.id)}>Write about this take</button
+                    >
                   {/if}
 
                   <p class="muted small mono">
@@ -1047,6 +1356,15 @@
               {/each}
             </ul>
           {/if}
+
+          <PassageList
+            passages={detail.passages}
+            {recordings}
+            {busy}
+            oncreate={(body) => void addPassage(body)}
+            onworked={(id) => void markWorkedOn(id)}
+            ondelete={(id) => void removePassage(id)}
+          />
 
             <form
               class="upload"
@@ -1100,6 +1418,12 @@
             placeholder="Search the journal…"
             bind:value={feedSearch}
             aria-label="Search the journal"
+          />
+          <input
+            type="text"
+            bind:value={feedTag}
+            placeholder="tag"
+            aria-label="Filter the journal by tag"
           />
           {#if feedEntries.length === 0}
             <p class="muted small">
@@ -1227,6 +1551,17 @@
     text-transform: uppercase;
     letter-spacing: 0.05em;
     color: var(--muted);
+  }
+
+  .piece-line {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  .piece-line .row-piece {
+    flex: 1;
+    min-width: 0;
   }
 
   .row-piece {

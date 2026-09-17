@@ -15,7 +15,10 @@ import type {
   HostInfo,
   IdentificationQuality,
   ImportReport,
+  Passage,
+  PassageSource,
   PieceDetail,
+  PiecePractice,
   PiecePracticeDetail,
   PerformanceDetail,
   PianoDownloadReport,
@@ -236,12 +239,47 @@ export const api = {
       request<DeleteResult>(`/repertoire/journal/${entryId}`, { method: 'DELETE' }),
 
     /** The newest entries across the whole library, newest first. */
-    journal: (filters: { limit?: number; search?: string } = {}) => {
+    journal: (filters: { limit?: number; search?: string; tag?: string } = {}) => {
       const query = new URLSearchParams();
       if (filters.limit) query.set('limit', String(filters.limit));
       if (filters.search) query.set('search', filters.search);
+      if (filters.tag) query.set('tag', filters.tag);
       return request<JournalEntry[]>(`/repertoire/journal${query.size ? `?${query}` : ''}`);
     },
+
+    /** Add a passage. `source: 'loop'` records that a recording's markers seeded it. */
+    createPassage: (
+      pieceId: number,
+      body: {
+        start_bar: number;
+        end_bar: number;
+        label?: string | null;
+        source?: PassageSource;
+        media_id?: number | null;
+      },
+    ) =>
+      request<Passage>(`/repertoire/pieces/${pieceId}/passages`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+
+    /** PATCH semantics: an unset field is left alone, an explicit null clears it. */
+    updatePassage: (
+      passageId: number,
+      body: {
+        start_bar?: number;
+        end_bar?: number;
+        label?: string | null;
+        last_worked_on?: string | null;
+      },
+    ) =>
+      request<Passage>(`/repertoire/passages/${passageId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      }),
+
+    deletePassage: (passageId: number) =>
+      request<DeleteResult>(`/repertoire/passages/${passageId}`, { method: 'DELETE' }),
 
     uploadRecording: (pieceId: number, file: File, title?: string) => {
       const form = new FormData();
@@ -421,6 +459,9 @@ export const api = {
     tempo: (pieceId: number) => request<TempoSeries>(`/practice/analytics/tempo?piece_id=${pieceId}`),
 
     piece: (pieceId: number) => request<PiecePracticeDetail>(`/practice/pieces/${pieceId}`),
+
+    /** Per-piece logged practice, for the library's sorts. */
+    piecePractice: (days = 365) => request<PiecePractice[]>(`/practice/pieces?days=${days}`),
 
     importLegacy: () =>
       request<PracticeImportReport>('/practice/import-legacy', { method: 'POST' }),

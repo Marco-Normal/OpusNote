@@ -268,6 +268,13 @@ export interface JournalEntry {
   /** The sitting this was written about, or null for one written from the piece. */
   sitting_id: number | null;
   created_at: string | null;
+  /** Short labels on this entry. */
+  tags: string[];
+  /** How hard it felt and how well it went, 1..5. */
+  difficulty: number | null;
+  fluency: number | null;
+  /** The take this was written about, or null. */
+  media_id: number | null;
   /** Filled only by the cross-piece feed, which shows an entry away from its piece. */
   piece_title?: string | null;
   composer_name?: string | null;
@@ -327,6 +334,29 @@ export interface PieceDetail extends PieceSummary {
   created_at: string | null;
   journal: JournalEntry[];
   media: Recording[];
+  passages: Passage[];
+}
+
+/** Where a focus passage came from. `loop` means a recording's A/B markers seeded it. */
+export type PassageSource = 'manual' | 'loop';
+
+/**
+ * A stretch of a piece worth returning to.
+ *
+ * The bar numbers are the player's own: the app has no score alignment (20-D7), so nothing
+ * here is derived from the log, and `source`/`media_id` record provenance rather than a
+ * conversion the app cannot make.
+ */
+export interface Passage {
+  id: number;
+  piece_id: number;
+  start_bar: number;
+  end_bar: number;
+  label: string | null;
+  source: PassageSource;
+  media_id: number | null;
+  created_at: string | null;
+  last_worked_on: string | null;
 }
 
 export interface Composer {
@@ -767,6 +797,11 @@ export interface JournalInput {
   practice_minutes?: number | null;
   /** The sitting the entry is about. Null clears the link; omit to leave it alone. */
   sitting_id?: number | null;
+  tags?: string[];
+  difficulty?: number | null;
+  fluency?: number | null;
+  /** The take the entry is about. Null clears the link; omit to leave it alone. */
+  media_id?: number | null;
 }
 
 export interface DeleteResult {
