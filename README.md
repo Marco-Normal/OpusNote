@@ -53,6 +53,15 @@ is in use (`Auto · CASIO USB-MIDI MIDI 1`).
 - **Echoes are dropped, not ports ignored.** Every port stays attached, and a note
   reported twice within 30 ms by two different ports is counted once — so a keyboard
   that splits zones across ports loses nothing.
+
+**Pedals.** The PX-870 has three, and the middle one (sostenuto) is barely used musically — so it
+is available as a hands-free switch. Open **Pedals** in the device bar to see which controller
+numbers this piano has actually sent: press each pedal once and the bar reports it. One press and
+release of the sostenuto starts a workout, or finishes the running one; the soft pedal works the
+same way, and a double tap of the damper in silence arms and stops audio capture. The gesture is
+inert during a scored attempt, and nothing is ever bound to a message the piano has not been seen
+to send. There is a **Count-in** choice (none, 1 bar, 2 bars) and a click volume beside it; both
+are remembered, and the transport says how many beats the count-in actually used.
 - On the piano machine use `http://localhost:8000`: Web MIDI requires a secure
   context, and a LAN hostname is not one.
 
@@ -202,6 +211,11 @@ comparable with itself over time, not an absolute metronome reading.
   as written, either hand.
 - **This week** (Log tab): minutes over the last seven days, workouts and streak, the
   most improved skill, and the piece you have neglected longest.
+
+**Everything is a link.** The address bar describes what you are looking at —
+`#/repertoire/piece/12`, `#/log/sitting/34`, `#/stats/attempt/56` — so a piece can be opened on the
+other machine by pasting it, and Back works. Press `/` (or `Ctrl`/`Cmd`+`K`) for a search box over
+the library, the journal and recent sittings, and `1`–`5` to switch sections.
 
 ### Hearing it back
 

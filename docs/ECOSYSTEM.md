@@ -1346,7 +1346,7 @@ a test that does not match the real path is worth nothing — which is the same 
 scenarios exist to catch, arriving from the other direction. The system Chromium (148) is
 fine and no install is needed.
 
-### Phase 20 — planned (deliberate practice, the piano-side toolkit, and audio takes)
+### Phase 20 — in progress (deliberate practice, the piano-side toolkit, and audio takes)
 
 Chosen by the user from a survey of everything in the app *except* the sight-reading loop,
 and approved as five independently shippable slices. The organising finding is the mirror
@@ -1408,13 +1408,20 @@ be overloaded to carry this one.
 - A one-register segment never produces a `hands_separate` offer (the refusal, tested).
 - The kind split reconciles with the window's logged minutes.
 
-#### 20b — the piano-side toolkit (G2, G3, G4, G6) — planned
+#### 20b — the piano-side toolkit (G2, G3, G4, G6) — landed
 
 **Implementation plan:** [`PLAN-PHASE20B.md`](./PLAN-PHASE20B.md). Two things it settles that this
 section left open: `midi.ts` drops every controller but CC64, so the sostenuto needs a second,
 **read-only** stream rather than a widened pedal stream (`pedal_events` has no controller column and
 is read as CC64); and routing is by **hash** (`#/repertoire/piece/12`), which needs no server change
 and behaves the same on `localhost:8000` and `piano.local:8000`.
+
+**Landed after 20e, so one mapping the plan left open had to be settled here.** The plan was written
+before audio capture existed and named a single hands-free action; the acceptance bullet below asks
+for capture too, so the dedicated pedals (CC66, then CC67) toggle a workout and the damper's double
+tap in silence arms and stops capture. A take has no route of its own: resolving a media id to its
+piece would need a server lookup, and this slice adds no server surface, so the bullet's "and take" is
+reached through the piece link that lists it — see `AGENT-LOG.md` 2026-09-17.
 
 **Problem.** The app is used from the piano bench, and every action needs a hand that is
 supposed to be on the keys. The PX-870 has three pedals; only the damper is read, and the

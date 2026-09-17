@@ -1658,3 +1658,62 @@ four falsifications run and caught their breaks (`drop_media_source_column.sh`,
 `drop_capture_segment_link.sh`, `drop_take_catch_up.sh`, `cut_takes_at_the_wrong_gap.sh`);
 `./check.sh --full` green in **566 s** before the review-driven repairs, with `--fast` re-run green
 after them.
+
+## 2026-09-17 — sight-reading agent — Phase 20b landed (the piano-side toolkit), after 20e and with two mappings the plan left open
+
+Scope: `frontend/src/lib/{pedalGesture,countIn,route}.ts` + their tests, `frontend/src/lib/midi.ts`,
+`state.svelte.ts`, `metronome.ts`, `App.svelte`, `app.css`,
+`frontend/src/components/{DeviceBar,PracticeView,CalibrationView,RepertoireView,PracticeLogView,StatsView,CommandPalette}.svelte`,
+`backend/tools/e2e_browser.py`, `backend/tools/falsifications/` (four new scripts), `README.md`,
+`docs/ECOSYSTEM.md`.
+
+Did: four additive, client-only additions. `midi.ts` gained a **second, read-only controller stream**
+(`MonitorController`, `onController`, one emit site) because `handleMessage` dropped every CC but 64
+before any handler saw it; `pedalGesture.ts` is the pure decision over those moves; `countIn.ts` turns
+the bars preference into beats per meter and `metronome.ts` reads a click volume on the same 0..127
+scale as a MIDI velocity; `route.ts` parses and serialises `#/section/entity/id` and the store holds
+the route while each view consumes a one-shot pending entity; `CommandPalette.svelte` is the app's
+first overlay, over the two searches that already existed plus the recent-sittings list, which has no
+endpoint and is therefore filtered client-side **and says so**.
+
+**The one decision a reviewer must check (20b-D4).** `onController` is a *second* stream, not a
+widened one. `onPedalMonitor` stays the only thing the practice log consumes and stays CC64-only,
+because `pedal_events` has no controller column and `practice/pedal.py` reads it as CC64 — routing the
+sostenuto into it would have recorded the middle pedal as sustain and corrupted `pedal_basis` and the
+blur figures. `drop_controller_stream.sh` proves the new stream is load-bearing without touching that.
+
+**Two mappings the plan could not have settled, because it was written before 20e.** (1) The plan
+named one hands-free action, but the acceptance bullet asks the gesture to "arm and stop capture"
+too, so `HandsfreeAction` is `'toggle_workout' | 'toggle_audio_capture'`: the dedicated pedals (CC66,
+then CC67) toggle a workout, and the damper's double tap **in silence** arms and stops capture — the
+played pedal carries the action reached for least often, and only when nothing is being played. The
+pedal path calls the same `toggleAudioCapture` the button does, so it inherits the guards (the log
+must be running, the server must report its gap) rather than bypassing them; the bench scenario
+asserts both arming and stopping. (2) `ECOSYSTEM`'s acceptance names a deep link to a **take**, and
+the plan's route module deliberately refuses one. Resolving a media id to its piece would need a
+server lookup, and this slice's compatibility boundary is "no server route, table, column or wire
+format changes at all" — so a take is reached through the piece link that lists it, and the gap is
+recorded in `ECOSYSTEM.md` rather than papered over.
+
+**Three smaller decisions worth naming.** `exerciseActive` is *derived* from each view's phase
+(`countin | playing | submitting`) with an `onDestroy` clearing it, rather than poked in at every
+transition: the plan's rule ("every assignment other than countin/playing is an end of run") is easy
+to miss one of, and leaving the view mid-run must not leave the hands-free switch inert for the
+session. The transport now draws the count-in it **actually derived** (`data-count-in-beats`), because
+the browser tier cannot hear a metronome and a preference nobody can observe cannot be falsified. The
+palette is a `div[role=dialog]` with the backdrop comparing `event.target` rather than a
+`stopPropagation` handler on the panel, which is what keeps `svelte-check` at zero warnings.
+
+Impact on the other side: **client-only.** No route, table, column, wire format, `SCHEMA_VERSION` or
+`BACKUP_VERSION` changed, and `pedal_events` still means CC64. 20c and 20d remain planned; 20b landed
+after 20e, so the two plans meet here only at `runHandsfree`. The gesture is inert during a scored
+attempt, and one press of the sostenuto starts or finishes a workout — the bench scenario asserts
+that a press mid-run starts nothing.
+
+Verified: frontend **97 passed**, `svelte-check` clean, build clean; the new `bench` browser scenario
+passes nineteen assertions (unseen pedal, discovered pedal, workout start/finish, capture arm/stop,
+inert during a run, a piece link opening its piece, Back closing it, the palette finding a piece and
+Escape closing it, two bars reaching the metronome and surviving a reload, no console errors);
+four committed falsifications, three of them run against the built frontend
+(`drop_controller_stream.sh`, `ignore_count_in_preference.sh`, `misroute_a_piece.sh` and
+`drop_handsfree_silence_gate.sh`); `./check.sh --full` green.

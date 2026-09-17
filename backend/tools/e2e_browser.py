@@ -2132,6 +2132,131 @@ def scenario_takes(browser) -> None:
     page.close()
 
 
+def count_in_beats(page) -> int:
+    """The count-in the run actually used, from the pill the view draws."""
+    return int(page.get_attribute("[data-count-in-beats]", "data-count-in-beats") or "0")
+
+
+def scenario_bench(browser) -> None:
+    print("\n[13] The bench: pedals, count-in, links and the palette")
+    clear_practice()
+    if not api("/api/repertoire/pieces"):
+        seed_library(2)
+    pieces = api("/api/repertoire/pieces")
+    target = pieces[0]
+
+    page, errors = new_page(browser)
+    page.goto(BASE_URL, wait_until="domcontentloaded")
+    page.wait_for_selector("text=Sight-Reading Trainer")
+    ensure_midi(page)
+
+    # --- nothing is bound to a pedal the piano has not been seen to send ---
+    click_button(page, "Pedals")
+    page.wait_for_selector("[data-pedals]", timeout=10_000)
+    check(
+        page.inner_text("[data-pedal='66']").endswith("not seen yet"),
+        "the sostenuto reads as unseen before it is pressed",
+    )
+
+    def press_sostenuto() -> None:
+        # The fake device drives the real decoder: the same path the piano's bytes take.
+        page.evaluate("() => window.__fakeMidi.send([0xb0, 66, 127])")
+        page.evaluate("() => window.__fakeMidi.send([0xb0, 66, 0])")
+        page.wait_for_timeout(700)
+
+    press_sostenuto()
+    check(
+        "sends this" in page.inner_text("[data-pedal='66']"),
+        "pressing the sostenuto is offered as a pedal the piano sends",
+    )
+    check(api("/api/workout/current") is not None, "and one press starts a workout")
+    press_sostenuto()
+    check(api("/api/workout/current") is None, "a second press finishes it")
+
+    # --- the damper double tap arms capture: the acceptance bullet's second action ---
+    def double_tap_damper() -> None:
+        # Two taps in silence. `lastNoteMs` is null on this page — no notes have been played,
+        # only controller moves — which is exactly the state the gesture requires.
+        for _ in range(2):
+            page.evaluate("() => window.__fakeMidi.send([0xb0, 64, 127])")
+            page.evaluate("() => window.__fakeMidi.send([0xb0, 64, 0])")
+            page.wait_for_timeout(150)
+        page.wait_for_timeout(700)
+
+    double_tap_damper()
+    page.wait_for_selector('[data-audio-capture="armed"]', timeout=15_000)
+    check(True, "a damper double tap in silence arms audio capture")
+    double_tap_damper()
+    page.wait_for_selector('[data-audio-capture="off"]', timeout=10_000)
+    check(True, "and another one stops it")
+
+    # --- the gesture is inert during a scored attempt: the failure that matters most ---
+    load_first_exercise(page)
+    start_run(page)
+    press_sostenuto()
+    check(
+        api("/api/workout/current") is None,
+        "and it starts nothing while a run is in progress",
+    )
+
+    # --- a link opens the thing it names, and Back comes home ---
+    # Navigating abandons the run above, which is why this needs no teardown. The hashed
+    # practice URL first, so Back has an entry to return to that describes a screen.
+    page.goto(f"{BASE_URL}/#/practice", wait_until="domcontentloaded")
+    page.wait_for_selector("text=Sight-Reading Trainer")
+    page.goto(f"{BASE_URL}/#/repertoire/piece/{target['id']}", wait_until="domcontentloaded")
+    page.wait_for_selector(".detail-title", timeout=20_000)
+    check(
+        target["title"] in page.inner_text(".detail"),
+        f"a piece link opens that piece ({target['title']})",
+    )
+    page.go_back()
+    page.wait_for_selector("nav.tabs", timeout=10_000)
+    page.wait_for_timeout(500)
+    check(page.locator(".detail-title").count() == 0, "and Back leaves the piece closed")
+
+    # --- the palette searches what the app can actually search ---
+    page.keyboard.press("/")
+    page.wait_for_selector("[data-palette]", timeout=5_000)
+    page.keyboard.type(target["title"][:6])
+    page.wait_for_selector("[data-palette] li button", timeout=10_000)
+    check(
+        page.locator("[data-palette] li button").count() >= 1,
+        "the palette finds a piece by title",
+    )
+    page.keyboard.press("Escape")
+    page.wait_for_selector("[data-palette]", state="detached", timeout=5_000)
+    check(True, "and Escape closes it")
+    check(not errors, f"no console errors on the bench page ({errors})")
+
+    # --- count-in is a choice in bars, and it reaches the metronome ---
+    # A second page, because a run is already in flight on the first and starting another
+    # one on top of it is a different test.
+    bench, bench_errors = new_page(browser)
+    bench.goto(BASE_URL, wait_until="domcontentloaded")
+    bench.wait_for_selector("text=Sight-Reading Trainer")
+    ensure_midi(bench)
+    bench.select_option("#count-in", "2")
+    load_first_exercise(bench)
+    start_run(bench)
+    bench.wait_for_selector("[data-count-in-beats]", timeout=20_000)
+    # A fresh profile gets level-1 material, whose meter is 4/4, so two bars is eight
+    # beats. If that ever stops holding, assert the *ratio* of a one-bar run to a two-bar
+    # run instead: it is meter-independent and catches the same regression.
+    check(
+        count_in_beats(bench) == 8,
+        f"two bars of count-in is what the metronome plays ({count_in_beats(bench)} beats)",
+    )
+    # A preference that a reload forgets is not a preference.
+    bench.reload(wait_until="domcontentloaded")
+    bench.wait_for_selector("#count-in", timeout=20_000)
+    check(
+        bench.input_value("#count-in") == "2",
+        "and two bars survives a reload",
+    )
+    check(not bench_errors, f"no console errors on the count-in page ({bench_errors})")
+
+
 def scenario_practice_log(browser) -> None:
     print("\n[8] Practice log: passive capture, a workout, and the segment timeline")
     clear_practice()
@@ -3385,6 +3510,7 @@ def main() -> int:
                 scenario_repertoire,
                 scenario_takes,
                 scenario_practice_log,
+                scenario_bench,
                 scenario_midi_autodetect,
                 scenario_autotag,
                 scenario_playback,
