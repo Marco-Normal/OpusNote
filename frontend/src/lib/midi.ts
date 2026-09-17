@@ -65,12 +65,34 @@ export interface MonitorPedal {
   channel: number;
 }
 
+/**
+ * A controller move on **any** CC number.
+ *
+ * The sustain path below reads CC64 and nothing else, which is why the sostenuto pedal
+ * could not be bound to anything: `handleMessage` dropped every other controller before
+ * any handler saw it. This is the raw stream, for callers that decide for themselves
+ * what a message means.
+ *
+ * It is deliberately **not** the stream the practice log consumes. `pedal_events` has no
+ * controller column and is read as CC64 by `practice/pedal.py`, so widening that stream
+ * would record the sostenuto as sustain and corrupt the blur and basis figures.
+ */
+export interface MonitorController {
+  /** Absolute time, ms since the Unix epoch. */
+  epochMs: number;
+  /** The CC number. 64 damper, 66 sostenuto, 67 soft. */
+  controller: number;
+  value: number;
+  channel: number;
+}
+
 type NoteHandler = (event: RawMidiEvent) => void;
 type SustainHandler = (down: boolean) => void;
 type DevicesHandler = (devices: MidiDeviceInfo[]) => void;
 type MonitorOnHandler = (note: MonitorNote) => void;
 type MonitorOffHandler = (note: MonitorRelease) => void;
 type PedalHandler = (pedal: MonitorPedal) => void;
+type ControllerHandler = (controller: MonitorController) => void;
 type PortsHandler = (ports: PortSnapshot[]) => void;
 type OutputsHandler = (outputs: MidiOutputInfo[]) => void;
 
@@ -135,6 +157,7 @@ export class MidiInput {
   private monitorOnHandlers = new Set<MonitorOnHandler>();
   private monitorOffHandlers = new Set<MonitorOffHandler>();
   private pedalHandlers = new Set<PedalHandler>();
+  private controllerHandlers = new Set<ControllerHandler>();
   private portsHandlers = new Set<PortsHandler>();
   private outputsHandlers = new Set<OutputsHandler>();
 
@@ -405,6 +428,18 @@ export class MidiInput {
     return () => this.pedalHandlers.delete(handler);
   }
 
+  /**
+   * Every controller move on any CC number, read-only.
+   *
+   * A second stream rather than a widened `onPedalMonitor`, because the practice log
+   * consumes that one and stores only a CC64 value: routing the sostenuto into it would
+   * record the middle pedal as sustain.
+   */
+  onController(handler: ControllerHandler): () => void {
+    this.controllerHandlers.add(handler);
+    return () => this.controllerHandlers.delete(handler);
+  }
+
   onDevices(handler: DevicesHandler): () => void {
     this.devicesHandlers.add(handler);
     return () => this.devicesHandlers.delete(handler);
@@ -523,19 +558,32 @@ export class MidiInput {
       return;
     }
 
-    if (status === 0xb0 && first === 64) {
-      // The exercise path wants one bit, and gets it. The practice log wants the
-      // time and the raw value too, because a pedal is only interesting as a
-      // stretch of time, and a stream of booleans cannot say when it was pressed.
-      // The threshold is the MIDI spec's, and is shared with the playback side
-      // rather than spelled out again here.
-      this.sustainHandlers.forEach((handler) => handler(second >= PEDAL_DOWN));
-      const pedal: MonitorPedal = {
+    if (status === 0xb0) {
+      // Every controller is reported on the raw stream first, so a caller can bind a
+      // pedal the sustain path has never heard of. Then CC64 keeps its existing two
+      // consumers, unchanged: the exercise path's one bit, and the practice log's value.
+      const controller: MonitorController = {
         epochMs: this.epochMsFor(this.eventTimeMs(event)),
+        controller: first,
         value: second,
         channel,
       };
-      this.pedalHandlers.forEach((handler) => handler(pedal));
+      this.controllerHandlers.forEach((handler) => handler(controller));
+
+      if (first === 64) {
+        // The exercise path wants one bit, and gets it. The practice log wants the
+        // time and the raw value too, because a pedal is only interesting as a
+        // stretch of time, and a stream of booleans cannot say when it was pressed.
+        // The threshold is the MIDI spec's, and is shared with the playback side
+        // rather than spelled out again here.
+        this.sustainHandlers.forEach((handler) => handler(second >= PEDAL_DOWN));
+        const pedal: MonitorPedal = {
+          epochMs: controller.epochMs,
+          value: second,
+          channel,
+        };
+        this.pedalHandlers.forEach((handler) => handler(pedal));
+      }
     }
   }
 
