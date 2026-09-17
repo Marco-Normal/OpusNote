@@ -695,8 +695,12 @@ def test_migration_adds_legacy_id_to_an_existing_database(fresh_db):
     """
     conn = db.connect(settings.db_path)
     try:
-        # A database as an earlier version left it: no legacy_id anywhere.
-        for table in ("media", "piece_journal", "pieces", "composers"):
+        # A database as an earlier version left it: no legacy_id anywhere. Children first,
+        # and `piece_passages` — the table 20d added, which also references `media` — goes
+        # too: this simulates a library that predates it, and dropping a parent while a
+        # child still references it leaves SQLite's foreign-key machinery pointing at a
+        # table that is gone ("no such table: main.media" on the *next* drop).
+        for table in ("piece_passages", "media", "piece_journal", "pieces", "composers"):
             conn.execute(f"DROP TABLE IF EXISTS {table}")
         conn.executescript(
             """

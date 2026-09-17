@@ -1824,6 +1824,7 @@ DATA_TABLES = (
     "composers",
     "pieces",
     "piece_journal",
+    "piece_passages",
     "media",
     "sittings",
     "note_events",

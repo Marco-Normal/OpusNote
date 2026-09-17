@@ -60,7 +60,11 @@ EXPECTED_COLUMNS: dict[str, set[str]] = {
     },
     "piece_journal": {
         "id", "piece_id", "entry_date", "content", "practice_minutes", "sitting_id",
-        "legacy_id", "created_at",
+        "legacy_id", "created_at", "tags", "difficulty", "fluency", "media_id",
+    },
+    "piece_passages": {
+        "id", "piece_id", "start_bar", "end_bar", "label", "source", "media_id",
+        "created_at", "last_worked_on",
     },
     "pieces": {
         "id", "composer_id", "title", "opus", "difficulty", "key", "started_on",
@@ -111,6 +115,7 @@ EXPECTED_INDEXES: dict[str, set[str]] = {
         "idx_journal_date", "idx_journal_legacy", "idx_journal_piece",
         "idx_journal_sitting",
     },
+    "piece_passages": {"idx_passages_piece"},
     "pieces": {"idx_pieces_composer", "idx_pieces_legacy", "idx_pieces_status"},
     "rating_events": {"idx_rating_events_skill"},
     "segments": {"idx_segments_piece", "idx_segments_sitting"},
@@ -224,7 +229,9 @@ def test_the_fixture_is_the_pre_phase18_shape() -> None:
             "and it cascaded, which is what the rebuild exists to stop"
         )
 
-        assert "sitting_id" not in _columns(conn, "piece_journal")
+        assert {"sitting_id", "tags", "difficulty", "fluency", "media_id"}.isdisjoint(
+            _columns(conn, "piece_journal")
+        ), "the fixture predates every ADDED_COLUMNS entry for piece_journal"
         assert "workout_id" not in _columns(conn, "performances")
         assert {"legacy_id", "closed_ms"}.isdisjoint(_columns(conn, "sittings"))
         assert {"source", "workout_id", "practice_kind", "practice_kind_basis"}.isdisjoint(
@@ -257,7 +264,13 @@ def test_init_db_upgrades_the_fixture_without_losing_a_row() -> None:
 
     conn = db.connect(path)
     try:
-        assert _counts(conn) == before, "the upgrade kept every table's rows"
+        after = _counts(conn)
+        # Compared over the fixture's own tables: a phase that *adds* a table (20d's
+        # `piece_passages`) legitimately introduces a new key, and that is not a lost row.
+        # Every table the fixture had must still hold exactly what it held.
+        assert {table: after[table] for table in before} == before, (
+            "the upgrade kept every table's rows"
+        )
         after_outcome = dict(conn.execute("SELECT * FROM identification_outcomes").fetchone())
         assert after_outcome["segment_id"] == before_outcome["segment_id"] == 1, (
             "the rebuilt table kept the reference, not merely the row"
@@ -544,3 +557,33 @@ def test_an_immediate_transaction_takes_the_write_lock_before_it_reads() -> None
         assert [row[0] for row in conn.execute("SELECT name FROM composers")] == ["first"]
     finally:
         conn.close()
+
+
+def test_the_upgraded_database_gains_the_journal_columns() -> None:
+    """20d: tags, two ratings and a take link arrive on a library that predates them."""
+    path = _build_fixture_db("journal-columns.sqlite3")
+    db.init_db(path)
+    conn = db.connect(path)
+    try:
+        assert {"tags", "difficulty", "fluency", "media_id"} <= _columns(conn, "piece_journal")
+    finally:
+        conn.close()
+
+
+def test_the_passage_table_exists_on_fresh_and_upgraded_databases() -> None:
+    """A new table needs no ADDED_COLUMNS entry: the CREATE runs on every init."""
+    upgraded = _build_fixture_db("passages-upgraded.sqlite3")
+    db.init_db(upgraded)
+    fresh = _fresh_path("passages-fresh.sqlite3")
+    db.init_db(fresh)
+
+    for path in (upgraded, fresh):
+        conn = db.connect(path)
+        try:
+            assert "piece_passages" in _tables(conn)
+            assert _columns(conn, "piece_passages") == {
+                "id", "piece_id", "start_bar", "end_bar", "label", "source",
+                "media_id", "created_at", "last_worked_on",
+            }
+        finally:
+            conn.close()

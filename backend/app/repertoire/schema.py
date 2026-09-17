@@ -62,6 +62,18 @@ CREATE TABLE IF NOT EXISTS piece_journal (
     -- gets it too. `sittings` is created by the practice script, which runs after
     -- this one; SQLite resolves a foreign key at insert time, not at create time.
     sitting_id        INTEGER REFERENCES sittings(id) ON DELETE SET NULL,
+    -- Free-text labels for one entry ("coda", "fingering", "memorisation"). A JSON array in
+    -- one column rather than a table of its own: this is one player's library of a few
+    -- hundred entries, and Phase 20a's plan records the same judgement for practice kinds.
+    -- Written with `db.json_dump`, so it is compact and a quoted-tag LIKE is unambiguous.
+    tags              TEXT,
+    -- How hard it felt and how well it went, 1..5, nullable. Two numbers rather than one
+    -- because "hard and it went well" is a different fact from "easy and it did not".
+    difficulty        INTEGER,
+    fluency           INTEGER,
+    -- The take this was written about, when it was written about one. SET NULL for exactly
+    -- the reason `sitting_id` is: deleting a recording must never delete prose.
+    media_id          INTEGER REFERENCES media(id) ON DELETE SET NULL,
     legacy_id         INTEGER,
     created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -110,6 +122,29 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_media_legacy
 CREATE INDEX IF NOT EXISTS idx_media_piece ON media(piece_id);
 CREATE INDEX IF NOT EXISTS idx_media_segment ON media(segment_id);
 CREATE INDEX IF NOT EXISTS idx_media_source ON media(source);
+
+-- A stretch of a piece worth returning to: "bars 12-14, the left-hand leaps".
+--
+-- The app cannot see a score — there is no alignment, by decision 18b/20-D7 — so the bar
+-- numbers are the player's own reading and nothing here is derived from the log. `source`
+-- says whether the passage was typed or seeded from a recording's A/B loop, and `media_id`
+-- names that loop. Seeding therefore records *provenance*, not a bar conversion the app is
+-- in no position to make.
+CREATE TABLE IF NOT EXISTS piece_passages (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    piece_id        INTEGER NOT NULL REFERENCES pieces(id) ON DELETE CASCADE,
+    start_bar       INTEGER NOT NULL,
+    end_bar         INTEGER NOT NULL,
+    label           TEXT,
+    source          TEXT NOT NULL DEFAULT 'manual',   -- 'manual' | 'loop'
+    media_id        INTEGER REFERENCES media(id) ON DELETE SET NULL,
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    -- The last day the player said they worked on it, or NULL for never. The list sorts
+    -- the never-touched first, which is the whole reason the list exists.
+    last_worked_on  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_passages_piece
+    ON piece_passages(piece_id, last_worked_on, start_bar);
 """
 
 
@@ -137,6 +172,13 @@ ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("media", "sitting_id", "INTEGER REFERENCES sittings(id) ON DELETE SET NULL"),
     ("media", "segment_id", "INTEGER REFERENCES segments(id) ON DELETE SET NULL"),
     ("media", "captured_start_ms", "INTEGER"),
+    # Phase 20d — the journal gains labels, two ratings and a take link. `media_id` needs
+    # its REFERENCES spelled out for the same reason `sitting_id` does: an ALTER that omits
+    # it leaves an upgraded database with a dangling reference.
+    ("piece_journal", "tags", "TEXT"),
+    ("piece_journal", "difficulty", "INTEGER"),
+    ("piece_journal", "fluency", "INTEGER"),
+    ("piece_journal", "media_id", "INTEGER REFERENCES media(id) ON DELETE SET NULL"),
 )
 
 
