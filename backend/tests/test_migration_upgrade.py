@@ -46,7 +46,8 @@ EXPECTED_COLUMNS: dict[str, set[str]] = {
     "media": {
         "id", "piece_id", "kind", "file_name", "original_name", "title",
         "duration_secs", "size_bytes", "codec", "taken_on", "legacy_id",
-        "loop_start_s", "loop_end_s", "created_at",
+        "loop_start_s", "loop_end_s", "created_at", "source", "sitting_id",
+        "segment_id", "captured_start_ms",
     },
     "note_events": {
         "id", "sitting_id", "onset_ms", "duration_ms", "pitch", "velocity", "channel",
@@ -102,7 +103,7 @@ EXPECTED_INDEXES: dict[str, set[str]] = {
     "composers": {"idx_composers_legacy"},
     "exercise_skills": {"idx_exercise_skills_skill"},
     "identification_outcomes": {"idx_outcomes_segment"},
-    "media": {"idx_media_legacy", "idx_media_piece"},
+    "media": {"idx_media_legacy", "idx_media_piece", "idx_media_segment", "idx_media_source"},
     "note_events": {"idx_events_dedupe", "idx_events_sitting"},
     "pedal_events": {"idx_pedals_dedupe", "idx_pedals_sitting"},
     "performances": {"idx_performances_user_time"},
@@ -230,7 +231,12 @@ def test_the_fixture_is_the_pre_phase18_shape() -> None:
             _columns(conn, "segments")
         ), "the fixture predates every ADDED_COLUMNS entry for segments"
         assert "legacy_id" not in _columns(conn, "pieces")
-        assert "loop_end_s" not in _columns(conn, "media")
+        assert {
+            "legacy_id", "loop_start_s", "loop_end_s", "source", "sitting_id",
+            "segment_id", "captured_start_ms",
+        }.isdisjoint(_columns(conn, "media")), (
+            "the fixture predates every ADDED_COLUMNS entry for media"
+        )
     finally:
         conn.close()
 
@@ -474,5 +480,16 @@ def test_the_upgraded_database_gains_the_blur_positions() -> None:
     try:
         assert "pedal_blur_ms" in _columns(conn, "segment_metrics")
         assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
+    finally:
+        conn.close()
+
+
+def test_the_upgraded_database_gains_the_take_columns() -> None:
+    """20e: where a captured take came from, on a library that predates capture."""
+    path = _build_fixture_db("take-columns.sqlite3")
+    db.init_db(path)
+    conn = db.connect(path)
+    try:
+        assert {"source", "sitting_id", "segment_id", "captured_start_ms"} <= _columns(conn, "media")
     finally:
         conn.close()

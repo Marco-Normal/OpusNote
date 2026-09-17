@@ -472,6 +472,10 @@ class PracticeStatus(BaseModel):
     last_note_ms: int | None = None
     #: The last capture heartbeat, or None when nothing has reported recently.
     capture: CaptureReport | None = None
+    #: Silence the server treats as a segment boundary, in seconds. Reported so the client can
+    #: cut recorded audio on the same rule rather than keeping a second copy of it: audio cut
+    #: somewhere else would disagree with the notes about where a passage ended.
+    segment_gap_s: int = 0
 
 
 class CaptureReportIn(BaseModel):

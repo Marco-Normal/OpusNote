@@ -401,6 +401,8 @@ export interface PracticeStatus {
   /** Epoch ms of the last note the server stored, or null. */
   last_note_ms: number | null;
   capture: CaptureStatus | null;
+  /** Silence the server treats as a segment boundary, in seconds. Recorded audio is cut on it. */
+  segment_gap_s: number;
 }
 
 /** What a capturing client tells the server about itself. */

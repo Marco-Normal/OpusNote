@@ -88,11 +88,28 @@ CREATE TABLE IF NOT EXISTS media (
     -- from the other machine, and so it survives a reload.
     loop_start_s   REAL,
     loop_end_s     REAL,
+    -- Where this row came from. 'uploaded' is the default and matches every row that
+    -- existed before Phase 20e; 'captured' means the app recorded it from the piano. Stored
+    -- rather than inferred, because "which of these did I record here?" is a question the
+    -- library should answer, and because captured audio is the half that may be deleted.
+    source          TEXT NOT NULL DEFAULT 'uploaded',
+    -- The playing this take came from. Both are ON DELETE SET NULL for the reason the
+    -- journal's `sitting_id` is: deleting the session that produced a take must not delete
+    -- the take. `segment_id` is nullable because a take can be uploaded while its sitting is
+    -- still open, before the server has made any segments — `create_take` fills it in later.
+    sitting_id      INTEGER REFERENCES sittings(id) ON DELETE SET NULL,
+    segment_id      INTEGER REFERENCES segments(id) ON DELETE SET NULL,
+    -- The absolute epoch the take started at, ms since the Unix epoch, exactly as a note
+    -- batch carries its own time. This is what lets the server attach the take to the
+    -- segment that was being played, and what lets the takes view say when it happened.
+    captured_start_ms INTEGER,
     created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_media_legacy
     ON media(legacy_id) WHERE legacy_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_media_piece ON media(piece_id);
+CREATE INDEX IF NOT EXISTS idx_media_segment ON media(segment_id);
+CREATE INDEX IF NOT EXISTS idx_media_source ON media(source);
 """
 
 
@@ -110,6 +127,15 @@ ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # SQLite only accepts a REFERENCES clause on ADD COLUMN when the default is
     # NULL, which is why the piece that owns the entry is NOT NULL and this is not.
     ("piece_journal", "sitting_id", "INTEGER REFERENCES sittings(id) ON DELETE SET NULL"),
+    # Phase 20e — where a take came from. A `DEFAULT 'uploaded'` cannot be expressed through
+    # the ADDED_COLUMNS tuple, which carries only a type string, so existing rows arrive NULL
+    # and `list_media` reads NULL as 'uploaded'. That is deliberate rather than sloppy: the
+    # alternative is a migration statement this mechanism cannot run, and NULL already means
+    # "before capture existed" everywhere else in this schema.
+    ("media", "source", "TEXT"),
+    ("media", "sitting_id", "INTEGER REFERENCES sittings(id) ON DELETE SET NULL"),
+    ("media", "segment_id", "INTEGER REFERENCES segments(id) ON DELETE SET NULL"),
+    ("media", "captured_start_ms", "INTEGER"),
 )
 
 

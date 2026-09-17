@@ -152,7 +152,8 @@ def list_media(conn: sqlite3.Connection, *, piece_id: int | None = None) -> list
     sql = """
         SELECT id, piece_id, kind, file_name, original_name, title,
                duration_secs, size_bytes, codec, taken_on,
-               loop_start_s, loop_end_s
+               loop_start_s, loop_end_s,
+               source, sitting_id, segment_id, captured_start_ms
         FROM media
     """
     params: Sequence[Any] = ()
@@ -164,6 +165,9 @@ def list_media(conn: sqlite3.Connection, *, piece_id: int | None = None) -> list
     records = []
     for row in conn.execute(sql, params):
         record = dict(row)
+        # NULL `source` is a row that existed before Phase 20e; it was uploaded, because
+        # capture did not exist. Normalised here so no caller has to know that.
+        record["source"] = record["source"] or "uploaded"
         record["state"] = media_state(str(record["file_name"]))
         records.append(record)
     return records
@@ -205,7 +209,8 @@ def get_media(conn: sqlite3.Connection, media_id: int) -> dict[str, Any] | None:
         """
         SELECT id, piece_id, kind, file_name, original_name, title,
                duration_secs, size_bytes, codec, taken_on,
-               loop_start_s, loop_end_s
+               loop_start_s, loop_end_s,
+               source, sitting_id, segment_id, captured_start_ms
         FROM media WHERE id = ?
         """,
         (media_id,),
@@ -213,6 +218,8 @@ def get_media(conn: sqlite3.Connection, media_id: int) -> dict[str, Any] | None:
     if row is None:
         return None
     record = dict(row)
+    # As in `list_media`: a row that predates capture was uploaded.
+    record["source"] = record["source"] or "uploaded"
     record["state"] = media_state(str(record["file_name"]))
     return record
 
@@ -522,16 +529,22 @@ def create_media(
     size_bytes: int | None,
     codec: str | None,
     taken_on: str | None = None,
+    source: str = "uploaded",
+    sitting_id: int | None = None,
+    segment_id: int | None = None,
+    captured_start_ms: int | None = None,
 ) -> int:
     cursor = conn.execute(
         """
         INSERT INTO media (piece_id, kind, file_name, original_name, title,
-                           duration_secs, size_bytes, codec, taken_on)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                           duration_secs, size_bytes, codec, taken_on,
+                           source, sitting_id, segment_id, captured_start_ms)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             piece_id, kind, file_name, original_name, title,
             duration_secs, size_bytes, codec, taken_on,
+            source, sitting_id, segment_id, captured_start_ms,
         ),
     )
     return int(cursor.lastrowid)

@@ -125,6 +125,7 @@ def status(conn: sqlite3.Connection = Depends(get_conn)) -> PracticeStatus:
         # is a fact rather than something a client claims.
         last_note_ms=int(last_end) if last_end is not None else None,
         capture=capture_status.snapshot(),
+        segment_gap_s=settings.segment_gap_s,
     )
 
 

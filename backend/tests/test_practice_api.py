@@ -933,3 +933,11 @@ def test_an_unanswered_offer_is_not_carried_across_a_split(client, conn) -> None
     assert all(s["practice_kind"] is None for s in halves), (
         f"an unanswered proposal is not inherited by a half ({halves})"
     )
+
+
+def test_the_practice_status_reports_the_segment_gap(client) -> None:
+    """The client cuts recorded audio on this rule, so it must not be a second copy of it."""
+    from app.config import settings
+
+    body = client.get("/api/practice/status").json()
+    assert body["segment_gap_s"] == settings.segment_gap_s

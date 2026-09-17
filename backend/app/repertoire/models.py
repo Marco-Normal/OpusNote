@@ -59,6 +59,13 @@ class MediaOut(BaseModel):
     #: pending  — not copied yet, but readable from the legacy library
     #: missing  — in neither place
     state: Literal["present", "pending", "missing"] = "missing"
+    #: 'uploaded' for a file that arrived by hand, 'captured' for audio the app recorded.
+    source: str = "uploaded"
+    #: The playing this take came from, when it was recorded here.
+    sitting_id: int | None = None
+    segment_id: int | None = None
+    #: Absolute epoch ms the take started at, for placing it against the notes.
+    captured_start_ms: int | None = None
 
 
 class PieceSummary(BaseModel):
