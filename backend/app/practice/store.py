@@ -703,7 +703,11 @@ def ensure_segments(
     would silently discard hand-edited boundaries and tags.
     """
     now = int(now_ms if now_ms is not None else time.time() * 1000)
-    with db.transaction(db_path) as conn:
+    # `immediate`: this reads the sitting and its notes and then writes segments from them, so a
+    # deferred transaction would have its first INSERT refused as "database is locked" if another
+    # connection committed in between. It is reached from read routes (`sitting_detail`, and the
+    # repertoire's take catch-up), which is exactly where that must not become a 500.
+    with db.transaction(db_path, immediate=True) as conn:
         sitting = conn.execute(
             "SELECT id, started_ms, ended_ms, source, closed_ms FROM sittings WHERE id = ?",
             (sitting_id,),

@@ -1448,3 +1448,14 @@ def test_a_recording_that_arrived_by_hand_is_not_counted_as_captured(client, ton
     assert uploaded.status_code == 201, uploaded.text
     assert uploaded.json()["source"] == "uploaded"
     assert client.get("/api/status/system").json()["captured_audio_bytes"] == 0
+
+
+def test_a_nonsense_take_epoch_is_refused_rather_than_crashing(client, tone_wav) -> None:
+    """An epoch no clock can produce is the caller's mistake, and sqlite3 would raise on it."""
+    with tone_wav.open("rb") as handle:
+        refused = client.post(
+            "/api/repertoire/takes",
+            files={"file": ("take.webm", handle, "audio/webm")},
+            data={"started_ms": str(10**30)},
+        )
+    assert refused.status_code == 422, refused.text

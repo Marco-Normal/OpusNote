@@ -10,6 +10,7 @@
     PieceSummary,
     PracticeSuggestion,
     RepertoireStatus,
+    Recording,
     SegmentSummary,
   } from '../lib/types';
   import { formatDuration, formatMinutes, formatSize } from '../lib/types';
@@ -125,14 +126,16 @@
   async function open(pieceId: number): Promise<void> {
     if (detail?.id === pieceId) {
       detail = null;
+      segments = new Map();
       return;
     }
     detailLoading = true;
     error = null;
     try {
-      detail = await api.repertoire.piece(pieceId);
+      const opened = await api.repertoire.piece(pieceId);
+      detail = opened;
       practice = await api.practice.piece(pieceId).catch(() => null);
-      await loadSegments();
+      await loadSegments(opened.media);
     } catch (cause) {
       error = cause instanceof Error ? cause.message : String(cause);
     } finally {
@@ -143,13 +146,16 @@
   /**
    * The segments the open piece's takes were played in.
    *
-   * Only the sittings that actually produced a take: a piece can hold hundreds of segments
-   * across years of practice, and fetching them all to label two takes is the wrong trade.
+   * The media rows are passed in rather than read back off `detail`: two `open()` calls can
+   * overlap, and a loader that read the mutable detail would pair one piece's takes with another's
+   * segments. Only the sittings that actually produced a take are fetched — a piece can hold
+   * hundreds of segments across years of practice, and fetching them all to label two takes is the
+   * wrong trade.
    */
-  async function loadSegments(): Promise<void> {
+  async function loadSegments(media: Recording[]): Promise<void> {
     const sittingIds = [
       ...new Set(
-        (detail?.media ?? [])
+        media
           .filter((row) => row.source === 'captured' && row.sitting_id !== null)
           .map((row) => row.sitting_id as number),
       ),
@@ -192,7 +198,7 @@
     if (pieceId !== null) {
       detail = await api.repertoire.piece(pieceId);
       practice = await api.practice.piece(pieceId).catch(() => null);
-      await loadSegments();
+      await loadSegments(detail.media);
     } else {
       detail = null;
       practice = null;

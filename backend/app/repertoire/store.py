@@ -529,7 +529,8 @@ def link_unlinked_takes(conn: sqlite3.Connection) -> int:
     The caller must have asked the practice domain to finish segmenting first; this does not
     materialise anything. A take is revisited while it has no segment *or* no piece, so a take
     whose segment is labelled with a piece later is picked up on the next read rather than
-    staying invisible.
+    staying invisible. Both assignments are `COALESCE`: a link already made is not overwritten,
+    so a re-read can fill a missing piece without ever moving a take to another passage.
     """
     rows = conn.execute(
         "SELECT id, sitting_id, captured_start_ms FROM media"
@@ -543,7 +544,8 @@ def link_unlinked_takes(conn: sqlite3.Connection) -> int:
         if found is None:
             continue
         conn.execute(
-            "UPDATE media SET segment_id = ?, piece_id = COALESCE(piece_id, ?) WHERE id = ?",
+            "UPDATE media SET segment_id = COALESCE(segment_id, ?),"
+            " piece_id = COALESCE(piece_id, ?) WHERE id = ?",
             (found[0], found[1], int(row["id"])),
         )
         linked += 1

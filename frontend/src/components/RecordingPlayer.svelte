@@ -66,21 +66,14 @@
     };
     // Both spellings: `preservesPitch` is the standard and `webkitPreservesPitch` is what older
     // Chromium builds honour, and a kiosk is exactly the kind of machine that runs an older one.
+    // Support is the honest answer: assigning true and reading the property back cannot tell a
+    // browser that ignores the write from one that honours it, so the property's existence is the
+    // capability, and its absence is the only case the readout has to warn about.
     const supported = 'preservesPitch' in media || 'webkitPreservesPitch' in media;
     media.preservesPitch = true;
     media.webkitPreservesPitch = true;
     media.playbackRate = value;
-    // Read back through `held` rather than comparing the properties directly: the assignment
-    // just above narrows them to `true` for the type checker, and the point of reading back is
-    // exactly the browser that accepted the write and ignored it. A browser with neither
-    // spelling cannot hold pitch, and claiming it can would be contradicted the moment the
-    // passage drops an octave.
-    preservesPitch =
-      supported && held(media.preservesPitch) && held(media.webkitPreservesPitch);
-  }
-
-  function held(value: unknown): boolean {
-    return value !== false;
+    preservesPitch = supported;
   }
 
   const duration = $derived(measured || recording.duration_secs || 0);

@@ -474,14 +474,19 @@ def _catch_up_takes() -> int:
         waiting = store.unlinked_take_sittings(conn)
     for sitting_id in waiting:
         practice_store.ensure_segments(sitting_id)
-    with db.transaction(settings.db_path) as conn:
+    # `immediate`: the sweep reads `media` and then writes the rows it read, which a deferred
+    # transaction cannot do safely — a connection committing in between turns the write into
+    # "database is locked" instead of waiting, and this runs on a plain piece read.
+    with db.transaction(settings.db_path, immediate=True) as conn:
         return store.link_unlinked_takes(conn)
 
 
 @router.post("/takes", response_model=MediaOut, status_code=201)
 def upload_take(
     file: UploadFile = File(...),
-    started_ms: int = Form(...),
+    # Bounded, so a nonsense epoch is a 422 rather than an OverflowError from sqlite3. The
+    # ceiling is 2100-01-01 in ms: past it, the value is a bug and not a clock.
+    started_ms: int = Form(..., ge=0, le=4_102_444_800_000),
     title: str | None = Form(default=None),
 ) -> MediaOut:
     """Catalogue one captured take and attach it to the playing it came from.
@@ -517,7 +522,10 @@ def upload_take(
             # part of its own work, so this is the only probe on the path.
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-        with db.transaction(settings.db_path) as conn:
+        # `immediate`: this reads the row it is about to insert (the duplicate check), and two
+        # identical uploads racing on a deferred transaction would both pass it — the loser
+        # getting a 500 instead of the 409 this route documents.
+        with db.transaction(settings.db_path, immediate=True) as conn:
             # Resolved here rather than before the transcode: a `resegment` running while
             # ffmpeg works would otherwise leave this pointing at a segment that no longer
             # exists, and the insert would fail as a bare foreign-key error.

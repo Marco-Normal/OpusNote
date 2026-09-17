@@ -518,3 +518,29 @@ def test_the_upgraded_database_gives_the_take_columns_a_not_null_source() -> Non
         )
     finally:
         conn.close()
+
+
+def test_an_immediate_transaction_takes_the_write_lock_before_it_reads() -> None:
+    """The take catch-up reads `media` and then writes the rows it read, and it runs on a plain
+    piece read. A deferred transaction fixes its snapshot at the first SELECT, so a commit from
+    another connection in between turns the write into `database is locked` — SQLITE_BUSY_SNAPSHOT,
+    which `busy_timeout` does not retry. Taking the lock up front is what removes that window."""
+    path = _fresh_path("immediate.sqlite3")
+    db.init_db(path)
+
+    other = db.connect(path)
+    try:
+        with db.transaction(path, immediate=True) as conn:
+            conn.execute("INSERT INTO composers (name) VALUES ('first')")
+            other.execute("PRAGMA busy_timeout = 100")
+            with pytest.raises(sqlite3.OperationalError, match="locked"):
+                other.execute("INSERT INTO composers (name) VALUES ('second')")
+    finally:
+        other.rollback()
+        other.close()
+
+    conn = db.connect(path)
+    try:
+        assert [row[0] for row in conn.execute("SELECT name FROM composers")] == ["first"]
+    finally:
+        conn.close()

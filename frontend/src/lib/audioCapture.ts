@@ -37,7 +37,6 @@ export class AudioCaptureClient {
 
   deviceState: CaptureDeviceState = 'unknown';
   lastError: string | null = null;
-  captured = 0;
 
   constructor(
     /** The last note any port has heard, or null. The same source the gesture reads. */
@@ -118,6 +117,24 @@ export class AudioCaptureClient {
 
   private open(nowMs: number): void {
     if (this.stream === null) return;
+    let recorder: MediaRecorder;
+    try {
+      recorder = new MediaRecorder(this.stream, {
+        mimeType: 'audio/webm;codecs=opus',
+        audioBitsPerSecond: AUDIO_BITS_PER_SECOND,
+      });
+      recorder.start();
+    } catch (cause) {
+      // A browser that cannot produce this codec is a machine that cannot record. Saying so and
+      // stopping beats throwing out of an unawaited tick once a second, which looks exactly like
+      // a microphone that is simply silent.
+      this.deviceState = 'unavailable';
+      this.lastError = cause instanceof Error ? cause.message : String(cause);
+      if (this.timer !== null) clearInterval(this.timer);
+      this.timer = null;
+      this.onStatus();
+      return;
+    }
     this.chunks = [];
     // The take begins at the note that opened it, not at the tick that noticed it. The tick is
     // up to a second late, and an epoch taken from it can fall *after* the phrase it recorded —
@@ -125,14 +142,9 @@ export class AudioCaptureClient {
     // The note's own time is what the server resolves the passage from, and it is the moment the
     // playing began rather than the moment this recorder noticed.
     this.startedMs = this.lastNoteMs() ?? nowMs;
-    const recorder = new MediaRecorder(this.stream, {
-      mimeType: 'audio/webm;codecs=opus',
-      audioBitsPerSecond: AUDIO_BITS_PER_SECOND,
-    });
     recorder.ondataavailable = (event) => {
       if (event.data.size > 0) this.chunks.push(event.data);
     };
-    recorder.start();
     this.recorder = recorder;
   }
 
@@ -153,21 +165,37 @@ export class AudioCaptureClient {
     // only on a note newer than this. Without it the switch re-opens on the same stale note and
     // records silence for ever — which is what the browser scenario caught.
     this.takenThroughMs = this.lastNoteMs() ?? this.takenThroughMs;
+
+    let blob: Blob;
     try {
-      await new Promise<void>((resolve) => {
-        recorder.onstop = () => resolve();
-        recorder.stop();
-      });
-      const blob = new Blob(this.chunks, { type: 'audio/webm' });
-      this.chunks = [];
-      if (blob.size > 0) {
-        await this.upload(blob, startedMs);
-        this.captured += 1;
+      // A recorder that has already stopped — the device went away, or a track ended — will never
+      // fire `onstop` again, so awaiting it would strand `busy` and every later take with it.
+      if (recorder.state !== 'inactive') {
+        await new Promise<void>((resolve, reject) => {
+          recorder.onstop = () => resolve();
+          recorder.onerror = () => reject(new Error('the recorder stopped on an error'));
+          recorder.stop();
+        });
       }
+      blob = new Blob(this.chunks, { type: 'audio/webm' });
+    } catch (cause) {
+      this.lastError = cause instanceof Error ? cause.message : String(cause);
+      this.chunks = [];
+      this.busy = false;
+      this.onStatus();
+      return;
+    }
+    this.chunks = [];
+
+    // Recording is free to start again while the upload is in flight: the bytes are already in
+    // `blob`, and a server that is slow to answer must not stop the switch hearing the next
+    // phrase. The failure, if any, is surfaced below rather than swallowed.
+    this.busy = false;
+    try {
+      if (blob.size > 0) await this.upload(blob, startedMs);
     } catch (cause) {
       this.lastError = cause instanceof Error ? cause.message : String(cause);
     } finally {
-      this.busy = false;
       this.onStatus();
     }
   }

@@ -152,10 +152,20 @@ def connect(db_path: Path | None = None) -> sqlite3.Connection:
 
 
 @contextmanager
-def transaction(db_path: Path | None = None) -> Iterator[sqlite3.Connection]:
+def transaction(
+    db_path: Path | None = None, *, immediate: bool = False
+) -> Iterator[sqlite3.Connection]:
+    """One write transaction. `immediate` takes the write lock before the first read.
+
+    A plain `BEGIN` is deferred: the read snapshot is fixed by the first SELECT, and if another
+    connection commits before this one writes, SQLite cannot upgrade the read transaction and
+    raises `SQLITE_BUSY_SNAPSHOT` — reported as "database is locked", and *not* retried by
+    `busy_timeout`. A transaction that reads a row and then decides to write it must therefore
+    say so up front, or a second reader can turn its UPDATE into an error.
+    """
     conn = connect(db_path)
     try:
-        conn.execute("BEGIN")
+        conn.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
         yield conn
         conn.execute("COMMIT")
     except Exception:

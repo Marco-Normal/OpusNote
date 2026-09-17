@@ -273,12 +273,27 @@ class AppState {
   audioDevice = $state<'unknown' | 'ready' | 'unavailable' | 'denied'>('unknown');
   audioNote = $state<string | null>(null);
   takesCaptured = $state(0);
+  /** The server's segment gap in ms, refreshed on every arm. Plain field: the client reads it. */
+  private audioGapMs = 0;
 
   async toggleAudioCapture(): Promise<void> {
     if (this.audioArmed) {
       this.audioCapture?.stop();
       this.audioArmed = false;
       this.audioNote = null;
+      return;
+    }
+    // Audio is only useful where the notes are: a take is placed by the epoch of the playing it
+    // recorded, so with logging paused the server stores no notes and every take would be refused
+    // and thrown away while the switch claimed to be recording. The same for a machine with no
+    // MIDI, which can never open a take at all.
+    if (!this.captureEnabled) {
+      this.audioNote =
+        'logging is paused, so a take could not be attached to the playing it came from';
+      return;
+    }
+    if (!this.midiConnected) {
+      this.audioNote = 'no MIDI device, so there is no playing for a take to be attached to';
       return;
     }
     // From the server, every time: audio cut somewhere else than the notes would disagree
@@ -290,10 +305,13 @@ class AppState {
         'the server did not report its segment gap, so a take could be cut in the wrong place';
       return;
     }
+    // Stored rather than captured in the closure: a closure would keep the value from the first
+    // arm for the life of the page, so a server whose gap changed would be cut for on the old one.
+    this.audioGapMs = status.segment_gap_s * 1000;
     if (this.audioCapture === null) {
       this.audioCapture = new AudioCaptureClient(
         () => this.lastNoteMs,
-        () => status.segment_gap_s * 1000,
+        () => this.audioGapMs,
         async (blob, startedMs) => {
           await api.repertoire.uploadTake(blob, startedMs);
           // The takes list is per piece and the library view owns it; this only refreshes the
@@ -479,6 +497,14 @@ class AppState {
     if (enabled && this.midiConnected) this.capture.start();
     else this.capture.stop();
     if (enabled) this.startCaptureHeartbeat();
+    // A take is placed by the epoch of the playing it recorded, and a playing is only known from
+    // logged notes. Pausing the log mid-session therefore stops the audio too, rather than leaving
+    // a switch that records takes the server has nothing to attach them to.
+    if (!enabled && this.audioArmed) {
+      this.audioCapture?.stop();
+      this.audioArmed = false;
+      this.audioNote = 'logging was paused, so recording takes stopped with it';
+    }
   }
 
   /**

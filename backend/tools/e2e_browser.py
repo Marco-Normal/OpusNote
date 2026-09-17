@@ -2003,6 +2003,26 @@ def scenario_takes(browser) -> None:
         return
 
     # --- arming reports a real device, not a hopeful switch ---
+    # First, a switch that must refuse: with the note log paused the server stores no playing, so
+    # every take would be refused and thrown away — exactly the "looks armed, records nothing"
+    # state this control exists to prevent.
+    click_button(page, "Log")
+    page.wait_for_selector('[data-capture="on"]', timeout=20_000)
+    click_button(page, "Pause logging")
+    page.wait_for_selector('[data-capture="off"]', timeout=10_000)
+    click_button(page, "Record takes")
+    page.wait_for_selector("[data-audio-note]", timeout=10_000)
+    check(
+        page.locator('[data-audio-capture="off"]').count() == 1,
+        "the audio switch refuses to arm while the note log is paused",
+    )
+    check(
+        "paused" in page.inner_text("[data-audio-note]"),
+        "and says why, rather than arming into a server that has nothing to attach a take to",
+    )
+    click_button(page, "Resume logging")
+    page.wait_for_selector('[data-capture="on"]', timeout=10_000)
+
     click_button(page, "Record takes")
     page.wait_for_selector('[data-audio-device="ready"]', timeout=15_000)
     check(True, "the switch reports the microphone it actually got")

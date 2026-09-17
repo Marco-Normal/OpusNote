@@ -1608,6 +1608,27 @@ bounded by the unplaced takes in the library, and it is the same "read path that
 `ensure_segments` already uses. No route changed shape, no table was added, `BACKUP_VERSION` is
 unchanged, and the recording upload still writes `source='uploaded'`.
 
+**A second, adversarial review of the final tree found four things worth fixing, all verified before
+the fix.** (1) Write-on-read made the catch-up racy: `db.transaction` used a deferred `BEGIN`, so the
+sweep's SELECT fixed a snapshot and a commit from another connection in between turned its UPDATE into
+`OperationalError: database is locked` — `SQLITE_BUSY_SNAPSHOT`, which `busy_timeout` does *not*
+retry, on a plain piece GET (reproduced with two threads in three lines). `db.transaction` gained
+`immediate=True` (`BEGIN IMMEDIATE`) and it is used by the sweep, by the take insert — which had the
+same read-then-write shape behind its documented 409 — and by `ensure_segments`, which a read route
+now calls. (2) Arming while the note log was paused produced takes the server refused and the client
+silently discarded, which is the exact failure 20e-D1 exists to prevent: the switch now refuses to arm
+without logging and MIDI, saying why, and pausing the log stops an armed switch rather than leaving it
+lying; the browser scenario asserts the refusal. (3) `close()` could strand itself for ever if the
+recorder had already stopped (a device going away means `onstop` never fires again), and it held
+`busy` across the upload, so a slow server stopped all further recording; the blob is now built
+defensively and the switch is free to record again while the upload is in flight. (4) The segment gap
+was captured from the first arm's closure, contradicting 20e-D2's "from the server, every time" — it
+is a field refreshed on every arm. Smaller: a nonsense `started_ms` is now a 422 rather than an
+overflow 500, `link_unlinked_takes` uses `COALESCE` on `segment_id` so a re-read can fill a missing
+piece without ever moving a take to another passage, `loadSegments` takes the media rows it was given
+rather than reading mutable state, the pitch readout reports property *support* instead of reading
+back a value it just wrote, and the unused `captured` counter is gone.
+
 **One acceptance bullet is measured unmet, and it is a spec/plan conflict rather than a slip.**
 ECOSYSTEM § 20e asks for "a take whose duration is within a second of the notes it covers". The plan
 cuts a take on the server's own silence gap, which necessarily appends that whole gap to the file, so
@@ -1621,10 +1642,12 @@ the plan authorized, so it is recorded here rather than done quietly. A second, 
 recorder polls once a second, so a take can miss up to the first second of the phrase that opened it —
 quality, which 20-D4 explicitly does not make an acceptance criterion.
 
-Verified: backend **880 passed**; frontend 81; `svelte-check` clean; build clean; the new `takes`
-browser scenario passes fifteen assertions against a fake microphone, including that two takes attach
-to *their own* passages rather than both to the first, that both render for comparison, that 0.5×
-reaches one element and leaves the other alone with the same-pitch readout, and that a loop marker
-saved on one take leaves the other unmarked; four falsifications run and caught their breaks
-(`drop_media_source_column.sh`, `drop_capture_segment_link.sh`, `drop_take_catch_up.sh`,
-`cut_takes_at_the_wrong_gap.sh`); `./check.sh --full` green in **566 s**.
+Verified: backend **882 passed**; frontend 81; `svelte-check` clean; build clean; the new `takes`
+browser scenario passes seventeen assertions against a fake microphone, including that the switch
+refuses to arm while the log is paused, that two takes attach to *their own* passages rather than both
+to the first, that both render for comparison, that 0.5× reaches one element and leaves the other
+alone with the same-pitch readout, and that a loop marker saved on one take leaves the other unmarked;
+four falsifications run and caught their breaks (`drop_media_source_column.sh`,
+`drop_capture_segment_link.sh`, `drop_take_catch_up.sh`, `cut_takes_at_the_wrong_gap.sh`);
+`./check.sh --full` green in **566 s** before the review-driven repairs, with `--fast` re-run green
+after them.
