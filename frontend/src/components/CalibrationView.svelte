@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from 'svelte';
   import { api } from '../lib/api';
+  import { countInBeats as countInBeatsFor } from '../lib/countIn';
   import { LiveMatcher } from '../lib/liveMatch';
   import { Metronome, type BeatInfo } from '../lib/metronome';
   import { ScoreRenderer } from '../lib/score';
@@ -142,7 +143,7 @@
     // and the count-in wrong in every compound meter.
     const secondsPerQuarter = 60 / exercise.tempo_bpm;
     const barBeatUnits = exercise.measures.map((measure) => measure.beat_unit_q);
-    const countInBeats = barsBeats[0] ?? 4;
+    const countInBeats = countInBeatsFor(app.countInBars, barsBeats);
 
     phase = 'countin';
     offBeat?.();
@@ -150,7 +151,13 @@
       beatInfo = info;
       if (!info.inCountIn && phase === 'countin') phase = 'playing';
     });
-    metronome.start({ barsBeats, barBeatUnits, secondsPerQuarter, countInBeats });
+    metronome.start({
+      barsBeats,
+      barBeatUnits,
+      secondsPerQuarter,
+      countInBeats,
+      clickVolume: app.clickVolume,
+    });
     app.midi.startRecording(metronome.downbeatMs);
     endTimer = setTimeout(() => void finish(), metronome.durationSeconds * 1000 + 1500);
   }

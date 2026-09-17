@@ -113,6 +113,35 @@
       Latency {app.latencyMs} ms
     </button>
 
+    <span class="row sound">
+      <label class="muted small" for="count-in">Count-in</label>
+      <select
+        id="count-in"
+        value={app.countInBars}
+        onchange={(event) =>
+          app.setCountInBars(Number((event.currentTarget as HTMLSelectElement).value))}
+      >
+        <option value={0}>none</option>
+        <option value={1}>1 bar</option>
+        <option value={2}>2 bars</option>
+      </select>
+    </span>
+
+    <span class="row sound">
+      <label class="muted small" for="click-volume">Click</label>
+      <input
+        id="click-volume"
+        type="range"
+        min="0"
+        max="127"
+        step="1"
+        value={app.clickVolume}
+        aria-label="Metronome click volume"
+        oninput={(event) =>
+          app.setClickVolume(Number((event.currentTarget as HTMLInputElement).value))}
+      />
+    </span>
+
     <!--
       The audio switch. It asks the server for the segment gap every time it is armed,
       so a take is cut where the notes are cut rather than at a constant copied here.

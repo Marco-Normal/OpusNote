@@ -46,11 +46,32 @@ export interface MetronomePlan {
   secondsPerQuarter: number;
   /** How many beats of count-in to play before beat 1. */
   countInBeats: number;
+  /**
+   * Click volume, 0..127.
+   *
+   * On the same scale as a MIDI velocity because the app already has one, and because
+   * "60 is quieter than 96" needs no explanation. Absent means the historical default.
+   */
+  clickVolume?: number;
 }
 
 export type BeatListener = (info: BeatInfo) => void;
 
 const LOOKAHEAD_S = 0.1;
+
+/** The default click volume, where 96/127 is a comfortable practice click. */
+export const DEFAULT_CLICK_VOLUME = 96;
+
+/**
+ * A 0..127 controller value as the decibels Tone expects.
+ *
+ * 127 maps to -6 dB rather than 0: a metronome that can clip is not a metronome. The
+ * curve is the square of the fraction, which is approximately how loudness is heard.
+ */
+export function toneDbFor(value: number): number {
+  const fraction = Math.max(0, Math.min(127, value)) / 127;
+  return fraction <= 0 ? -Infinity : -6 + 20 * Math.log10(fraction * fraction);
+}
 
 export class Metronome {
   private synth: Tone.Synth | null = null;
@@ -77,7 +98,8 @@ export class Metronome {
       this.synth = new Tone.Synth({
         oscillator: { type: 'square' },
         envelope: { attack: 0.001, decay: 0.05, sustain: 0, release: 0.02 },
-        volume: -12,
+        // Held on the instance so a later volume change does not need a new synth.
+        volume: toneDbFor(this.plan?.clickVolume ?? DEFAULT_CLICK_VOLUME),
       }).toDestination();
     }
   }
@@ -94,6 +116,9 @@ export class Metronome {
   start(plan: MetronomePlan): void {
     this.stop();
     this.plan = plan;
+    // Applied on every start as well as in `unlock`, because `unlock()` runs on the first
+    // user gesture and may happen *after* the first `start()`.
+    if (this.synth) this.synth.volume.value = toneDbFor(plan.clickVolume ?? DEFAULT_CLICK_VOLUME);
     this.buildSchedule(plan);
     this.startMs = performance.now();
     this.scheduledUntil = 0;

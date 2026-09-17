@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from 'svelte';
   import { api } from '../lib/api';
+  import { countInBeats as countInBeatsFor } from '../lib/countIn';
   import { LiveMatcher } from '../lib/liveMatch';
   import { Metronome, type BeatInfo } from '../lib/metronome';
   import { MIN_ZOOM, ScoreRenderer } from '../lib/score';
@@ -29,6 +30,8 @@
   let tooLong = $state(false);
   let zoom = $state(1);
   let beatInfo = $state<BeatInfo | null>(null);
+  /** The count-in this run actually uses, so the screen states it rather than implying it. */
+  let countInBeatsUsed = $state(0);
   let liveStatuses = $state<Map<number, NoteStatus>>(new Map());
   let progress = $state({ done: 0, total: 0, correct: 0, wrong: 0, extra: 0 });
 
@@ -224,7 +227,11 @@
     // and the count-in wrong in every compound meter.
     const secondsPerQuarter = 60 / exercise.tempo_bpm;
     const barBeatUnits = exercise.measures.map((measure) => measure.beat_unit_q);
-    const countInBeats = barsBeats[0] ?? 4;
+    const countInBeats = countInBeatsFor(app.countInBars, barsBeats);
+    // What this run actually derived, so the screen states it rather than implying it: the
+    // count-in is inaudible to the browser tier, and a player who asked for two bars and got
+    // four would otherwise have no way to notice.
+    countInBeatsUsed = countInBeats;
 
     phase = 'countin';
     renderer?.resetColors();
@@ -235,7 +242,13 @@
       if (!info.inCountIn && phase === 'countin') phase = 'playing';
     });
 
-    metronome.start({ barsBeats, barBeatUnits, secondsPerQuarter, countInBeats });
+    metronome.start({
+      barsBeats,
+      barBeatUnits,
+      secondsPerQuarter,
+      countInBeats,
+      clickVolume: app.clickVolume,
+    });
     // Everything is measured from beat 1, not from the first count-in click.
     app.midi.startRecording(metronome.downbeatMs);
 
@@ -437,6 +450,9 @@
         </div>
         <span class="pill" class:warn={phase === 'countin'} class:good={phase === 'playing'}>
           {phase === 'countin' ? `Count-in · ${beatInfo?.beat ?? 1}` : `Bar ${beatInfo?.bar ?? 1}`}
+        </span>
+        <span class="pill mono" data-count-in-beats={countInBeatsUsed}>
+          {countInBeatsUsed} beats of count-in
         </span>
         <span class="pill mono">
           {mode === 'practice' ? `${progress.correct}/${progress.total} notes` : 'listening…'}

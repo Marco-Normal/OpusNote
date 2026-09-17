@@ -19,6 +19,8 @@ const BARS_STORAGE_KEY = 'srt.bars';
 const FOCUS_STORAGE_KEY = 'srt.focusMode';
 const CAPTURE_STORAGE_KEY = 'srt.capture';
 const MIDI_PIN_STORAGE_KEY = 'srt.midi.pin';
+const COUNT_IN_BARS_STORAGE_KEY = 'srt.countInBars';
+const CLICK_VOLUME_STORAGE_KEY = 'srt.clickVolume';
 
 /** Exercise lengths offered in the UI. Length is a preference, not difficulty. */
 export const BAR_CHOICES = [4, 8, 12, 16] as const;
@@ -38,6 +40,25 @@ function readFocus(): boolean {
     return localStorage.getItem(FOCUS_STORAGE_KEY) === 'true';
   } catch {
     return false;
+  }
+}
+
+function readCountInBars(): number {
+  try {
+    const value = Number(localStorage.getItem(COUNT_IN_BARS_STORAGE_KEY));
+    return value === 0 || value === 1 || value === 2 ? value : 1;
+  } catch {
+    return 1;
+  }
+}
+
+/** Click volume as a MIDI-style controller value, 0..127, so the app has one scale. */
+function readClickVolume(): number {
+  try {
+    const value = Number(localStorage.getItem(CLICK_VOLUME_STORAGE_KEY));
+    return Number.isFinite(value) && value >= 0 && value <= 127 ? value : 96;
+  } catch {
+    return 96;
   }
 }
 
@@ -113,6 +134,12 @@ class AppState {
    * would make the rating mean two things at once.
    */
   bars = $state(readBars());
+
+  /** Bars of count-in before beat 1: 0, 1 or 2. A preference, never part of a score. */
+  countInBars = $state(readCountInBars());
+
+  /** Metronome click volume, 0..127. */
+  clickVolume = $state(readClickVolume());
 
   /** Hides everything that is not the score, so the music owns the viewport. */
   focusMode = $state(readFocus());
@@ -464,6 +491,25 @@ class AppState {
       localStorage.setItem(BARS_STORAGE_KEY, String(value));
     } catch {
       // Storage may be unavailable (private mode); the in-memory value still works.
+    }
+  }
+
+  setCountInBars(value: number): void {
+    if (value !== 0 && value !== 1 && value !== 2) return;
+    this.countInBars = value;
+    try {
+      localStorage.setItem(COUNT_IN_BARS_STORAGE_KEY, String(value));
+    } catch {
+      // Storage may be unavailable (private mode); the in-memory value still works.
+    }
+  }
+
+  setClickVolume(value: number): void {
+    this.clickVolume = Math.max(0, Math.min(127, Math.round(value)));
+    try {
+      localStorage.setItem(CLICK_VOLUME_STORAGE_KEY, String(this.clickVolume));
+    } catch {
+      // As above.
     }
   }
 
