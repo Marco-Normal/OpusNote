@@ -1710,10 +1710,22 @@ after 20e, so the two plans meet here only at `runHandsfree`. The gesture is ine
 attempt, and one press of the sostenuto starts or finishes a workout — the bench scenario asserts
 that a press mid-run starts nothing.
 
+**One falsification the plan wrote did not falsify, which is the reason the falsification exists.**
+`misroute_a_piece.sh` breaks `routeHash` by dropping the entity, and the plan expected "a piece link
+opens that piece" to catch it — but that assertion navigates to a hand-written URL and so exercises
+only the *parser*. With the break applied the check passed, and `falsify.sh` said so. The scenario now
+also opens a piece by clicking its row and asserts that the app itself wrote
+`#/repertoire/piece/<id>`, which is the direction the serialiser break can fail; the falsification
+catches it. Worth knowing when running these by hand: `falsify.sh` reverts tracked source with
+`git checkout`, and `frontend/dist` is gitignored, so a browser falsification leaves a **broken
+build** behind — every one of the three check commands starts with `npm run build` for exactly that
+reason, and a manual run after one must rebuild first.
+
 Verified: frontend **97 passed**, `svelte-check` clean, build clean; the new `bench` browser scenario
-passes nineteen assertions (unseen pedal, discovered pedal, workout start/finish, capture arm/stop,
+passes twenty-one assertions (unseen pedal, discovered pedal, workout start/finish, capture arm/stop,
 inert during a run, a piece link opening its piece, Back closing it, the palette finding a piece and
-Escape closing it, two bars reaching the metronome and surviving a reload, no console errors);
-four committed falsifications, three of them run against the built frontend
-(`drop_controller_stream.sh`, `ignore_count_in_preference.sh`, `misroute_a_piece.sh` and
-`drop_handsfree_silence_gate.sh`); `./check.sh --full` green.
+Escape closing it, a section URL opening nothing on its own, opening a piece writing its address, two
+bars reaching the metronome and surviving a reload, no console errors); four committed falsifications
+run and all four caught their breaks (`drop_handsfree_silence_gate.sh` at the unit tier;
+`drop_controller_stream.sh`, `ignore_count_in_preference.sh` and `misroute_a_piece.sh` against the
+built frontend); `./check.sh --full` green.
