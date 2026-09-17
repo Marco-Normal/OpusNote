@@ -1529,3 +1529,90 @@ Impact on the other side: planning documents were corrected for running this out
 `edit()` function its Task 2 also rewrites, so its anchor text must be re-read at execution time.
 No route, table or wire format was removed; `segment_metrics` gained one nullable column and
 `SegmentMetricsOut` one list.
+
+## 2026-09-17 — sight-reading agent — Phase 20e landed (audio takes), out of order and with one repair the plan could not have caught
+
+Scope: `backend/app/{practice,repertoire}` (schema, store, models, api), `backend/app/{db,models,main}.py`,
+`backend/tests/{test_repertoire,test_migration_upgrade,test_practice_api}.py`,
+`backend/tools/e2e_browser.py`, `backend/tools/falsifications/` (three new scripts),
+`frontend/src/lib/{audioCut,audioCapture,audioCut.test,api,types,state.svelte}.ts`,
+`frontend/src/components/{DeviceBar,TakeList,RecordingPlayer,RepertoireView,PracticeLogView}.svelte`,
+`deploy/{chromium-policy.json,README.md,install.sh}`, `docs/{DEPLOYMENT,ECOSYSTEM}.md`, `README.md`.
+
+Did: a captured take is an **ordinary media row** — content-hashed, probed, transcoded, with a
+waveform and an A/B loop — so the whole library pipeline applies unchanged. `media` gains four
+additive nullable columns (`source`, `sitting_id`, `segment_id`, `captured_start_ms`), the four reads
+and `create_media` learn them, and `source` defaults to `'uploaded'` so every pre-existing row is
+already correct. `POST /api/repertoire/takes` takes a multipart file plus the absolute epoch the
+chunk started at, reuses `_stage_upload` and `store_recording` wholesale (so the size cap and the
+hashing cannot diverge from the recording upload), and refuses byte-identical audio with a 409 that
+names where it already lives. `PracticeStatus.segment_gap_s` is the only copy of the cutting rule:
+the client cuts on the server's gap and there is no local fallback — a server that cannot report it
+refuses the arming. `audioCut.ts` is the pure cutter, `audioCapture.ts` mirrors `CaptureClient`, and
+the device bar arms it, classifying `getUserMedia`'s failure into *denied* and *unavailable*, both
+rendered, because a switch that looks armed and records nothing is the failure this exists to avoid.
+`TakeList.svelte` shows the takes of a piece with any two side by side; `RecordingPlayer` gains
+0.85×/0.7×/0.5× with a readout that says whether pitch is held.
+
+**The plan's central mechanism did not work, and the browser scenario was right to fail on it.**
+Segments are materialised only for a *closed* sitting (`practice/store.py:ensure_segments`), and a
+take is cut eight seconds after the player stops while the sitting stays open for the five-minute
+gap. So at upload time there is no segment, `segment_id`/`piece_id` stay NULL, and the plan's
+recovery — "the next take uploaded for that sitting" — is unreachable, because after a sitting closes
+no new take can carry an epoch inside it. The user chose **catch-up on read**: `_catch_up_takes()`
+runs on every take upload and on the piece read the takes view makes, asks the practice domain to
+finish its own segmentation via `ensure_segments` (practice still writes `segments`, and it refuses a
+still-open sitting, which is right), then sweeps `media` for takes missing a segment *or* a piece
+(repertoire still writes `media`). A take whose segment is labelled later is picked up on the next
+read instead of staying invisible. `drop_take_catch_up.sh` falsifies it.
+
+**The browser run then found a second defect the unit test could not.** `lastNoteMs` is the newest
+note any port has ever heard and never clears, so `shouldStart({lastNoteMs !== null})` re-opened a
+take the instant the previous one closed and recorded silence for ever — two takes from one phrase,
+and one every nine seconds thereafter. `shouldStart` now takes `takenThroughMs` (the newest note a
+take already holds), which the client advances when it closes a take and sets on arming. The pure
+unit that "a take starts on the first note" was true and still wrong; only the scenario that plays a
+phrase and counts the takes could say so.
+
+**One deliberate departure from the plan's migration advice, with its reason.** The plan held that
+`ADDED_COLUMNS` "carries only a type string" and therefore could not express `DEFAULT 'uploaded'`,
+accepting NULL on upgraded rows and normalising on read. That is not so: SQLite accepts a constant
+default on `ADD COLUMN`, so the entry is `TEXT NOT NULL DEFAULT 'uploaded'`. A NULL would have been
+exported by name and restored into a fresh database's NOT NULL column, where `merge` drops the row
+silently and `replace` fails outright — the one path this phase could have broken for the machine
+move the backup exists for. Same columns, no read-time workaround. `SCHEMA_VERSION` goes **3 → 4**,
+not the plan's "4 → 5", because 20d has not landed; 20d's plan must become 4 → 5.
+
+**Also repaired from an independent review of Tasks 1–3** (each reproduced before fixing):
+`store_recording`'s `MediaError` was uncaught on the take route, so an unnamed `MediaRecorder` blob
+was a 500 where the plan documents a 422; `sitting_at` used the bare note range instead of the
+ingest rule (`ended_ms + sitting_gap_s`), refusing audio a beat after the last release, and it
+deliberately does *not* require `closed_ms IS NULL` — a sitting closed by the piano going away still
+owns the take being recorded; `found` is resolved after the transcode rather than before it, so a
+concurrent `resegment` cannot turn into a foreign-key 500; and the client sends the **note that
+opened the take** as its epoch, not the tick that noticed it, because a tick can be a second late and
+an epoch from it falls outside the phrase it recorded.
+
+`deploy/chromium-policy.json` gains `AudioCaptureAllowedForUrls` for `localhost`/`127.0.0.1` **and**
+`AudioCaptureAllowed: false`. The boolean is the half that is easy to get wrong: left unset, Chromium
+*prompts* for every other origin rather than refusing it, which on a kiosk is a question nobody can
+answer; `false` keeps the named origins' grant and refuses the rest silently. Both documents say it
+that way, and the installer's own echo now names the microphone.
+
+Impact on the other side: **the phase is not complete** — 20b, 20c and 20d remain planned, and 20e
+shipped without 20b's pedal arm/stop gesture, so the device-bar button is the only way to arm capture.
+`SCHEMA_VERSION` 4 means 20d's planned bump is now 4 → 5, and 20c/20d must re-read their anchors:
+`repertoire/store.py`'s media reads, `create_media` and `api.py`'s route table have all changed shape.
+`GET /api/repertoire/pieces/{id}` now writes (it may attach waiting takes); it is idempotent and
+bounded by the unplaced takes in the library, and it is the same "read path that writes" pattern
+`ensure_segments` already uses. No route changed shape, no table was added, `BACKUP_VERSION` is
+unchanged, and the recording upload still writes `source='uploaded'`. Residual risk worth naming: the
+recorder polls once a second, so a take can miss up to the first second of the phrase that opened it;
+that is quality, which 20-D4 explicitly does not make an acceptance criterion.
+
+Verified: backend **880 passed**; frontend 81; `svelte-check` clean; build clean; the new
+`takes` browser scenario passes ten assertions against a fake microphone, including that the take is
+attached to the piece, the playing and the passage, and that 0.5× reaches the element with the
+same-pitch readout; four falsifications run and caught their breaks
+(`drop_media_source_column.sh`, `drop_capture_segment_link.sh`, `drop_take_catch_up.sh`,
+`cut_takes_at_the_wrong_gap.sh`); `./check.sh --full` green in **566 s**.

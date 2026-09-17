@@ -25,8 +25,29 @@ test('a long unbroken passage is cut anyway, at the maximum length', () => {
 });
 
 test('a take starts on the first note and never on silence', () => {
-  assert.equal(shouldStart({ lastNoteMs: null, recording: false }), false);
-  assert.equal(shouldStart({ lastNoteMs: 5_000, recording: false }), true);
-  assert.equal(shouldStart({ lastNoteMs: 5_000, recording: true }), false, 'already recording');
-  assert.equal(shouldStart({ lastNoteMs: null, recording: true }), false);
+  assert.equal(shouldStart({ lastNoteMs: null, recording: false, takenThroughMs: null }), false);
+  assert.equal(shouldStart({ lastNoteMs: 5_000, recording: false, takenThroughMs: null }), true);
+  assert.equal(shouldStart({ lastNoteMs: 5_000, recording: true, takenThroughMs: null }), false, 'already recording');
+  assert.equal(shouldStart({ lastNoteMs: null, recording: true, takenThroughMs: null }), false);
+});
+
+test('the note a take already recorded does not open another one', () => {
+  // The browser scenario caught this: `lastNoteMs` is the newest note any port has *ever*
+  // heard and never clears, so a take that opens on "some note has been heard" re-opens the
+  // instant it closes and records silence for ever.
+  assert.equal(
+    shouldStart({ lastNoteMs: 5_000, recording: false, takenThroughMs: 5_000 }),
+    false,
+    'the note is already inside the take that just closed',
+  );
+  assert.equal(
+    shouldStart({ lastNoteMs: 5_000, recording: false, takenThroughMs: 4_000 }),
+    true,
+    'but a newer note is a new take',
+  );
+  assert.equal(
+    shouldStart({ lastNoteMs: 5_000, recording: false, takenThroughMs: 6_000 }),
+    false,
+    'and nothing older than what was taken starts anything',
+  );
 });

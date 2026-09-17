@@ -1980,6 +1980,92 @@ def seed_blurred_sitting() -> int:
     return api("/api/practice/events", "POST", payload)["sitting_id"]
 
 
+def scenario_takes(browser) -> None:
+    print("\n[14] Takes: recording what was played, and hearing it slower")
+    clear_practice()
+    if not api("/api/repertoire/pieces"):
+        seed_library(1)
+    piece = api("/api/repertoire/pieces")[0]
+    gap_s = api("/api/practice/status")["segment_gap_s"]
+
+    page, errors = new_page(browser)
+    page.goto(BASE_URL, wait_until="domcontentloaded")
+    page.wait_for_selector("text=Sight-Reading Trainer")
+    ensure_midi(page)
+
+    if not page.evaluate(
+        "() => typeof MediaRecorder !== 'undefined' && !!navigator.mediaDevices?.getUserMedia"
+    ):
+        # The fallback the harness was built for: an unexplained skip fails the run, so this
+        # names what is missing rather than passing quietly.
+        skip("scenario_takes", "this Chromium has no MediaRecorder or getUserMedia")
+        page.close()
+        return
+
+    # --- arming reports a real device, not a hopeful switch ---
+    click_button(page, "Record takes")
+    page.wait_for_selector('[data-audio-device="ready"]', timeout=15_000)
+    check(True, "the switch reports the microphone it actually got")
+
+    # --- a phrase is recorded, and the take is cut on the server's own silence rule ---
+    with page.expect_response(
+        lambda r: "/api/repertoire/takes" in r.url and r.request.method == "POST",
+        timeout=30_000,
+    ):
+        play_phrase(page, [60, 64, 67])
+        # The take closes once the segment gap has elapsed, and the recorder only notices on
+        # its next tick: the wait is the gap the server reports plus a margin for that tick,
+        # rather than a number that goes stale the moment SRT_SEGMENT_GAP_S is changed.
+        page.wait_for_timeout((gap_s + 3) * 1000)
+
+    # --- the take arrived before its segment existed, which is the state the recorder is in ---
+    # Segments are only made once a sitting closes, and the take was cut seconds after the last
+    # note while the sitting stayed open for the five-minute gap. Closing is the piano going
+    # away; the read below is what attaches the take, because nothing here runs on a timer.
+    closed = api("/api/practice/sittings/close", "POST")
+    check(closed["closed"] is True, "the playing closes when it is finished")
+    detail = api(f"/api/practice/sittings/{closed['sitting_id']}")
+    check(len(detail["segments"]) >= 1, "and it segments into the passage that was played")
+    segment = detail["segments"][0]
+    api(f"/api/practice/segments/{segment['id']}", "PATCH", {"piece_id": piece["id"]})
+
+    captured = [
+        row
+        for row in api(f"/api/repertoire/pieces/{piece['id']}")["media"]
+        if row["source"] == "captured"
+    ]
+    check(len(captured) == 1, f"the take is attached to the piece ({len(captured)})")
+    check(captured[0]["sitting_id"] is not None, "and to the playing it was cut from")
+    check(captured[0]["segment_id"] == segment["id"], "and to the passage it was played in")
+
+    # --- and it plays, at a speed that does not change it ---
+    click_button(page, "Repertoire")
+    page.wait_for_selector(".row-piece", timeout=20_000)
+    page.locator(".row-piece", has_text=piece["title"]).first.click()
+    page.wait_for_selector(".detail-title", timeout=10_000)
+    page.wait_for_selector(f'[data-take="{captured[0]["id"]}"]', timeout=20_000)
+    # The speed control lives in the player's toolbar, which is rendered only once the waveform
+    # is open — so the toggle is part of the path, not an optional extra.
+    page.click(f'[data-take="{captured[0]["id"]}"] [data-waveform-toggle]')
+    page.wait_for_selector('[data-take] select[aria-label="Playback speed"]', timeout=10_000)
+    page.select_option('[data-take] select[aria-label="Playback speed"]', "0.5")
+    page.wait_for_timeout(300)
+    check(
+        page.evaluate(
+            f"() => document.querySelector('[data-take=\"{captured[0]['id']}\"] audio').playbackRate"
+        )
+        == 0.5,
+        "half speed is applied to the element",
+    )
+    check(
+        page.locator('[data-rate-note="same-pitch"]').count() == 1,
+        "and the readout says whether pitch is held",
+    )
+
+    check(not errors, f"no console errors ({errors})")
+    page.close()
+
+
 def scenario_practice_log(browser) -> None:
     print("\n[8] Practice log: passive capture, a workout, and the segment timeline")
     clear_practice()
@@ -3214,6 +3300,12 @@ def main() -> int:
                 "--disable-dev-shm-usage",
                 "--autoplay-policy=no-user-gesture-required",
                 "--mute-audio",
+                # The audio-capture scenario needs a microphone this machine does not have,
+                # and a permission prompt there is nobody to answer. The fake device supplies
+                # the first and the fake UI answers the second — which is what the kiosk
+                # policy does in the real deployment, so the same code path is exercised.
+                "--use-fake-device-for-media-stream",
+                "--use-fake-ui-for-media-stream",
             ],
         )
         try:
@@ -3225,6 +3317,7 @@ def main() -> int:
                 scenario_long_exercises,
                 scenario_two_hands,
                 scenario_repertoire,
+                scenario_takes,
                 scenario_practice_log,
                 scenario_midi_autodetect,
                 scenario_autotag,

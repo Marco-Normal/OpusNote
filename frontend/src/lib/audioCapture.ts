@@ -30,6 +30,7 @@ export class AudioCaptureClient {
   private recorder: MediaRecorder | null = null;
   private chunks: Blob[] = [];
   private startedMs = 0;
+  private takenThroughMs: number | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private busy = false;
 
@@ -50,6 +51,9 @@ export class AudioCaptureClient {
   async start(): Promise<void> {
     if (this.timer !== null) return;
     this.lastError = null;
+    // Everything heard before the switch was armed is already in the past; a take opens on the
+    // next note, not on a stale one that arrived while nothing was recording.
+    this.takenThroughMs = this.lastNoteMs();
     try {
       this.stream = await navigator.mediaDevices.getUserMedia({
         audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false },
@@ -81,7 +85,15 @@ export class AudioCaptureClient {
     if (this.busy) return;
     const now = Date.now();
     if (this.recorder === null) {
-      if (shouldStart({ lastNoteMs: this.lastNoteMs(), recording: false })) this.open(now);
+      if (
+        shouldStart({
+          lastNoteMs: this.lastNoteMs(),
+          recording: false,
+          takenThroughMs: this.takenThroughMs,
+        })
+      ) {
+        this.open(now);
+      }
       return;
     }
     if (
@@ -130,6 +142,10 @@ export class AudioCaptureClient {
     this.busy = true;
     this.recorder = null;
     const startedMs = this.startedMs;
+    // Everything heard up to this moment is inside the take being closed, so the next one opens
+    // only on a note newer than this. Without it the switch re-opens on the same stale note and
+    // records silence for ever — which is what the browser scenario caught.
+    this.takenThroughMs = this.lastNoteMs() ?? this.takenThroughMs;
     try {
       await new Promise<void>((resolve) => {
         recorder.onstop = () => resolve();

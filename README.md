@@ -250,6 +250,18 @@ a keyboard along the bottom, the notes you played falling onto it, held notes dr
 long as they sound. It follows the playhead, so it is also a way to *see* a hesitation
 that is hard to hear.
 
+**Takes.** Press *Record takes* in the device bar and the app records the piano while you
+play — mono Opus at about 14 MB an hour, which is a convenience rather than an archive: the
+piano's own recording to a USB stick is still the one to keep. A take opens on the first note
+and closes when you have stopped for as long as the server treats as a segment boundary, so
+silence is not stored. It lands attached to the passage it was played in — the passage is only
+decided once a playing has closed, so a take appears under it the next time you open the piece
+after that — under **Takes this app recorded**. There two takes can be put side by side, and
+either can be played at 0.85×, 0.7× or 0.5×, slower at the same pitch, which the readout states
+rather than assumes. A machine with no audio input says so instead of arming a switch that
+records nothing. Nothing is deleted for you: the System panel reports how much captured audio
+there is, and deleting a take is a click on the piano machine.
+
 **Stop means stop.** There is one player for the whole app, so nothing can play over the
 top of anything else, and stopping cancels the notes that were scheduled but had not
 sounded yet — as well as sending note-off and all-notes-off to the piano, so nothing is

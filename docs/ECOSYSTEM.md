@@ -1358,7 +1358,10 @@ nothing at all.
 
 **Order, and why: 20a → 20b → 20c → 20d → 20e.** The 20b-before-20e dependency is
 load-bearing: the hands-free gesture is what arms audio capture from the piano bench
-without reaching for the computer.
+without reaching for the computer. **20e landed before 20b–20d**, at the user's request,
+so it is missing the pedal arm/stop gesture 20b was to add; the device-bar button is the
+only way to arm capture today. `SCHEMA_VERSION` is 4 as a result, and 20d's planned
+"3 → 4" must become 4 → 5 when it lands.
 
 #### 20a — practice kinds (A1, A3) — landed
 
@@ -1532,14 +1535,16 @@ piece nags for ever.
   deleted.
 - Least-time-invested and last-played agree with the analytics `by_piece` numbers.
 
-#### 20e — audio takes (D1, D2, D3) — planned
+#### 20e — audio takes (D1, D2, D3) — landed
 
-**Implementation plan:** [`PLAN-PHASE20E.md`](./PLAN-PHASE20E.md). Two corrections it makes to this
+**Implementation plan:** [`PLAN-PHASE20E.md`](./PLAN-PHASE20E.md). Three corrections it makes to this
 section as written: the client learns the segment rule from **`PracticeStatus`** rather than being
 handed a constant (there is no local fallback — a server that cannot report its gap refuses the
-arming), and a take carries one column more than planned, `captured_start_ms`, because the segment
-it belongs to does not exist when the audio is cut and the absolute epoch is what lets the server
-attach it — the same reasoning the note wire format already uses.
+arming); a take carries one column more than planned, `captured_start_ms`, because the segment it
+belongs to does not exist when the audio is cut and the absolute epoch is what lets the server
+attach it — the same reasoning the note wire format already uses; and that attachment is a
+**catch-up**, not something the upload can finish, because segments are made only once a sitting has
+closed. This slice landed before 20b–20d at the user's request, so the phase is not complete.
 
 **Problem.** Every recording in the library got there by upload, and the piano's own
 pen-drive recording already exists — so in-app capture is not an archive. It is the

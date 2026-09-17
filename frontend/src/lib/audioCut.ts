@@ -35,7 +35,20 @@ export function shouldCut(input: CutInput): boolean {
   return silence || tooLong;
 }
 
-/** Whether to open a take. A take begins on a note: recording silence is recording nothing. */
-export function shouldStart(input: { lastNoteMs: number | null; recording: boolean }): boolean {
-  return !input.recording && input.lastNoteMs !== null;
+/**
+ * Whether to open a take.
+ *
+ * A take begins on a note: recording silence is recording nothing. "A note" means one *newer*
+ * than the newest note already inside a take, because `lastNoteMs` is the newest note any port
+ * has ever heard and never clears — a take that opened on "some note has been heard" would
+ * re-open the moment it closed and record the silence it exists to skip.
+ */
+export function shouldStart(input: {
+  lastNoteMs: number | null;
+  recording: boolean;
+  /** The newest note a take has already captured, or null if none has. */
+  takenThroughMs: number | null;
+}): boolean {
+  if (input.recording || input.lastNoteMs === null) return false;
+  return input.takenThroughMs === null || input.lastNoteMs > input.takenThroughMs;
 }
