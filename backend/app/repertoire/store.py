@@ -9,6 +9,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Sequence
 
+from .. import db
 from ..config import settings
 
 
@@ -133,11 +134,11 @@ def get_piece(conn: sqlite3.Connection, piece_id: int) -> dict[str, Any] | None:
     if piece is None:
         return None
     piece["journal"] = [
-        dict(row)
+        _journal_row(row)
         for row in conn.execute(
             """
             SELECT id, piece_id, entry_date, content, practice_minutes,
-                   sitting_id, created_at
+                   sitting_id, tags, difficulty, fluency, media_id, created_at
             FROM piece_journal WHERE piece_id = ?
             ORDER BY entry_date DESC, id DESC
             """,
@@ -382,12 +383,25 @@ def delete_composer(conn: sqlite3.Connection, composer_id: int) -> tuple[int, di
     return cursor.rowcount, {"pieces_unattributed": orphans}
 
 
+def _journal_row(row: Any) -> dict[str, Any]:
+    """One journal row in the wire shape: the tag array decoded, everything else as stored.
+
+    Written with `db.json_load`, which raises on a corrupt row rather than degrading to an
+    empty list — a tag set that silently became "no tags" is a filter that silently stops
+    finding things, which is the failure mode Slice 1's T9 decision exists to prevent.
+    """
+    data = dict(row)
+    data["tags"] = db.json_load(data.get("tags"), [])
+    return data
+
+
 def create_journal_entry(conn: sqlite3.Connection, piece_id: int, fields: dict[str, Any]) -> int:
     cursor = conn.execute(
         """
         INSERT INTO piece_journal
-            (piece_id, entry_date, content, practice_minutes, sitting_id)
-        VALUES (?, ?, ?, ?, ?)
+            (piece_id, entry_date, content, practice_minutes, sitting_id,
+             tags, difficulty, fluency, media_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             piece_id,
@@ -395,17 +409,23 @@ def create_journal_entry(conn: sqlite3.Connection, piece_id: int, fields: dict[s
             fields["content"],
             fields.get("practice_minutes"),
             fields.get("sitting_id"),
+            db.json_dump(fields.get("tags") or []),
+            fields.get("difficulty"),
+            fields.get("fluency"),
+            fields.get("media_id"),
         ),
     )
     return int(cursor.lastrowid)
 
 
 def update_journal_entry(conn: sqlite3.Connection, entry_id: int, changes: dict[str, Any]) -> int:
-    updates = {
-        key: value
-        for key, value in changes.items()
-        if key in ("entry_date", "content", "practice_minutes", "sitting_id")
-    }
+    allowed = (
+        "entry_date", "content", "practice_minutes", "sitting_id",
+        "tags", "difficulty", "fluency", "media_id",
+    )
+    updates = {key: value for key, value in changes.items() if key in allowed}
+    if "tags" in updates:
+        updates["tags"] = None if updates["tags"] is None else db.json_dump(updates["tags"])
     if not updates:
         return conn.execute(
             "SELECT COUNT(*) FROM piece_journal WHERE id = ?", (entry_id,)
@@ -424,11 +444,17 @@ def delete_journal_entry(conn: sqlite3.Connection, entry_id: int) -> int:
 
 def get_journal_entry(conn: sqlite3.Connection, entry_id: int) -> dict[str, Any] | None:
     row = conn.execute(
-        "SELECT id, piece_id, entry_date, content, practice_minutes, sitting_id"
+        "SELECT id, piece_id, entry_date, content, practice_minutes, sitting_id,"
+        " tags, difficulty, fluency, media_id"
         " FROM piece_journal WHERE id = ?",
         (entry_id,),
     ).fetchone()
-    return dict(row) if row else None
+    return _journal_row(row) if row else None
+
+
+def media_exists(conn: sqlite3.Connection, media_id: int) -> bool:
+    """Whether this recording is in the library. The same 422-not-500 rule as `sitting_id`."""
+    return conn.execute("SELECT 1 FROM media WHERE id = ?", (media_id,)).fetchone() is not None
 
 
 def sitting_exists(conn: sqlite3.Connection, sitting_id: int) -> bool:
@@ -565,14 +591,17 @@ def captured_bytes(conn: sqlite3.Connection) -> int:
 
 
 def list_journal_entries(
-    conn: sqlite3.Connection, *, limit: int = 50, search: str | None = None
+    conn: sqlite3.Connection,
+    *,
+    limit: int = 50,
+    search: str | None = None,
+    tag: str | None = None,
 ) -> list[dict[str, Any]]:
     """The newest entries across the whole library.
 
-    A piece's page shows its own journal; this is the other direction, so something
-    written months ago can be found without remembering which piece it was about.
-    It searches `content` as well as the piece and composer, which is what makes
-    "where did I write about the coda?" answerable at all.
+    `tag` matches a *label*, never the prose: the stored array is written with
+    `db.json_dump`'s compact separators, so a tag always appears quoted and adjacent to its
+    own quotation marks, and `%"coda"%` cannot match the word "coda" in a sentence.
     """
     clauses: list[str] = []
     params: list[Any] = []
@@ -580,12 +609,16 @@ def list_journal_entries(
         clauses.append("(j.content LIKE ? OR p.title LIKE ? OR c.name LIKE ?)")
         pattern = f"%{search}%"
         params.extend([pattern, pattern, pattern])
+    if tag:
+        clauses.append("j.tags LIKE ?")
+        params.append(f'%"{tag}"%')
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     params.append(max(1, min(limit, 500)))
     rows = conn.execute(
         f"""
         SELECT j.id, j.piece_id, j.entry_date, j.content, j.practice_minutes,
-               j.sitting_id, j.created_at,
+               j.sitting_id, j.tags, j.difficulty, j.fluency, j.media_id,
+               j.created_at,
                p.title AS piece_title, c.name AS composer_name
         FROM piece_journal j
         JOIN pieces p ON p.id = j.piece_id
@@ -596,7 +629,7 @@ def list_journal_entries(
         """,
         params,
     ).fetchall()
-    return [dict(row) for row in rows]
+    return [_journal_row(row) for row in rows]
 
 
 def piece_exists(conn: sqlite3.Connection, piece_id: int) -> bool:

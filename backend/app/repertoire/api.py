@@ -214,6 +214,12 @@ def _validate_sitting(conn: sqlite3.Connection, sitting_id: int | None) -> None:
         raise HTTPException(status_code=422, detail=f"no sitting {sitting_id}")
 
 
+def _validate_media(conn: sqlite3.Connection, media_id: int | None) -> None:
+    """A stale recording id is a 422 rather than a foreign-key failure surfacing as a 500."""
+    if media_id is not None and not store.media_exists(conn, media_id):
+        raise HTTPException(status_code=422, detail=f"no recording {media_id}")
+
+
 @router.post("/pieces", response_model=PieceDetail, status_code=201)
 def create_piece(body: PieceCreate) -> PieceDetail:
     with db.transaction(settings.db_path) as conn:
@@ -290,6 +296,7 @@ def delete_composer(composer_id: int) -> DeleteResult:
 def journal_feed(
     limit: int = Query(default=50, ge=1, le=500),
     search: str | None = Query(default=None),
+    tag: str | None = Query(default=None),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> list[JournalEntryOut]:
     """The newest entries across the whole library.
@@ -297,9 +304,12 @@ def journal_feed(
     A piece's own page returns its journal inline; this is the other direction, so
     a note written months ago can be found without remembering the piece, and so
     the search box can answer a question about the prose rather than only about a
-    title.
+    title. `tag` filters labels rather than prose — see `list_journal_entries`.
     """
-    return [JournalEntryOut(**row) for row in store.list_journal_entries(conn, limit=limit, search=search)]
+    return [
+        JournalEntryOut(**row)
+        for row in store.list_journal_entries(conn, limit=limit, search=search, tag=tag)
+    ]
 
 
 @router.post("/pieces/{piece_id}/journal", response_model=JournalEntryOut, status_code=201)
@@ -308,6 +318,7 @@ def create_journal_entry(piece_id: int, body: JournalCreate) -> JournalEntryOut:
         if not store.piece_exists(conn, piece_id):
             raise HTTPException(status_code=404, detail=f"no piece {piece_id}")
         _validate_sitting(conn, body.sitting_id)
+        _validate_media(conn, body.media_id)
         entry_id = store.create_journal_entry(conn, piece_id, body.model_dump())
         row = store.get_journal_entry(conn, entry_id)
     assert row is not None
@@ -321,6 +332,7 @@ def update_journal_entry(entry_id: int, body: JournalUpdate) -> JournalEntryOut:
         raise HTTPException(status_code=422, detail="no fields to change")
     with db.transaction(settings.db_path) as conn:
         _validate_sitting(conn, changes.get("sitting_id"))
+        _validate_media(conn, changes.get("media_id"))
         if store.update_journal_entry(conn, entry_id, changes) == 0:
             raise HTTPException(status_code=404, detail=f"no journal entry {entry_id}")
         row = store.get_journal_entry(conn, entry_id)

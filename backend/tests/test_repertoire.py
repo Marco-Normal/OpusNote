@@ -1463,3 +1463,91 @@ def test_a_nonsense_take_epoch_is_refused_rather_than_crashing(client, tone_wav)
             data={"started_ms": str(10**30)},
         )
     assert refused.status_code == 422, refused.text
+
+
+def test_a_journal_entry_carries_tags_and_two_ratings(client) -> None:
+    piece = client.post("/api/repertoire/pieces", json={"title": "Nocturne"}).json()
+    created = client.post(
+        f"/api/repertoire/pieces/{piece['id']}/journal",
+        json={
+            "entry_date": "2026-03-01",
+            "content": "The coda needs slow work.",
+            "tags": ["coda", "  slow  ", "coda", ""],
+            "difficulty": 4,
+            "fluency": 2,
+        },
+    )
+    assert created.status_code == 201, created.text
+    entry = created.json()
+    assert entry["tags"] == ["coda", "slow"], "trimmed, de-duplicated, blanks dropped"
+    assert entry["difficulty"] == 4
+    assert entry["fluency"] == 2
+
+
+def test_tags_can_be_changed_and_cleared_one_at_a_time(client) -> None:
+    piece = client.post("/api/repertoire/pieces", json={"title": "Etude"}).json()
+    entry = client.post(
+        f"/api/repertoire/pieces/{piece['id']}/journal",
+        json={"entry_date": "2026-03-02", "content": "x", "tags": ["a"], "fluency": 3},
+    ).json()
+
+    renamed = client.patch(f"/api/repertoire/journal/{entry['id']}", json={"tags": ["b", "c"]})
+    assert renamed.json()["tags"] == ["b", "c"]
+    assert renamed.json()["fluency"] == 3, "an unset field is left alone"
+
+    cleared = client.patch(f"/api/repertoire/journal/{entry['id']}", json={"fluency": None})
+    assert cleared.json()["fluency"] is None, "an explicit null clears"
+    assert cleared.json()["tags"] == ["b", "c"]
+
+
+def test_a_rating_outside_one_to_five_is_refused(client) -> None:
+    piece = client.post("/api/repertoire/pieces", json={"title": "Waltz"}).json()
+    for bad in (0, 6, -1):
+        response = client.post(
+            f"/api/repertoire/pieces/{piece['id']}/journal",
+            json={"entry_date": "2026-03-03", "content": "x", "difficulty": bad},
+        )
+        assert response.status_code == 422, f"{bad} is not a rating"
+
+
+def test_the_tag_filter_finds_tags_and_not_prose(client) -> None:
+    """A tag filter must filter tags. The word appearing in the entry is not a match."""
+    tagged = client.post("/api/repertoire/pieces", json={"title": "Tagged"}).json()
+    prose = client.post("/api/repertoire/pieces", json={"title": "Prose"}).json()
+    client.post(
+        f"/api/repertoire/pieces/{tagged['id']}/journal",
+        json={"entry_date": "2026-03-04", "content": "no keyword here", "tags": ["coda"]},
+    )
+    client.post(
+        f"/api/repertoire/pieces/{prose['id']}/journal",
+        json={"entry_date": "2026-03-05", "content": "the coda is hard"},
+    )
+
+    found = client.get("/api/repertoire/journal?tag=coda").json()
+    assert [row["piece_title"] for row in found] == ["Tagged"], (
+        f"only the tagged entry matches ({found})"
+    )
+    assert client.get("/api/repertoire/journal?tag=nothing").json() == []
+
+
+def test_a_journal_entry_can_point_at_a_take_and_survives_it_being_deleted(client) -> None:
+    piece_id = _a_piece(client, "Ballade")
+    # A recording normally arrives by upload, which needs a real audio file; inserting the
+    # catalogue row directly is the honest shortcut here, and the upload path is covered by
+    # the media tests above.
+    with db.transaction(settings.db_path) as conn:
+        conn.execute(
+            "INSERT INTO media (id, piece_id, kind, file_name) VALUES (77, ?, 'recording', 'x.ogg')",
+            (piece_id,),
+        )
+    entry = client.post(
+        f"/api/repertoire/pieces/{piece_id}/journal",
+        json={"entry_date": "2026-03-06", "content": "take 3 is the one", "media_id": 77},
+    ).json()
+    assert entry["media_id"] == 77
+
+    with db.transaction(settings.db_path) as conn:
+        conn.execute("DELETE FROM media WHERE id = 77")
+    reread = client.get(f"/api/repertoire/pieces/{piece_id}").json()
+    assert reread["journal"][0]["media_id"] is None, "deleting the take must not delete the prose"
+    assert reread["journal"][0]["content"] == "take 3 is the one"

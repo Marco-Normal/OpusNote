@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 PieceStatus = Literal["active", "completed", "paused"]
 
@@ -33,6 +33,15 @@ class JournalEntryOut(BaseModel):
     #: entry, and the sitting is context for it.
     sitting_id: int | None = None
     created_at: str | None = None
+    #: Short labels for one entry, stored as a JSON array in one column.
+    tags: list[str] = Field(default_factory=list)
+    #: How hard it felt and how well it went, 1..5. Two numbers because "hard and it went
+    #: well" is a different fact from "easy and it did not".
+    difficulty: int | None = None
+    fluency: int | None = None
+    #: The take this was written about, or None. `ON DELETE SET NULL`, so deleting the
+    #: recording leaves the prose.
+    media_id: int | None = None
     #: Filled only by the cross-piece feed, which is the one place an entry is shown
     #: away from its piece and therefore has to say which piece it belongs to.
     piece_title: str | None = None
@@ -187,6 +196,17 @@ class ComposerUpdate(BaseModel):
     notes: str | None = None
 
 
+#: A label on one entry. Bounded so a pasted paragraph cannot become a tag.
+MAX_TAGS = 12
+MAX_TAG_LENGTH = 40
+
+
+def _clean_tags(value: list[str]) -> list[str]:
+    """Trim, drop blanks, de-duplicate, cap. Order is the player's, so it is preserved."""
+    cleaned = [tag.strip()[:MAX_TAG_LENGTH] for tag in value]
+    return [tag for tag in dict.fromkeys(cleaned) if tag][:MAX_TAGS]
+
+
 class JournalCreate(BaseModel):
     entry_date: str = Field(pattern=DATE_PATTERN)
     content: str = Field(min_length=1)
@@ -194,6 +214,13 @@ class JournalCreate(BaseModel):
     #: Optional, and validated to exist, so a bad id is a 422 rather than a foreign-key
     #: failure surfacing as a 500.
     sitting_id: int | None = None
+    tags: list[str] = Field(default_factory=list)
+    difficulty: int | None = Field(default=None, ge=1, le=5)
+    fluency: int | None = Field(default=None, ge=1, le=5)
+    #: The take this was written about. Validated to exist at the route, like `sitting_id`.
+    media_id: int | None = None
+
+    _tags = field_validator("tags")(_clean_tags)
 
 
 class JournalUpdate(BaseModel):
@@ -201,6 +228,15 @@ class JournalUpdate(BaseModel):
     content: str | None = Field(default=None, min_length=1)
     practice_minutes: int | None = Field(default=None, ge=0, le=24 * 60)
     sitting_id: int | None = None
+    tags: list[str] | None = None
+    difficulty: int | None = Field(default=None, ge=1, le=5)
+    fluency: int | None = Field(default=None, ge=1, le=5)
+    media_id: int | None = None
+
+    @field_validator("tags")
+    @classmethod
+    def _update_tags(cls, value: list[str] | None) -> list[str] | None:
+        return None if value is None else _clean_tags(value)
 
 
 class DeleteResult(BaseModel):
