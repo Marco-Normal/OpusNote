@@ -10,12 +10,14 @@
     PieceSummary,
     PracticeSuggestion,
     RepertoireStatus,
+    SegmentSummary,
   } from '../lib/types';
   import { formatDuration, formatMinutes, formatSize } from '../lib/types';
   import type { PiecePracticeDetail } from '../lib/types';
   import LineChart from './LineChart.svelte';
   import ScoreViewer from './ScoreViewer.svelte';
   import RecordingPlayer from './RecordingPlayer.svelte';
+  import TakeList from './TakeList.svelte';
   import type { Loop } from '../lib/waveform';
 
   type Grouping = 'none' | 'composer' | 'difficulty';
@@ -95,6 +97,8 @@
   //: MIDI-measured practice for the open piece. Fetched separately from the
   //: repertoire payload, because the repertoire domain does not read note events.
   let practice = $state<PiecePracticeDetail | null>(null);
+  //: Segments of this piece's sittings, so a take can name the passage it came from.
+  let segments = $state<Map<number, SegmentSummary>>(new Map());
 
   async function load(): Promise<void> {
     loading = true;
@@ -128,11 +132,34 @@
     try {
       detail = await api.repertoire.piece(pieceId);
       practice = await api.practice.piece(pieceId).catch(() => null);
+      await loadSegments();
     } catch (cause) {
       error = cause instanceof Error ? cause.message : String(cause);
     } finally {
       detailLoading = false;
     }
+  }
+
+  /**
+   * The segments the open piece's takes were played in.
+   *
+   * Only the sittings that actually produced a take: a piece can hold hundreds of segments
+   * across years of practice, and fetching them all to label two takes is the wrong trade.
+   */
+  async function loadSegments(): Promise<void> {
+    const sittingIds = [
+      ...new Set(
+        (detail?.media ?? [])
+          .filter((row) => row.source === 'captured' && row.sitting_id !== null)
+          .map((row) => row.sitting_id as number),
+      ),
+    ];
+    const found = new Map<number, SegmentSummary>();
+    for (const sittingId of sittingIds) {
+      const sitting = await api.practice.sitting(sittingId).catch(() => null);
+      for (const segment of sitting?.segments ?? []) found.set(segment.id, segment);
+    }
+    segments = found;
   }
 
   async function runImport(): Promise<void> {
@@ -165,9 +192,11 @@
     if (pieceId !== null) {
       detail = await api.repertoire.piece(pieceId);
       practice = await api.practice.piece(pieceId).catch(() => null);
+      await loadSegments();
     } else {
       detail = null;
       practice = null;
+      segments = new Map();
     }
     editing = null;
     confirmingDelete = false;
@@ -907,6 +936,13 @@
           {#if scoreNote}
             <div class="notice">{scoreNote}</div>
           {/if}
+
+          <TakeList
+            takes={recordings.filter((row) => row.source === 'captured')}
+            {segments}
+            onloop={(mediaId, loop) => void saveLoop(mediaId, loop)}
+            ondelete={(mediaId) => void removeRecording(mediaId)}
+          />
 
           <h4>Recordings <span class="muted">({recordings.length})</span></h4>
           {#if recordings.length === 0}

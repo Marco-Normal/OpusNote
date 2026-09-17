@@ -46,6 +46,42 @@
   /** From the element's metadata: more trustworthy than the stored estimate. */
   let measured = $state(0);
   let playing = $state(false);
+  let rate = $state(1);
+  /** Whether the browser is preserving pitch, which is what makes a slow take useful. */
+  let preservesPitch = $state(true);
+
+  /**
+   * Slow the take down without changing the file.
+   *
+   * `preservesPitch` is the browser's own time-stretch: at 0.5× the passage is lower *and* slower
+   * without it, which is not what a player wants to hear. The readout says which one this browser
+   * is doing rather than assuming.
+   */
+  function setRate(value: number): void {
+    rate = value;
+    if (!element) return;
+    const media = element as HTMLMediaElement & {
+      preservesPitch?: boolean;
+      webkitPreservesPitch?: boolean;
+    };
+    // Both spellings: `preservesPitch` is the standard and `webkitPreservesPitch` is what older
+    // Chromium builds honour, and a kiosk is exactly the kind of machine that runs an older one.
+    const supported = 'preservesPitch' in media || 'webkitPreservesPitch' in media;
+    media.preservesPitch = true;
+    media.webkitPreservesPitch = true;
+    media.playbackRate = value;
+    // Read back through `held` rather than comparing the properties directly: the assignment
+    // just above narrows them to `true` for the type checker, and the point of reading back is
+    // exactly the browser that accepted the write and ignored it. A browser with neither
+    // spelling cannot hold pitch, and claiming it can would be contradicted the moment the
+    // passage drops an octave.
+    preservesPitch =
+      supported && held(media.preservesPitch) && held(media.webkitPreservesPitch);
+  }
+
+  function held(value: unknown): boolean {
+    return value !== false;
+  }
 
   const duration = $derived(measured || recording.duration_secs || 0);
   const looping = $derived(loop.start !== null && loop.end !== null && loop.end > loop.start);
@@ -185,8 +221,26 @@
         disabled={loop.start === null && loop.end === null}
         onclick={() => onLoop({ start: null, end: null })}>Clear</button
       >
+      <label class="row toggle">
+        <span class="muted small">Speed</span>
+        <select
+          aria-label="Playback speed"
+          value={rate}
+          onchange={(event) => setRate(Number((event.currentTarget as HTMLSelectElement).value))}
+        >
+          {#each [1, 0.85, 0.7, 0.5] as option (option)}
+            <option value={option}>{option === 1 ? 'normal' : `${option}×`}</option>
+          {/each}
+        </select>
+      </label>
     {/if}
   </div>
+
+  {#if open && rate !== 1}
+    <span class="muted small" data-rate-note={preservesPitch ? 'same-pitch' : 'lower-pitch'}>
+      {preservesPitch ? 'slower, same pitch' : 'slower and lower — this browser cannot hold pitch'}
+    </span>
+  {/if}
 
   {#if open}
     {#if decoding}
