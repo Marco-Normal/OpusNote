@@ -10,6 +10,7 @@ import mimetypes
 import shutil
 import sqlite3
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
@@ -441,6 +442,82 @@ def upload_recording(
                 codec=stored.codec,
             )
             row = store.get_media(conn, media_id)
+
+    assert row is not None
+    return MediaOut(**row)
+
+
+# --------------------------------------------------------------------------
+# Captured takes
+# --------------------------------------------------------------------------
+
+
+@router.post("/takes", response_model=MediaOut, status_code=201)
+def upload_take(
+    file: UploadFile = File(...),
+    started_ms: int = Form(...),
+    title: str | None = Form(default=None),
+) -> MediaOut:
+    """Catalogue one captured take and attach it to the playing it came from.
+
+    The client cannot name a segment: it cut the audio on the server's silence rule, before the
+    server had made any segments at all. So it sends the absolute epoch the chunk started at —
+    the same reasoning the note wire format uses — and this resolves the sitting, then the
+    segment inside it, then the piece the segment is labelled with.
+    """
+    with db.transaction(settings.db_path) as conn:
+        sitting_id = store.sitting_at(conn, started_ms)
+        if sitting_id is None:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "no sitting covers that time, so this take cannot be placed; "
+                    "the capture heartbeat and the sitting gap decide where a playing begins"
+                ),
+            )
+        found = store.segment_at(conn, sitting_id, started_ms)
+        # A take that arrives after the sitting closed can attach its predecessors too.
+        store.link_unlinked_takes(conn, sitting_id)
+
+    media_dir = Path(settings.media_dir)
+    with tempfile.TemporaryDirectory() as scratch:
+        staged = _stage_upload(file, scratch=Path(scratch), what="take")
+        try:
+            probe(staged)
+        except MediaError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        stored = store_recording(staged, media_dir=media_dir, original_name=file.filename)
+        with db.transaction(settings.db_path) as conn:
+            # Content-addressed storage means an identical take is one file, so the
+            # second row would collide on the unique name. Asking first says where it
+            # already lives instead of surfacing a bare integrity error.
+            existing = store.find_media_by_file_name(conn, stored.file_name)
+            if existing is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "that take is byte-for-byte identical to one already in the library "
+                        f"(id {existing['id']})"
+                    ),
+                )
+            take_id = store.create_media(
+                conn,
+                piece_id=found[1] if found is not None else None,
+                kind=stored.kind,
+                file_name=stored.file_name,
+                original_name=file.filename,
+                title=title or "Take",
+                duration_secs=stored.duration_secs,
+                size_bytes=stored.size_bytes,
+                codec=stored.codec,
+                taken_on=datetime.now(timezone.utc).date().isoformat(),
+                source="captured",
+                sitting_id=sitting_id,
+                segment_id=found[0] if found is not None else None,
+                captured_start_ms=started_ms,
+            )
+            row = store.get_media(conn, take_id)
 
     assert row is not None
     return MediaOut(**row)

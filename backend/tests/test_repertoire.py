@@ -1163,3 +1163,108 @@ def test_library_search_finds_a_piece_by_what_was_written_about_it(client) -> No
     assert [row["title"] for row in found] == ["Intermezzo"], (
         "a word that appears only in the journal still finds the piece"
     )
+
+
+# --------------------------------------------------------------------------
+# Phase 20e — captured takes
+# --------------------------------------------------------------------------
+
+
+def _sitting_start_ms(sitting_id: int) -> int:
+    """The absolute epoch a sitting began at, in ms.
+
+    Read from the database rather than from the API's `started_at`: that text is
+    stored to whole seconds, so a take placed from it could land up to a second
+    before the sitting it was played in and be refused as unplaceable.
+    """
+    conn = db.connect(settings.db_path)
+    try:
+        row = conn.execute(
+            "SELECT started_ms FROM sittings WHERE id = ?", (sitting_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row is not None, f"no sitting {sitting_id}"
+    return int(row["started_ms"])
+
+
+def test_a_take_is_attached_to_the_segment_it_was_played_in(client, tone_wav) -> None:
+    """The client cannot name a segment — it does not exist when the audio is cut — so the
+    server resolves it from the epoch the take started at, exactly as it resolves a note batch
+    into a sitting."""
+    piece_id = _a_piece(client, "Captured")
+    sitting_id = _a_sitting(client)  # a past, closed sitting: it has segments
+
+    # The sitting's own segment, so the take lands in a real window.
+    detail = client.get(f"/api/practice/sittings/{sitting_id}").json()
+    segment = detail["segments"][0]
+    client.patch(f"/api/practice/segments/{segment['id']}", json={"piece_id": piece_id})
+    started = _sitting_start_ms(sitting_id) + segment["start_ms"]
+
+    with tone_wav.open("rb") as handle:
+        created = client.post(
+            "/api/repertoire/takes",
+            files={"file": ("take.webm", handle, "audio/webm")},
+            data={"started_ms": str(started)},
+        )
+    assert created.status_code == 201, created.text
+    take = created.json()
+    assert take["source"] == "captured"
+    assert take["segment_id"] == segment["id"], "the take found the segment it belongs to"
+    assert take["sitting_id"] == sitting_id
+    assert take["piece_id"] == piece_id, "and the piece follows the segment's label"
+    assert take["captured_start_ms"] == started
+
+
+def test_a_take_with_no_segment_yet_keeps_its_sitting(client, tone_wav) -> None:
+    """A sitting still open has no segments, and the audio must not be thrown away."""
+    sitting_id = _a_sitting(client)
+    started = _sitting_start_ms(sitting_id)
+    # Undo the segmentation, which is the state an open sitting is in.
+    with db.transaction(settings.db_path) as conn:
+        conn.execute("DELETE FROM segments WHERE sitting_id = ?", (sitting_id,))
+
+    with tone_wav.open("rb") as handle:
+        created = client.post(
+            "/api/repertoire/takes",
+            files={"file": ("take.webm", handle, "audio/webm")},
+            data={"started_ms": str(started)},
+        )
+    assert created.status_code == 201, created.text
+    take = created.json()
+    assert take["sitting_id"] == sitting_id, "the sitting is resolvable even with no segments"
+    assert take["segment_id"] is None, "and the segment is honestly unknown"
+    assert take["piece_id"] is None
+
+
+def test_a_take_with_no_sitting_at_all_is_refused(client, tone_wav) -> None:
+    """Better a 422 with a reason than a recording nobody can place."""
+    with tone_wav.open("rb") as handle:
+        refused = client.post(
+            "/api/repertoire/takes",
+            files={"file": ("take.webm", handle, "audio/webm")},
+            data={"started_ms": "1000"},
+        )
+    assert refused.status_code == 422
+
+
+def test_the_same_take_twice_is_refused_with_a_reason(client, tone_wav) -> None:
+    """Takes are content-addressed, so an identical take is one take."""
+    sitting_id = _a_sitting(client)
+    started = _sitting_start_ms(sitting_id)
+
+    with tone_wav.open("rb") as handle:
+        first = client.post(
+            "/api/repertoire/takes",
+            files={"file": ("take.webm", handle, "audio/webm")},
+            data={"started_ms": str(started)},
+        )
+    assert first.status_code == 201, first.text
+    with tone_wav.open("rb") as handle:
+        second = client.post(
+            "/api/repertoire/takes",
+            files={"file": ("take.webm", handle, "audio/webm")},
+            data={"started_ms": str(started)},
+        )
+    assert second.status_code == 409, second.text
+    assert "identical" in second.json()["detail"]

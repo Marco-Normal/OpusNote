@@ -450,6 +450,87 @@ def sitting_exists(conn: sqlite3.Connection, sitting_id: int) -> bool:
     )
 
 
+def sitting_at(conn: sqlite3.Connection, epoch_ms: int) -> int | None:
+    """The sitting an instant falls in, or None.
+
+    The second place the repertoire domain reads a practice table, for the same stated
+    reason as `sitting_exists`: a take is a recording *of* a playing, and the playing is the
+    practice domain's. This reads; it never writes.
+    """
+    row = conn.execute(
+        """
+        SELECT id FROM sittings
+        WHERE ?1 >= started_ms AND ?1 <= ended_ms
+        ORDER BY started_ms DESC
+        LIMIT 1
+        """,
+        (epoch_ms,),
+    ).fetchone()
+    return int(row["id"]) if row is not None else None
+
+
+def segment_at(
+    conn: sqlite3.Connection, sitting_id: int, epoch_ms: int
+) -> tuple[int, int | None] | None:
+    """The segment an instant falls in, and the piece it is labelled with.
+
+    Only segments that exist are found: a sitting that is still open has none, and that is a
+    real answer (the take keeps its sitting and no segment) rather than an error.
+    """
+    row = conn.execute(
+        """
+        SELECT g.id AS segment_id, g.piece_id
+        FROM segments g JOIN sittings s ON s.id = g.sitting_id
+        WHERE g.sitting_id = ?1
+          AND ?2 >= s.started_ms + g.start_ms
+          AND ?2 <= s.started_ms + g.end_ms
+        ORDER BY g.start_ms
+        LIMIT 1
+        """,
+        (sitting_id, epoch_ms),
+    ).fetchone()
+    return (int(row["segment_id"]), row["piece_id"]) if row is not None else None
+
+
+def link_unlinked_takes(conn: sqlite3.Connection, sitting_id: int) -> int:
+    """Attach captured takes of a sitting that had no segments when they arrived.
+
+    Called on the *next* take upload for the same sitting, which is enough: segments appear
+    when the sitting closes, and the delay is at most one chunk. Nothing here needs a
+    background job, and a take that is never linked keeps its sitting, which is the honest
+    minimum.
+    """
+    rows = conn.execute(
+        "SELECT id, captured_start_ms FROM media"
+        " WHERE source = 'captured' AND sitting_id = ? AND segment_id IS NULL"
+        "   AND captured_start_ms IS NOT NULL",
+        (sitting_id,),
+    ).fetchall()
+    linked = 0
+    for row in rows:
+        found = segment_at(conn, sitting_id, int(row["captured_start_ms"]))
+        if found is None:
+            continue
+        conn.execute(
+            "UPDATE media SET segment_id = ?, piece_id = COALESCE(piece_id, ?) WHERE id = ?",
+            (found[0], found[1], int(row["id"])),
+        )
+        linked += 1
+    return linked
+
+
+def captured_bytes(conn: sqlite3.Connection) -> int:
+    """Bytes of audio this app recorded, for the System panel.
+
+    Reported rather than pruned: captured audio is the half of the library that may be
+    deleted, and the player decides that, not a retention policy (20e-D6).
+    """
+    total = conn.execute(
+        "SELECT COALESCE(SUM(size_bytes), 0) AS total FROM media WHERE source = 'captured'"
+    ).fetchone()["total"]
+    return int(total or 0)
+
+
 def list_journal_entries(
     conn: sqlite3.Connection, *, limit: int = 50, search: str | None = None
 ) -> list[dict[str, Any]]:
