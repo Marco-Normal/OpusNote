@@ -57,6 +57,7 @@ Then:
 | Chromium kiosk | user session | Web MIDI needs a browser, and MIDI needs `localhost` |
 | capture | that browser tab | one capture path; the page reports a heartbeat |
 | MIDI permission | managed Chromium policy | no prompt on a machine nobody is sitting at |
+| audio-capture permission | the same managed policy | `AudioCaptureAllowedForUrls` auto-grants the microphone to `localhost`/`127.0.0.1`, and `AudioCaptureAllowed: false` turns every other origin into a silent refusal instead of a prompt — which is what makes it an allow-list rather than a question asked on a machine nobody is sitting at |
 | `snd_seq` | `modules-load.d` | without it Web MIDI finds *no* devices at all |
 | kiosk autostart | `~/.config/autostart/` | **not** a systemd user unit: `sudo -u user systemctl --user` has no user bus to talk to — that is what `Failed to connect to bus: No medium found` means — and XDG autostart works on Cinnamon, MATE and XFCE alike |
 

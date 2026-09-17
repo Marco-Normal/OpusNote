@@ -493,3 +493,28 @@ def test_the_upgraded_database_gains_the_take_columns() -> None:
         assert {"source", "sitting_id", "segment_id", "captured_start_ms"} <= _columns(conn, "media")
     finally:
         conn.close()
+
+
+def test_the_upgraded_database_gives_the_take_columns_a_not_null_source() -> None:
+    """20e: the migration must produce the *same* column a fresh database's CREATE declares,
+    default included. `media.source` is the one added column whose fresh form is NOT NULL, and a
+    NULL on the upgraded side would be exported by name and then restored into a NOT NULL column
+    on another machine — where `merge` drops the row silently and `replace` fails outright."""
+    path = _build_fixture_db("take-source-default.sqlite3")
+    seed = sqlite3.connect(path)
+    try:
+        seed.execute("INSERT INTO media (kind, file_name) VALUES ('audio', 'old.wav')")
+        seed.commit()
+    finally:
+        seed.close()
+
+    db.init_db(path)
+    conn = db.connect(path)
+    try:
+        info = {row[1]: row for row in conn.execute("PRAGMA table_info(media)")}
+        assert info["source"][3] == 1, "source arrives NOT NULL, as the fresh CREATE says"
+        assert conn.execute("SELECT source FROM media").fetchone()[0] == "uploaded", (
+            "and a row that predates capture says it was uploaded"
+        )
+    finally:
+        conn.close()

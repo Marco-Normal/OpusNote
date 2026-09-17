@@ -1268,3 +1268,183 @@ def test_the_same_take_twice_is_refused_with_a_reason(client, tone_wav) -> None:
         )
     assert second.status_code == 409, second.text
     assert "identical" in second.json()["detail"]
+
+
+def _an_open_sitting(client) -> tuple[int, int]:
+    """A sitting that is still open, and the epoch its notes began at.
+
+    This is the state the recorder actually runs in: the notes are recent, so the five-minute
+    silence gap has not elapsed and the practice domain has made no segments yet. Returns the
+    sitting id and its base epoch, so a take can be placed a tick after the first note.
+
+    Five seconds in the past rather than *now*: closing an open sitting by hand waits out
+    ``CLOSE_QUIET_MS`` so a USB blip is not mistaken for the end of a session, and the test
+    closes this one to stand in for the piano going away.
+    """
+    import time
+
+    base = int(time.time() * 1000) - 5_000
+    response = client.post(
+        "/api/practice/events",
+        json={
+            "tz_offset_minutes": 0,
+            "events": [
+                {"epoch_ms": base, "pitch": 60, "velocity": 70, "duration_ms": 300, "channel": 0},
+                {
+                    "epoch_ms": base + 500,
+                    "pitch": 64,
+                    "velocity": 70,
+                    "duration_ms": 300,
+                    "channel": 0,
+                },
+            ],
+        },
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["sitting_id"], base
+
+
+def _media_placement(media_id: int) -> tuple[int | None, int | None]:
+    conn = db.connect(settings.db_path)
+    try:
+        row = conn.execute(
+            "SELECT segment_id, piece_id FROM media WHERE id = ?", (media_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row is not None, f"no media {media_id}"
+    return (row["segment_id"], row["piece_id"])
+
+
+def test_a_take_recorded_while_its_sitting_is_open_is_attached_when_the_piece_is_read(
+    client, tone_wav
+) -> None:
+    """The recorder cuts eight seconds after the player stops, while the sitting stays open for
+    the five-minute gap — so the segment it belongs to does not exist when it is uploaded. The
+    take keeps its sitting, and the piece read that the takes view makes attaches it once the
+    practice domain has segmented the sitting. That read is the only moment it can be placed:
+    nothing here runs on a timer."""
+    piece_id = _a_piece(client, "Captured")
+    sitting_id, base = _an_open_sitting(client)
+    assert client.get(f"/api/practice/sittings/{sitting_id}").json()["segments"] == [], (
+        "an open sitting has no segments, which is the state the recorder runs in"
+    )
+
+    # The client sends the note that opened the take, not the tick that noticed it — the tick
+    # can be a second late, and an epoch from it would fall past the phrase it recorded.
+    started = base
+    with tone_wav.open("rb") as handle:
+        created = client.post(
+            "/api/repertoire/takes",
+            files={"file": ("take.webm", handle, "audio/webm")},
+            data={"started_ms": str(started)},
+        )
+    assert created.status_code == 201, created.text
+    take = created.json()
+    assert take["sitting_id"] == sitting_id, "a take past the last release is still the sitting's"
+    assert take["segment_id"] is None, "the segment does not exist yet"
+    assert take["piece_id"] is None, "so the piece is honestly unknown"
+
+    # The piano goes away; the sitting closes, and the practice domain can segment it.
+    assert client.post("/api/practice/sittings/close").json()["closed"] is True
+    segment = client.get(f"/api/practice/sittings/{sitting_id}").json()["segments"][0]
+    client.patch(f"/api/practice/segments/{segment['id']}", json={"piece_id": piece_id})
+
+    piece = client.get(f"/api/repertoire/pieces/{piece_id}").json()
+    captured = [row for row in piece["media"] if row["source"] == "captured"]
+    assert len(captured) == 1, "the take is now findable under the piece it was played from"
+    assert captured[0]["id"] == take["id"]
+    assert captured[0]["segment_id"] == segment["id"]
+    assert captured[0]["piece_id"] == piece_id
+
+
+def test_a_take_finds_its_piece_when_the_segment_is_labelled_later(client, tone_wav) -> None:
+    """A segment with no piece is a real state — passive capture does not know what was played.
+    The take must not be stranded by it: it is revisited while it has no piece, so labelling the
+    segment later is enough to bring the take out from under it."""
+    piece_id = _a_piece(client, "Captured")
+    sitting_id, base = _an_open_sitting(client)
+    with tone_wav.open("rb") as handle:
+        created = client.post(
+            "/api/repertoire/takes",
+            files={"file": ("take.webm", handle, "audio/webm")},
+            data={"started_ms": str(base)},
+        )
+    assert created.status_code == 201, created.text
+    take_id = created.json()["id"]
+
+    client.post("/api/practice/sittings/close")
+    segment = client.get(f"/api/practice/sittings/{sitting_id}").json()["segments"][0]
+
+    # The read happens before anyone says which piece it was: the take finds its segment and
+    # stops there. A take never claims a piece the segment does not have.
+    client.get(f"/api/repertoire/pieces/{piece_id}")
+    segment_id, piece = _media_placement(take_id)
+    assert segment_id == segment["id"], "the take found its passage"
+    assert piece is None, "and did not invent a piece for it"
+
+    client.patch(f"/api/practice/segments/{segment['id']}", json={"piece_id": piece_id})
+    found = client.get(f"/api/repertoire/pieces/{piece_id}").json()["media"]
+    assert [row["id"] for row in found if row["source"] == "captured"] == [take_id], (
+        "labelling the segment is what brings the take under the piece"
+    )
+
+
+def test_a_take_after_the_last_note_still_belongs_to_its_sitting(client, tone_wav) -> None:
+    """The sitting's window runs to the last note's release *plus the sitting gap*, the same
+    predicate note ingest uses rather than the bare note range. A recorder that opened a beat
+    late still recorded that playing, and refusing the audio would lose it."""
+    sitting_id, base = _an_open_sitting(client)
+    # 2 s past the last release (base + 800), and hours inside the five-minute gap.
+    with tone_wav.open("rb") as handle:
+        created = client.post(
+            "/api/repertoire/takes",
+            files={"file": ("take.webm", handle, "audio/webm")},
+            data={"started_ms": str(base + 2_800)},
+        )
+    assert created.status_code == 201, created.text
+    assert created.json()["sitting_id"] == sitting_id
+
+
+def test_an_unnamed_take_is_refused_with_a_reason(client, tone_wav) -> None:
+    """A `MediaRecorder` blob posted without a filename has no suffix to check, and that is the
+    caller's mistake rather than a server fault: a 422, not a 500 with a traceback."""
+    _sitting_id, base = _an_open_sitting(client)
+    with tone_wav.open("rb") as handle:
+        refused = client.post(
+            "/api/repertoire/takes",
+            files={"file": ("take", handle, "audio/webm")},
+            data={"started_ms": str(base)},
+        )
+    assert refused.status_code == 422, refused.text
+    assert "recognised" in refused.json()["detail"]
+
+
+def test_the_system_panel_reports_captured_audio(client, tone_wav) -> None:
+    """Captured audio is the half of the library that may be deleted, so its size is reported
+    separately — the player decides what to remove, not a retention policy (20e-D6)."""
+    _sitting_id, base = _an_open_sitting(client)
+    with tone_wav.open("rb") as handle:
+        take = client.post(
+            "/api/repertoire/takes",
+            files={"file": ("take.webm", handle, "audio/webm")},
+            data={"started_ms": str(base)},
+        )
+    assert take.status_code == 201, take.text
+    size = take.json()["size_bytes"]
+    assert size > 0
+    assert client.get("/api/status/system").json()["captured_audio_bytes"] == size
+
+
+def test_a_recording_that_arrived_by_hand_is_not_counted_as_captured(client, tone_wav) -> None:
+    """An uploaded file is not this app's capture, and the number that tells the player what
+    they may delete must not include it."""
+    piece_id = _a_piece(client, "Uploaded")
+    with tone_wav.open("rb") as handle:
+        uploaded = client.post(
+            f"/api/repertoire/pieces/{piece_id}/media",
+            files={"file": ("tone.wav", handle, "audio/wav")},
+        )
+    assert uploaded.status_code == 201, uploaded.text
+    assert uploaded.json()["source"] == "uploaded"
+    assert client.get("/api/status/system").json()["captured_audio_bytes"] == 0

@@ -354,6 +354,7 @@ def system_status(conn: Connection = Depends(get_conn)) -> SystemStatus:
         ),
         latency_suggestion_ms=store.onset_bias_ms(conn, current_user_id()),
         latency_current_ms=0.0,
+        captured_audio_bytes=repertoire_store.captured_bytes(conn),
     )
 
 

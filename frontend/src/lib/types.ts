@@ -170,6 +170,8 @@ export interface SystemStatus {
   last_note_ms: number | null;
   latency_suggestion_ms: number | null;
   latency_current_ms: number;
+  /** Bytes of audio this app recorded. Reported, never pruned: the player decides. */
+  captured_audio_bytes: number;
 }
 
 export interface SkillInfo {

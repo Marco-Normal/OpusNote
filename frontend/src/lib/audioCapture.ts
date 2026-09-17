@@ -100,7 +100,12 @@ export class AudioCaptureClient {
   private open(nowMs: number): void {
     if (this.stream === null) return;
     this.chunks = [];
-    this.startedMs = nowMs;
+    // The take begins at the note that opened it, not at the tick that noticed it. The tick is
+    // up to a second late, and an epoch taken from it can fall *after* the phrase it recorded —
+    // which would place the take outside the segment it belongs to, or past the sitting entirely.
+    // The note's own time is what the server resolves the passage from, and it is the moment the
+    // playing began rather than the moment this recorder noticed.
+    this.startedMs = this.lastNoteMs() ?? nowMs;
     const recorder = new MediaRecorder(this.stream, {
       mimeType: 'audio/webm;codecs=opus',
       audioBitsPerSecond: AUDIO_BITS_PER_SECOND,

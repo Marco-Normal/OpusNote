@@ -164,7 +164,7 @@ install -d /etc/systemd/logind.conf.d
 install -m 644 "$APP_DIR/deploy/logind/50-piano.conf" /etc/systemd/logind.conf.d/50-piano.conf
 systemctl restart systemd-logind || true
 
-echo "==> Browser policy (MIDI auto-grant, Memory Saver off)"
+echo "==> Browser policy (MIDI and microphone auto-grant for localhost, Memory Saver off)"
 if [ -n "$POLICY_DIR" ]; then
   install -d "$POLICY_DIR"
   install -m 644 "$APP_DIR/deploy/chromium-policy.json" "$POLICY_DIR/piano-ecosystem.json"

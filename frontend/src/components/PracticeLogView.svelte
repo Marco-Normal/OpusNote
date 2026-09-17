@@ -11,6 +11,7 @@
   import { app } from '../lib/state.svelte';
   import {
     formatMinutes,
+    formatSize,
     type AnalyticsSummary,
     type IdentificationQuality,
     type RatingHistory,
@@ -513,6 +514,11 @@
         <span class="muted small">
           {system.media.pending} to copy{#if system.media.missing}, {system.media.missing} missing{/if}
         </span>
+      </div>
+      <div>
+        <span class="muted small">Recorded here</span>
+        <strong>{formatSize(system.captured_audio_bytes)}</strong>
+        <span class="muted small">takes this app captured — delete them in Repertoire</span>
       </div>
       <div>
         <span class="muted small">Backups</span>

@@ -17,7 +17,7 @@ import pathlib, sys
 
 path = pathlib.Path(sys.argv[1])
 text = path.read_text()
-needle = """        found = store.segment_at(conn, sitting_id, started_ms)"""
+needle = "found = store.segment_at(conn, sitting_id, started_ms)"
 assert needle in text, "the lookup is not where this script expects it"
-path.write_text(text.replace(needle, "        found = None", 1))
+path.write_text(text.replace(needle, "found = None", 1))
 PY

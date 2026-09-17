@@ -165,9 +165,6 @@ def list_media(conn: sqlite3.Connection, *, piece_id: int | None = None) -> list
     records = []
     for row in conn.execute(sql, params):
         record = dict(row)
-        # NULL `source` is a row that existed before Phase 20e; it was uploaded, because
-        # capture did not exist. Normalised here so no caller has to know that.
-        record["source"] = record["source"] or "uploaded"
         record["state"] = media_state(str(record["file_name"]))
         records.append(record)
     return records
@@ -218,8 +215,6 @@ def get_media(conn: sqlite3.Connection, media_id: int) -> dict[str, Any] | None:
     if row is None:
         return None
     record = dict(row)
-    # As in `list_media`: a row that predates capture was uploaded.
-    record["source"] = record["source"] or "uploaded"
     record["state"] = media_state(str(record["file_name"]))
     return record
 
@@ -439,10 +434,11 @@ def get_journal_entry(conn: sqlite3.Connection, entry_id: int) -> dict[str, Any]
 def sitting_exists(conn: sqlite3.Connection, sitting_id: int) -> bool:
     """Whether the practice log has a sitting with this id.
 
-    The one place the repertoire domain looks at a practice table, and it is here
-    because the journal now points at the sitting an entry was written about.
-    Checking it turns a stale id into a 422 instead of a foreign-key failure
-    surfacing as a 500 with no explanation.
+    The first of the repertoire domain's read-only looks at a practice table, and it is here
+    because the journal points at the sitting an entry was written about. Checking it turns a
+    stale id into a 422 instead of a foreign-key failure surfacing as a 500 with no
+    explanation. The take attachment below reads practice tables for the same reason; none of
+    them writes one.
     """
     return (
         conn.execute("SELECT 1 FROM sittings WHERE id = ?", (sitting_id,)).fetchone()
@@ -453,18 +449,24 @@ def sitting_exists(conn: sqlite3.Connection, sitting_id: int) -> bool:
 def sitting_at(conn: sqlite3.Connection, epoch_ms: int) -> int | None:
     """The sitting an instant falls in, or None.
 
-    The second place the repertoire domain reads a practice table, for the same stated
-    reason as `sitting_exists`: a take is a recording *of* a playing, and the playing is the
-    practice domain's. This reads; it never writes.
+    The window is the practice domain's own ingest rule — `started_ms` to `ended_ms` plus the
+    sitting gap, the same predicate `_find_sitting` uses — rather than the bare note range.
+    A take's epoch is the instant its recorder opened, which is a tick after the first note,
+    and for a one-note phrase that tick can land past the note's release; the note range alone
+    would refuse audio that plainly belongs to the sitting.
+
+    `closed_ms` is deliberately *not* required to be NULL, unlike `_find_sitting`. A sitting
+    closed by the piano going away still owns the take that was being recorded when it ended,
+    and refusing it would throw the audio away.
     """
     row = conn.execute(
         """
         SELECT id FROM sittings
-        WHERE ?1 >= started_ms AND ?1 <= ended_ms
+        WHERE ?1 >= started_ms AND ?1 <= ended_ms + ?2
         ORDER BY started_ms DESC
         LIMIT 1
         """,
-        (epoch_ms,),
+        (epoch_ms, settings.sitting_gap_s * 1000),
     ).fetchone()
     return int(row["id"]) if row is not None else None
 
@@ -475,7 +477,9 @@ def segment_at(
     """The segment an instant falls in, and the piece it is labelled with.
 
     Only segments that exist are found: a sitting that is still open has none, and that is a
-    real answer (the take keeps its sitting and no segment) rather than an error.
+    real answer (the take keeps its sitting and no segment) rather than an error. It is a
+    transient answer, not a final one — `link_unlinked_takes` comes back for the take once the
+    sitting has been segmented.
     """
     row = conn.execute(
         """
@@ -492,23 +496,50 @@ def segment_at(
     return (int(row["segment_id"]), row["piece_id"]) if row is not None else None
 
 
-def link_unlinked_takes(conn: sqlite3.Connection, sitting_id: int) -> int:
-    """Attach captured takes of a sitting that had no segments when they arrived.
+def unlinked_take_sittings(conn: sqlite3.Connection) -> list[int]:
+    """The sittings a captured take is still waiting on, read-only.
 
-    Called on the *next* take upload for the same sitting, which is enough: segments appear
-    when the sitting closes, and the delay is at most one chunk. Nothing here needs a
-    background job, and a take that is never linked keeps its sitting, which is the honest
-    minimum.
+    A take cut while its sitting was still open has no segment to point at yet, and the
+    practice domain only segments a sitting once it has closed. This names the sittings whose
+    segmentation the caller should ask the practice domain to finish; see
+    `repertoire.api._catch_up_takes`.
+    """
+    return [
+        int(row["sitting_id"])
+        for row in conn.execute(
+            # Joined to `sittings` rather than trusting `media.sitting_id`: a sitting removed
+            # by a maintenance path leaves a dangling id behind, and asking the practice domain
+            # to segment a sitting that is not there would raise on a read.
+            "SELECT DISTINCT m.sitting_id FROM media m JOIN sittings s ON s.id = m.sitting_id"
+            " WHERE m.source = 'captured' AND m.sitting_id IS NOT NULL"
+            "   AND m.captured_start_ms IS NOT NULL"
+            "   AND (m.segment_id IS NULL OR m.piece_id IS NULL)"
+        )
+    ]
+
+
+def link_unlinked_takes(conn: sqlite3.Connection) -> int:
+    """Attach every captured take that can now be placed. Writes only `media`.
+
+    A sweep rather than a per-sitting call, because the take that needs attaching is
+    characteristically *not* the one being uploaded: the recorder cuts audio 8 seconds after
+    the player stops, while the sitting stays open for the five-minute gap, so the segment is
+    made long after the take arrived.
+
+    The caller must have asked the practice domain to finish segmenting first; this does not
+    materialise anything. A take is revisited while it has no segment *or* no piece, so a take
+    whose segment is labelled with a piece later is picked up on the next read rather than
+    staying invisible.
     """
     rows = conn.execute(
-        "SELECT id, captured_start_ms FROM media"
-        " WHERE source = 'captured' AND sitting_id = ? AND segment_id IS NULL"
-        "   AND captured_start_ms IS NOT NULL",
-        (sitting_id,),
+        "SELECT id, sitting_id, captured_start_ms FROM media"
+        " WHERE source = 'captured' AND sitting_id IS NOT NULL"
+        "   AND captured_start_ms IS NOT NULL"
+        "   AND (segment_id IS NULL OR piece_id IS NULL)"
     ).fetchall()
     linked = 0
     for row in rows:
-        found = segment_at(conn, sitting_id, int(row["captured_start_ms"]))
+        found = segment_at(conn, int(row["sitting_id"]), int(row["captured_start_ms"]))
         if found is None:
             continue
         conn.execute(

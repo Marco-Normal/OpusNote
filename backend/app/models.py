@@ -70,6 +70,9 @@ class SystemStatus(BaseModel):
     #: Suggested latency in ms, or None when there is not enough evidence to suggest one.
     latency_suggestion_ms: float | None = None
     latency_current_ms: float = 0.0
+    #: Bytes of audio this app recorded, reported rather than pruned: captured audio is the half of
+    #: the library that may be deleted, and the player decides that (20e-D6).
+    captured_audio_bytes: int = 0
 
 
 class PerformanceDetail(BaseModel):

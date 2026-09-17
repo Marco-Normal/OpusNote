@@ -19,6 +19,7 @@ from fastapi.responses import FileResponse
 from .. import db
 from ..config import settings
 from ..hostinfo import require_loopback
+from ..practice import store as practice_store
 from . import store
 from .importer import LegacyDatabaseMissing, LegacySchemaUnexpected, import_legacy
 from .media_pipeline import (
@@ -100,6 +101,9 @@ def pieces(
 
 @router.get("/pieces/{piece_id}", response_model=PieceDetail)
 def piece(piece_id: int, conn: sqlite3.Connection = Depends(get_conn)) -> PieceDetail:
+    # Before the read, not after: this is the request the takes view makes, so it is the
+    # moment a take recorded mid-session becomes findable under its passage.
+    _catch_up_takes()
     row = store.get_piece(conn, piece_id)
     if row is None:
         raise HTTPException(status_code=404, detail=f"no piece {piece_id}")
@@ -452,6 +456,28 @@ def upload_recording(
 # --------------------------------------------------------------------------
 
 
+def _catch_up_takes() -> int:
+    """Attach captured takes whose segments have appeared since they were uploaded.
+
+    A recorder cuts audio eight seconds after the player stops, and the practice domain only
+    segments a sitting once it has closed — five minutes of silence, or the piano going away.
+    So a take is almost always catalogued before the segment it belongs to exists, and the
+    delayed half is this: run on every take upload and on the piece read the takes view makes.
+
+    Two steps, and the order is the whole point. `ensure_segments` is the practice domain's own
+    read-through materialisation, so it is the practice domain that writes `segments` and it
+    refuses a sitting that is still open, which is exactly right — a provisional boundary would
+    be permanent. The sweep that follows writes only `media`, which is this domain's table.
+    Neither domain reaches into the other's writes.
+    """
+    with db.transaction(settings.db_path) as conn:
+        waiting = store.unlinked_take_sittings(conn)
+    for sitting_id in waiting:
+        practice_store.ensure_segments(sitting_id)
+    with db.transaction(settings.db_path) as conn:
+        return store.link_unlinked_takes(conn)
+
+
 @router.post("/takes", response_model=MediaOut, status_code=201)
 def upload_take(
     file: UploadFile = File(...),
@@ -464,7 +490,11 @@ def upload_take(
     server had made any segments at all. So it sends the absolute epoch the chunk started at —
     the same reasoning the note wire format uses — and this resolves the sitting, then the
     segment inside it, then the piece the segment is labelled with.
+
+    A take uploaded while its sitting is still open gets the sitting and no segment; the piece
+    read in the takes view attaches it once the sitting has closed.
     """
+    _catch_up_takes()
     with db.transaction(settings.db_path) as conn:
         sitting_id = store.sitting_at(conn, started_ms)
         if sitting_id is None:
@@ -475,20 +505,23 @@ def upload_take(
                     "the capture heartbeat and the sitting gap decide where a playing begins"
                 ),
             )
-        found = store.segment_at(conn, sitting_id, started_ms)
-        # A take that arrives after the sitting closed can attach its predecessors too.
-        store.link_unlinked_takes(conn, sitting_id)
 
     media_dir = Path(settings.media_dir)
     with tempfile.TemporaryDirectory() as scratch:
         staged = _stage_upload(file, scratch=Path(scratch), what="take")
         try:
-            probe(staged)
+            stored = store_recording(staged, media_dir=media_dir, original_name=file.filename)
         except MediaError as exc:
+            # The same 422 the recording upload gives: an unnamed blob and a file that is not
+            # audio are the caller's problem, not a server fault. `store_recording` probes as
+            # part of its own work, so this is the only probe on the path.
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-        stored = store_recording(staged, media_dir=media_dir, original_name=file.filename)
         with db.transaction(settings.db_path) as conn:
+            # Resolved here rather than before the transcode: a `resegment` running while
+            # ffmpeg works would otherwise leave this pointing at a segment that no longer
+            # exists, and the insert would fail as a bare foreign-key error.
+            found = store.segment_at(conn, sitting_id, started_ms)
             # Content-addressed storage means an identical take is one file, so the
             # second row would collide on the unique name. Asking first says where it
             # already lives instead of surfacing a bare integrity error.

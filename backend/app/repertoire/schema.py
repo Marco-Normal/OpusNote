@@ -127,12 +127,13 @@ ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # SQLite only accepts a REFERENCES clause on ADD COLUMN when the default is
     # NULL, which is why the piece that owns the entry is NOT NULL and this is not.
     ("piece_journal", "sitting_id", "INTEGER REFERENCES sittings(id) ON DELETE SET NULL"),
-    # Phase 20e — where a take came from. A `DEFAULT 'uploaded'` cannot be expressed through
-    # the ADDED_COLUMNS tuple, which carries only a type string, so existing rows arrive NULL
-    # and `list_media` reads NULL as 'uploaded'. That is deliberate rather than sloppy: the
-    # alternative is a migration statement this mechanism cannot run, and NULL already means
-    # "before capture existed" everywhere else in this schema.
-    ("media", "source", "TEXT"),
+    # Phase 20e — where a take came from. The default is expressed in the type string rather than
+    # left to the read path: SQLite accepts a constant `DEFAULT` on `ADD COLUMN`, so an upgraded
+    # database gets the same NOT NULL column a fresh one does, with its existing rows backfilled
+    # to 'uploaded'. That matters beyond tidiness — the backup carries the column by name, and a
+    # NULL here would be restored into a fresh database's NOT NULL column, where `merge` drops the
+    # row silently and `replace` fails outright.
+    ("media", "source", "TEXT NOT NULL DEFAULT 'uploaded'"),
     ("media", "sitting_id", "INTEGER REFERENCES sittings(id) ON DELETE SET NULL"),
     ("media", "segment_id", "INTEGER REFERENCES segments(id) ON DELETE SET NULL"),
     ("media", "captured_start_ms", "INTEGER"),
