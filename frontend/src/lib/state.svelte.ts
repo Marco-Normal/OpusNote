@@ -435,11 +435,10 @@ class AppState {
   /**
    * What the pedals do.
    *
-   * Two actions: the dedicated pedals toggle a workout, and the damper's double tap
-   * toggles audio capture — which is the split the acceptance criteria ask for, and the
-   * reason this is one dispatch rather than two paths. Capture is only armed through the
-   * same `toggleAudioCapture` the button uses, so the pedal inherits its guards (the log
-   * must be running, the server must report its gap) rather than bypassing them.
+   * Two actions: the dedicated pedals arm and stop capture, and the damper's double tap
+   * toggles a workout. Capture goes through the same `toggleAudioCapture` the button uses,
+   * so the pedal inherits its guards (the log must be running, the server must report its
+   * gap) rather than bypassing them.
    */
   async runHandsfree(action: HandsfreeAction): Promise<void> {
     if (action === 'toggle_audio_capture') {

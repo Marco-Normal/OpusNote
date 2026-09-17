@@ -1797,3 +1797,37 @@ filters by a tag, the passage is listed with the player's bars and *Worked on it
 as untouched, and a paused piece is left out of Neglected); four committed falsifications run and all
 four caught their breaks (`drop_journal_added_column.sh`, `let_paused_pieces_nag.sh`,
 `ignore_the_tag_filter.sh`, `forget_the_passage_provenance.sh`); `./check.sh --full` green.
+
+## 2026-09-17 — sight-reading agent — the two pedal gestures swap actions, at the user's request
+
+Scope: `frontend/src/lib/pedalGesture.ts` and its test, `frontend/src/lib/state.svelte.ts` (the
+dispatch comment), `frontend/src/components/DeviceBar.svelte` (the readout), `backend/tools/e2e_browser.py`
+(`scenario_bench`), `README.md`, `docs/ECOSYSTEM.md`, `docs/PLAN-PHASE20{B,D}.md` (status lines).
+
+Did: **the sostenuto (CC66, then CC67 as the fallback) now arms and stops audio capture, and the
+damper's double tap in silence now toggles a workout** — the exact inverse of what 20b landed a few
+hours ago. The reasoning is the one the original mapping got backwards: arming a take is what a
+player does every session, so it belongs on the pedal nobody plays, while starting a workout is
+rarer and can afford a deliberate double tap. The two gestures stay separate; a single damper tap
+still carries nothing.
+
+**The silence gate stays, and that is the part worth stating.** It was never about which action the
+damper carried — it is about the damper being *played*: two taps during ordinary pedalling are
+pedalling, not a request to start anything. `drop_handsfree_silence_gate.sh` still guards it, and the
+bench scenario still asserts that a double tap during a scored attempt starts nothing. A player who
+wants an ungated damper would get a workout started mid-piece, so the gate is a safety property
+rather than a detail of the mapping.
+
+**What this cost, and what it caught.** The pure module, its four units, the store's dispatch
+(a `toggle_audio_capture` branch and a workout branch that did not change), and the device-bar
+sentence all had to move together — and the browser scenario's assertions were asserting the *old*
+mapping, so they had to be inverted too rather than merely re-run. Because the two actions dispatch
+through one function, only the recogniser needed a code change; the wiring, the guards (a take still
+cannot arm while the log is paused or with no MIDI) and the pedal-inert-during-a-run rule were
+untouched. The 20b plan's Status line now says landed and names the inversion, because its own test
+and module snippets show the superseded mapping and a reader would otherwise be misled.
+
+Verified: frontend **97 passed**, `svelte-check` clean, build clean; `scenario_bench` passes all
+twenty-one assertions with the new mapping (sostenuto arms then stops the recording; a damper double
+tap starts then finishes a workout; a double tap mid-run starts nothing); the silence-gate
+falsification still catches its break; `./check.sh --full` green.

@@ -57,9 +57,9 @@ is in use (`Auto · CASIO USB-MIDI MIDI 1`).
 **Pedals.** The PX-870 has three, and the middle one (sostenuto) is barely used musically — so it
 is available as a hands-free switch. Open **Pedals** in the device bar to see which controller
 numbers this piano has actually sent: press each pedal once and the bar reports it. One press and
-release of the sostenuto starts a workout, or finishes the running one; the soft pedal works the
-same way, and a double tap of the damper in silence arms and stops audio capture. The gesture is
-inert during a scored attempt, and nothing is ever bound to a message the piano has not been seen
+release of the sostenuto arms the recording and another stops it; the soft pedal works the same way,
+and a double tap of the damper in silence starts a workout, or finishes the running one. The gesture
+is inert during a scored attempt, and nothing is ever bound to a message the piano has not been seen
 to send. There is a **Count-in** choice (none, 1 bar, 2 bars) and a click volume beside it; both
 are remembered, and the transport says how many beats the count-in actually used.
 - On the piano machine use `http://localhost:8000`: Web MIDI requires a secure

@@ -11,10 +11,11 @@
  * that silently does not exist. The device bar reports `seen`, so "the pedal does
  * nothing" can be answered by looking rather than by guessing.
  *
- * **Two actions, two gestures.** The dedicated pedals toggle a workout; the damper's
- * double tap toggles capture. The mapping is deliberate: the damper is played
- * constantly, so it carries the action a player reaches for least often and only in
- * silence, while the pedals nobody plays carry the action used every session.
+ * **Two actions, two gestures.** The dedicated pedals arm and stop capture; the damper's
+ * double tap toggles a workout. The mapping follows how often each is reached for: a take is
+ * armed and stopped every session, so it gets a pedal nobody plays, while starting a workout
+ * is rarer and can afford a deliberate double tap — which stays gated on silence, because
+ * the damper *is* played.
  */
 
 /** One controller move, on the wall clock like every other MIDI event here. */
@@ -34,7 +35,7 @@ export type HandsfreeAction = 'toggle_workout' | 'toggle_audio_capture';
  *
  * The damper is deliberately absent: it is used constantly, so a gesture on it would
  * fire during ordinary pedalling. It is supported as a last-resort double tap instead,
- * and that tap carries capture rather than the workout.
+ * and that tap carries the workout. These two carry capture.
  */
 export const HANDSFREE_CONTROLLERS: readonly number[] = [66, 67];
 
@@ -70,7 +71,7 @@ export class PedalGesture {
 
     if (HANDSFREE_CONTROLLERS.includes(move.controller)) {
       // A dedicated pedal: one deliberate press and release is the whole gesture.
-      return wasDown && !isDown ? 'toggle_workout' : null;
+      return wasDown && !isDown ? 'toggle_audio_capture' : null;
     }
 
     if (move.controller === 64 && wasDown && !isDown) {
@@ -81,7 +82,7 @@ export class PedalGesture {
       }
       if (this.lastTapMs !== null && move.epochMs - this.lastTapMs <= DOUBLE_TAP_MS) {
         this.lastTapMs = null;
-        return 'toggle_audio_capture';
+        return 'toggle_workout';
       }
       this.lastTapMs = move.epochMs;
     }

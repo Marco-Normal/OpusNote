@@ -1421,8 +1421,8 @@ and behaves the same on `localhost:8000` and `piano.local:8000`.
 
 **Landed after 20e, so one mapping the plan left open had to be settled here.** The plan was written
 before audio capture existed and named a single hands-free action; the acceptance bullet below asks
-for capture too, so the dedicated pedals (CC66, then CC67) toggle a workout and the damper's double
-tap in silence arms and stops capture. A take has no route of its own: resolving a media id to its
+for capture too, and the user settled which pedal carries which: the dedicated pedals (CC66, then
+CC67) **arm and stop capture**, and the damper's double tap **in silence** toggles a workout. A take has no route of its own: resolving a media id to its
 piece would need a server lookup, and this slice adds no server surface, so the bullet's "and take" is
 reached through the piece link that lists it — see `AGENT-LOG.md` 2026-09-17.
 

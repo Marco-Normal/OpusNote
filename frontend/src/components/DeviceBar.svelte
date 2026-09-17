@@ -300,8 +300,9 @@
     <div class="row wrap latency" data-pedals>
       <span class="muted small">
         Press each pedal once. A pedal the piano does not send cannot be bound to anything,
-        so this is a report rather than a promise. One press of the sostenuto starts or
-        finishes a workout; two taps of the damper in silence arm and stop audio capture.
+        so this is a report rather than a promise. One press of the sostenuto arms the
+        recording, and another stops it; two taps of the damper in silence start or finish a
+        workout.
       </span>
       {#each PEDALS as pedal (pedal.cc)}
         <span

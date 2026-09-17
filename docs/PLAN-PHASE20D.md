@@ -3,8 +3,10 @@
 **Parent spec:** [`ECOSYSTEM.md`](./ECOSYSTEM.md) § *Phase 20* § *20d — journal and library depth
 (A2, C1–C4)*, with decision 20-D7. That section owns what and why; this document owns the how.
 
-**Status:** planned.  **Phase 21 landed first and took `SCHEMA_VERSION` to 3**, so the numbers below are one higher
-than when this plan was written.
+**Status: landed.** **Phase 21 landed first and took `SCHEMA_VERSION` to 3**, and 20e then took it
+to 4, so this plan's "3 → 4" was executed as **4 → 5**. Four defects a review found afterwards are
+recorded in `AGENT-LOG.md` (2026-09-17): the tag filter, a null-bar PATCH, the unreported passage
+cascade, and a loop passage that named no loop.
 
 **Goal.** Make the journal filterable and comparable, give "bars 12–14 are the problem" somewhere to
 live, stop a deliberately paused piece from nagging for ever, and let the library be sorted and

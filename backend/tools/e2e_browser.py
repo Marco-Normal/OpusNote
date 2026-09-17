@@ -2238,11 +2238,13 @@ def scenario_bench(browser) -> None:
         "sends this" in page.inner_text("[data-pedal='66']"),
         "pressing the sostenuto is offered as a pedal the piano sends",
     )
-    check(api("/api/workout/current") is not None, "and one press starts a workout")
+    page.wait_for_selector('[data-audio-capture="armed"]', timeout=15_000)
+    check(True, "and one press arms the recording")
     press_sostenuto()
-    check(api("/api/workout/current") is None, "a second press finishes it")
+    page.wait_for_selector('[data-audio-capture="off"]', timeout=10_000)
+    check(True, "while a second press stops it")
 
-    # --- the damper double tap arms capture: the acceptance bullet's second action ---
+    # --- the damper double tap toggles a workout: the acceptance bullet's second action ---
     def double_tap_damper() -> None:
         # Two taps in silence. `lastNoteMs` is null on this page — no notes have been played,
         # only controller moves — which is exactly the state the gesture requires.
@@ -2253,16 +2255,14 @@ def scenario_bench(browser) -> None:
         page.wait_for_timeout(700)
 
     double_tap_damper()
-    page.wait_for_selector('[data-audio-capture="armed"]', timeout=15_000)
-    check(True, "a damper double tap in silence arms audio capture")
+    check(api("/api/workout/current") is not None, "a damper double tap starts a workout")
     double_tap_damper()
-    page.wait_for_selector('[data-audio-capture="off"]', timeout=10_000)
-    check(True, "and another one stops it")
+    check(api("/api/workout/current") is None, "and another one finishes it")
 
     # --- the gesture is inert during a scored attempt: the failure that matters most ---
     load_first_exercise(page)
     start_run(page)
-    press_sostenuto()
+    double_tap_damper()
     check(
         api("/api/workout/current") is None,
         "and it starts nothing while a run is in progress",
