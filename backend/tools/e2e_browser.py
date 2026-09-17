@@ -2227,6 +2227,19 @@ def scenario_bench(browser) -> None:
     page.keyboard.press("Escape")
     page.wait_for_selector("[data-palette]", state="detached", timeout=5_000)
     check(True, "and Escape closes it")
+
+    # --- the address describes what is on screen, written by the app itself ---
+    # The link above only proves parsing. This proves serialising: opening a piece has to
+    # write its address, or the URL a player copies names the tab instead of the piece.
+    page.goto(f"{BASE_URL}/#/repertoire", wait_until="domcontentloaded")
+    page.wait_for_selector(".row-piece", timeout=20_000)
+    check(page.locator(".detail-title").count() == 0, "a section URL opens no piece on its own")
+    page.locator(".row-piece", has_text=target["title"]).first.click()
+    page.wait_for_selector(".detail-title", timeout=10_000)
+    check(
+        page.url.endswith(f"#/repertoire/piece/{target['id']}"),
+        f"opening a piece writes its address ({page.url})",
+    )
     check(not errors, f"no console errors on the bench page ({errors})")
 
     # --- count-in is a choice in bars, and it reaches the metronome ---
