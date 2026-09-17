@@ -1831,3 +1831,47 @@ Verified: frontend **97 passed**, `svelte-check` clean, build clean; `scenario_b
 twenty-one assertions with the new mapping (sostenuto arms then stops the recording; a damper double
 tap starts then finishes a workout; a double tap mid-run starts nothing); the silence-gate
 falsification still catches its break; `./check.sh --full` green.
+
+## 2026-09-17 — sight-reading agent — the soft pedal is unbound: it is played
+
+Scope: `frontend/src/lib/pedalGesture.ts` and its test, `frontend/src/lib/state.svelte.ts` (the
+dispatch comment), `frontend/src/components/DeviceBar.svelte` (the pedals readout),
+`backend/tools/e2e_browser.py` (`scenario_bench`),
+`backend/tools/falsifications/let_the_soft_pedal_stop_the_take.sh` (new), `README.md`,
+`docs/ECOSYSTEM.md`, `docs/PLAN-PHASE20B.md` (status line).
+
+Did: **`HANDSFREE_CONTROLLERS` is now `[66]` alone.** The user reported the defect in use, not in
+review: *"I actually do use the soft pedal… tapping it will stop the recording."* The previous
+mapping bound CC66 and CC67 to the same arm/stop gesture, on the assumption that both were pedals
+nobody plays. That assumption is false for the soft pedal, and the failure mode is the worst one
+this feature has — a press mid-phrase silently ends the take being recorded, and the player is
+playing, so they will not see it happen. The sostenuto remains the arm/stop gesture; the soft pedal
+is bound to nothing at all.
+
+**The pedal report now names the binding, per pedal.** An unbound pedal and a broken feature look
+identical from the bench, which is how this got past review in the first place, so each pill in the
+Pedals panel reads `<label> · CC<n> · <binding> · <seen state>`: `press: arm or stop a take` for
+CC66, `double tap in silence: workout` for CC64, `deliberately not bound` for CC67. The panel's
+prose says the same thing and says why.
+
+**Order of work.** The soft-pedal unit test was inverted first and watched to fail (it returned
+`toggle_audio_capture` where it now expects `null`), then `HANDSFREE_CONTROLLERS` lost the 67, then
+the browser scenario gained two assertions: a soft press while a take is armed leaves
+`data-audio-capture="armed"`, and the panel reports `deliberately not bound` rather than leaving the
+pedal unexplained. Both are in `scenario_bench`, next to the sostenuto assertions they qualify.
+
+**What was deliberately not added.** The new gesture is *not* silence-gated. The gate on the damper
+exists because the damper is played; the sostenuto is not, so a press on it is unambiguous and a
+gate would only make arming fail during playing — which is exactly when a player wants to arm. A
+player who wants the soft pedal to keep a gesture would need a different action than a take's
+arm/stop, because that is the one the pedal's ordinary use collides with.
+
+Verified: frontend **97 passed** (the inverted soft-pedal test is RED before the one-line change and
+green after); `svelte-check` clean; build clean; `scenario_bench` green with the two new assertions;
+`let_the_soft_pedal_stop_the_take.sh` falsifies both halves — `cd frontend && npm test` caught the
+unit break, and the browser check (`(cd frontend && npm run build) && backend/tools/run_e2e.sh
+bench`) caught it end to end at "and the soft pedal, which is played, leaves the armed take alone";
+`drop_the_pedal_binding_readout.sh` (new) likewise caught only the panel-text assertion, so that
+string is not resting on a check nobody has seen fail; `frontend/dist` was rebuilt after each
+browser falsification, since it is gitignored and `falsify.sh` leaves the broken bundle in it;
+`./check.sh --fast` green.

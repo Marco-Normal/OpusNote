@@ -15,11 +15,17 @@
   let showPorts = $state(false);
   let showPedals = $state(false);
 
-  /** The three pedals a piano may send, and whether this one has. */
-  const PEDALS: { cc: number; label: string }[] = [
-    { cc: 64, label: 'Damper (right)' },
-    { cc: 66, label: 'Sostenuto (middle)' },
-    { cc: 67, label: 'Soft (left)' },
+  /**
+   * The three pedals a piano may send, what this app binds to each, and whether this one has.
+   *
+   * The binding is printed beside the discovery for one reason: the soft pedal is deliberately
+   * bound to nothing, because it is played — and a pedal that silently does nothing is
+   * indistinguishable from a broken feature unless the panel says which it is.
+   */
+  const PEDALS: { cc: number; label: string; binding: string }[] = [
+    { cc: 64, label: 'Damper (right)', binding: 'double tap in silence: workout' },
+    { cc: 66, label: 'Sostenuto (middle)', binding: 'press: arm or stop a take' },
+    { cc: 67, label: 'Soft (left)', binding: 'deliberately not bound' },
   ];
 
   function pedalState(cc: number): string {
@@ -302,7 +308,8 @@
         Press each pedal once. A pedal the piano does not send cannot be bound to anything,
         so this is a report rather than a promise. One press of the sostenuto arms the
         recording, and another stops it; two taps of the damper in silence start or finish a
-        workout.
+        workout. The soft pedal is bound to nothing: it is played, and a press mid-phrase
+        must never end a take.
       </span>
       {#each PEDALS as pedal (pedal.cc)}
         <span
@@ -310,7 +317,7 @@
           class:good={app.seenControllers.includes(pedal.cc)}
           data-pedal={pedal.cc}
         >
-          {pedal.label} · CC{pedal.cc} · {pedalState(pedal.cc)}
+          {pedal.label} · CC{pedal.cc} · {pedal.binding} · {pedalState(pedal.cc)}
         </span>
       {/each}
       {#if app.pedalActionNote}

@@ -2240,6 +2240,24 @@ def scenario_bench(browser) -> None:
     )
     page.wait_for_selector('[data-audio-capture="armed"]', timeout=15_000)
     check(True, "and one press arms the recording")
+
+    # --- the soft pedal is played, so it must leave an armed take alone ---
+    def press_soft() -> None:
+        # The pedal a pianist actually uses mid-phrase. Bound by accident, it ends a take.
+        page.evaluate("() => window.__fakeMidi.send([0xb0, 67, 127])")
+        page.evaluate("() => window.__fakeMidi.send([0xb0, 67, 0])")
+        page.wait_for_timeout(700)
+
+    press_soft()
+    check(
+        page.get_attribute("[data-audio-capture]", "data-audio-capture") == "armed",
+        "and the soft pedal, which is played, leaves the armed take alone",
+    )
+    check(
+        "deliberately not bound" in page.inner_text("[data-pedal='67']"),
+        "the panel says the soft pedal is unbound rather than broken",
+    )
+
     press_sostenuto()
     page.wait_for_selector('[data-audio-capture="off"]', timeout=10_000)
     check(True, "while a second press stops it")

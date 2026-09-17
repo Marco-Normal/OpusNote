@@ -435,7 +435,7 @@ class AppState {
   /**
    * What the pedals do.
    *
-   * Two actions: the dedicated pedals arm and stop capture, and the damper's double tap
+   * Two actions: the sostenuto arms and stops capture, and the damper's double tap
    * toggles a workout. Capture goes through the same `toggleAudioCapture` the button uses,
    * so the pedal inherits its guards (the log must be running, the server must report its
    * gap) rather than bypassing them.

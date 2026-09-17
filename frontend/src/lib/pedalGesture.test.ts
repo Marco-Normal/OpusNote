@@ -21,10 +21,13 @@ test('a press and release of the sostenuto arms and stops capture', () => {
   assert.equal(gesture.accept(move(66, 0, 1_050), null), 'toggle_audio_capture');
 });
 
-test('the soft pedal works the same way, as the second choice', () => {
+test('the soft pedal is deliberately unbound: it is played, so a press does nothing', () => {
+  // The soft pedal *is* used while playing, so binding capture to it would stop a take in the
+  // middle of a phrase nobody meant to end. Only the middle pedal carries the gesture.
   const gesture = new PedalGesture();
   gesture.accept(move(67, 127, 1_000), null);
-  assert.equal(gesture.accept(move(67, 0, 1_100), null), 'toggle_audio_capture');
+  assert.equal(gesture.accept(move(67, 0, 1_100), null), null);
+  assert.equal(gesture.seen.has(67), true, 'but it is still reported as seen, so the bar can say so');
 });
 
 test('a controller nobody bound does nothing, even with a full press', () => {

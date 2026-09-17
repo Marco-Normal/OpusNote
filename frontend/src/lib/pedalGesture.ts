@@ -11,11 +11,12 @@
  * that silently does not exist. The device bar reports `seen`, so "the pedal does
  * nothing" can be answered by looking rather than by guessing.
  *
- * **Two actions, two gestures.** The dedicated pedals arm and stop capture; the damper's
- * double tap toggles a workout. The mapping follows how often each is reached for: a take is
- * armed and stopped every session, so it gets a pedal nobody plays, while starting a workout
- * is rarer and can afford a deliberate double tap — which stays gated on silence, because
- * the damper *is* played.
+ * **Two actions, two gestures.** The sostenuto arms and stops capture; the damper's
+ * double tap toggles a workout. The mapping follows what each pedal is worth: a take is
+ * armed and stopped every session, so it gets the pedal nobody plays, while starting a
+ * workout is rarer and can afford a deliberate double tap — which stays gated on silence,
+ * because the damper *is* played. The soft pedal is used while playing, so it is bound to
+ * nothing at all.
  */
 
 /** One controller move, on the wall clock like every other MIDI event here. */
@@ -31,13 +32,15 @@ export interface ControllerMove {
 export type HandsfreeAction = 'toggle_workout' | 'toggle_audio_capture';
 
 /**
- * The pedals that are *not* played, in preference order.
+ * The one pedal that is *not* played.
  *
- * The damper is deliberately absent: it is used constantly, so a gesture on it would
- * fire during ordinary pedalling. It is supported as a last-resort double tap instead,
- * and that tap carries the workout. These two carry capture.
+ * The damper is used constantly and the soft pedal is used while playing, so neither can carry
+ * a gesture that a musician will fire by accident: the soft pedal especially, where a press
+ * mid-phrase would stop the take being recorded. The sostenuto is the middle pedal almost
+ * nobody touches, so it is the only one bound to capture. The damper keeps a last-resort
+ * double tap, and that tap carries the workout.
  */
-export const HANDSFREE_CONTROLLERS: readonly number[] = [66, 67];
+export const HANDSFREE_CONTROLLERS: readonly number[] = [66];
 
 /** MIDI's own rule, shared with the sustain path rather than spelled out twice. */
 const DOWN = 64;
@@ -59,9 +62,9 @@ export class PedalGesture {
    * Feed one controller move; get an action back, or null.
    *
    * `lastNoteMs` is the wall clock of the last note heard, or null when nothing has been
-   * played this session. It is consulted **only** for the damper fallback: the other two
-   * pedals are not played, so a press on them is unambiguous, while a press on the
-   * damper is exactly what playing looks like.
+   * played this session. It is consulted **only** for the damper fallback: the sostenuto is
+   * not played, so a press on it is unambiguous, while a press on the damper is exactly what
+   * playing looks like.
    */
   accept(move: ControllerMove, lastNoteMs: number | null): HandsfreeAction | null {
     this.seen.add(move.controller);

@@ -4,13 +4,15 @@
 (G2, G3, G4, G6)*, with decisions 20-D5 and 20b-D1…D6 below. That section owns what and why;
 this document owns the how.
 
-**Status: landed.** One deviation, recorded in `AGENT-LOG.md` (2026-09-17): the plan was written
+**Status: landed.** Two deviations, recorded in `AGENT-LOG.md` (2026-09-17): the plan was written
 before audio capture existed and named one hands-free action, so the mapping it sketches below — CC66
 and CC67 toggling a *workout*, the damper double tap arming *capture* — was settled the other way
-at the user's request after 20e landed. The code is the authority: **the dedicated pedals arm and
-stop capture, and the damper's silent double tap toggles a workout.** The unit tests in Step 1.1 and
-the module in Step 1.3 show the superseded mapping; everything else (discovery, the silence gate,
-`onController` being read-only) landed as written.
+at the user's request after 20e landed, and then narrowed again when the user pointed out that they
+play the soft pedal. The code is the authority: **the sostenuto (CC66) alone arms and stops capture,
+the soft pedal (CC67) is bound to nothing because it is played, and the damper's silent double tap
+toggles a workout.** The unit tests in Step 1.1 and the module in Step 1.3 show the superseded
+mapping; everything else (discovery, the silence gate, `onController` being read-only) landed as
+written.
 
 **Goal.** Make the app usable from the bench without reaching for the computer: the sostenuto
 pedal becomes a hands-free switch **after** the app has observed that the piano sends it, the

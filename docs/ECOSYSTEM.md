@@ -1421,10 +1421,14 @@ and behaves the same on `localhost:8000` and `piano.local:8000`.
 
 **Landed after 20e, so one mapping the plan left open had to be settled here.** The plan was written
 before audio capture existed and named a single hands-free action; the acceptance bullet below asks
-for capture too, and the user settled which pedal carries which: the dedicated pedals (CC66, then
-CC67) **arm and stop capture**, and the damper's double tap **in silence** toggles a workout. A take has no route of its own: resolving a media id to its
-piece would need a server lookup, and this slice adds no server surface, so the bullet's "and take" is
-reached through the piece link that lists it — see `AGENT-LOG.md` 2026-09-17.
+for capture too, and the user settled which pedal carries which: the sostenuto (CC66) **arms and
+stops capture**, and the damper's double tap **in silence** toggles a workout. The user then
+corrected a first cut that also bound the soft pedal (CC67): that pedal *is* played, so a press
+mid-phrase would end the take being recorded, and it is now bound to nothing — the device bar says
+so per pedal rather than leaving an unbound pedal looking broken. A take has no route of its own:
+resolving a media id to its piece would need a server lookup, and this slice adds no server surface,
+so the bullet's "and take" is reached through the piece link that lists it — see `AGENT-LOG.md`
+2026-09-17.
 
 **Problem.** The app is used from the piano bench, and every action needs a hand that is
 supposed to be on the keys. The PX-870 has three pedals; only the damper is read, and the
@@ -1435,10 +1439,12 @@ choice, no URL for anything, and no keyboard path through the app.
 
 - **Pedal discovery first, assumption second.** The device bar gains a readout of which
   controller numbers (`64`, `66`, `67`) have *ever* been seen from the connected piano, and
-  says `none yet` before a pedal is pressed. The sostenuto (CC66) becomes the primary
-  hands-free trigger; if it never arrives, the fallback is CC67 (soft, equally unused), then
-  a double-tap of CC64 gated on two seconds of silence. Nothing is bound to a message the
-  piano has not been observed to send.
+  says `not seen yet` before a pedal is pressed, beside what each pedal is bound to. The
+  sostenuto (CC66) is the hands-free trigger, and the fallback when a piano never sends it is
+  the button in the device bar plus a double-tap of CC64 gated on two seconds of silence. The
+  soft pedal (CC67) is bound to nothing, because it is played: as first built it also carried
+  capture, and a press mid-phrase ended the take being recorded. Nothing is bound to a message
+  the piano has not been observed to send.
 - Hands-free actions: start and finish a workout, arm and stop audio capture (20e), and
   stop playback. The gesture is **inert during a scored attempt**, so it can never be
   mistaken for a musical event.
@@ -1454,7 +1460,8 @@ choice, no URL for anything, and no keyboard path through the app.
 **Acceptance.**
 
 - Before any pedal is pressed the device bar says so; after the sostenuto is pressed it
-  names CC66; a piano that never sends CC66 falls back rather than appearing broken.
+  names CC66; a piano that never sends CC66 keeps the button, and the soft pedal stays
+  unbound so a player who uses it cannot end a take by accident.
 - The gesture starts and finishes a workout and arms and stops capture, and is ignored while
   an exercise is being scored.
 - A two-bar count-in is honoured by the metronome and survives a reload.
@@ -1612,7 +1619,7 @@ sharing."*
 | 20-D2 | Is an inferred kind ever applied? | **No — offered only**, with the basis recorded | The autotag restraint is preserved; a manual tag can never be silently overwritten |
 | 20-D3 | Does undo survive a restart? | **No** — inverse operations over existing routes, and `resegment` stays irreversible | No new table, no backup change, no second source of truth for segment boundaries; the one loss (an absorbed segment's identification outcome) is stated rather than papered over |
 | 20-D4 | Does in-app audio replace the piano's pen-drive recording? | **No** — a low-bitrate convenience for sharing, never an archive | Quality is not an acceptance criterion, so a standing switch is affordable and privacy/retention stay simple |
-| 20-D5 | Which pedal is the hands-free trigger? | **The sostenuto (CC66), discovered rather than assumed**, with CC67 then a CC64 double-tap as fallbacks | No gesture is bound to a message the piano has not been seen to send; the device bar reports the discovery |
+| 20-D5 | Which pedal is the hands-free trigger? | **The sostenuto (CC66) alone, discovered rather than assumed**, with a CC64 double-tap carrying the workout | No gesture is bound to a message the piano has not been seen to send, and no gesture is bound to a pedal that is played — the soft pedal is unbound because the user uses it |
 | 20-D6 | Does one missed day break the streak? | **No — one grace day per rolling seven**, with a weekly target carrying the habit | The familiar consecutive-day number survives; the weekly target needs no server-side setting |
 | 20-D7 | Are focus passages inferred from the log? | **No — manual, or seeded from an existing A/B loop** | There is no score alignment to infer from, and 18b made that a non-goal; nothing is claimed about bars the app cannot see |
 
@@ -1714,7 +1721,7 @@ signature** at system breaks, which OSMD cannot be talked into.
 | An unauthenticated LAN can still *edit* and *upload* (D8) | Visible banner; the irreversible paths are loopback-only, which is the part that cannot be undone by hand |
 | A future move to a reverse proxy or a non-loopback deployment breaks the boundary silently | `request.client.host` is the check today and there is no proxy in this topology; if one is ever added, the check must move to a trusted header, and this row is the reminder |
 | Captured audio (Phase 20e) grows without bound and is the first thing in the app whose size matters | ~14 MB per hour at 32 kbps mono, against a few MB per *year* for notes. Deliberately not auto-pruned: the System panel reports captured-audio size and deletion stays loopback-only, so the player decides rather than a policy |
-| The sostenuto pedal is bound to a controller message the piano may not send (Phase 20-D5) | The device bar reports which of CC64/66/67 have actually been seen before anything is bound, and CC67 then a CC64 double-tap are the fallbacks. A piano that sends none of them keeps every feature except the gesture |
+| The sostenuto pedal is bound to a controller message the piano may not send (Phase 20-D5) | The device bar reports which of CC64/66/67 have actually been seen before anything is bound, and the `Record takes` button and a CC64 double-tap cover the actions without it. A piano that sends none of them keeps every feature except the gesture |
 
 ### Non-goals
 
