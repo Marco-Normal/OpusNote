@@ -200,6 +200,52 @@ FAKE_MIDI = """
 })();
 """
 
+#: Injected before every page script. Taps the master output — the last hop before the
+#: speakers — and remembers the loudest sample seen, so "it made a sound" stops being
+#: unobservable. This exists because the synthesiser and the sampled piano were both
+#: silent while every assertion that looked at them passed: the interface said "playing",
+#: the position advanced, the audio context was running, and the notes were scheduled onto
+#: a `Tone.Part`'s Transport that nothing ever started (2026-09-20).
+AUDIO_TAP = """
+(() => {
+  const peak = { value: 0 };
+  window.__audio = {
+    // The loudest sample since the last reset, in 0..1. Notes are hundreds of
+    // milliseconds and this samples every 16, so a phrase cannot slip between two reads.
+    peak() { return peak.value; },
+    reset() { peak.value = 0; },
+  };
+  const connect = AudioNode.prototype.connect;
+  AudioNode.prototype.connect = function (destination, ...rest) {
+    const result = connect.call(this, destination, ...rest);
+    try {
+      const context = this.context;
+      // Tone's Destination is a gain connected to the raw AudioDestinationNode, and
+      // everything the app plays goes through it, so this hop sees the whole mix. The
+      // analyser is a parallel tap: it does not change what is heard.
+      if (destination === context.destination && !context.__tap) {
+        const analyser = context.createAnalyser();
+        analyser.fftSize = 2048;
+        connect.call(this, analyser);
+        context.__tap = analyser;
+        const buffer = new Float32Array(analyser.fftSize);
+        setInterval(() => {
+          analyser.getFloatTimeDomainData(buffer);
+          for (const sample of buffer) {
+            const level = Math.abs(sample);
+            if (level > peak.value) peak.value = level;
+          }
+        }, 16);
+      }
+    } catch {
+      // A page that cannot be tapped reports silence, which is a failing assertion. It
+      // must not be a page that throws before the app has loaded.
+    }
+    return result;
+  };
+})();
+"""
+
 #: Schedule a whole performance from inside the page, anchored to `performance.now()`.
 #: The same clock the app uses for onsets, so timing is exact apart from the
 #: polling delay in detecting that playback started.
@@ -392,6 +438,7 @@ def new_page(browser, *, allow_statuses: set[int] | None = None) -> tuple[Page, 
     allowed = allow_statuses or set()
     page = browser.new_page(viewport={"width": 1280, "height": 1000})
     page.add_init_script(FAKE_MIDI)
+    page.add_init_script(AUDIO_TAP)
     errors: list[str] = []
     page.on(
         "console",
@@ -2993,8 +3040,11 @@ def scenario_playback(browser) -> None:
     # --- the sampled piano actually loads ---
     # The browser is the only place this can be checked: it is Tone's own note-name
     # parser that has to accept every URL key, and it rejects the `Ds4` spelling the
-    # files use. Nothing here asserts *sound* — that is not observable from a test —
-    # but "the 30 samples decoded" is, and it is the step that was silently failing.
+    # files use. "The 30 samples decoded" is the first half, and it is the step that was
+    # silently failing. The second half is `__audio.peak()`, which reads the master
+    # output: decoded samples, a running context, a "playing" readout and an advancing
+    # position are all true of a performance nobody can hear, which is exactly what this
+    # spent months being.
     installed = api("/api/audio/piano")
     if installed["available"]:
         page.select_option("#instrument", "piano")
@@ -3013,8 +3063,17 @@ def scenario_playback(browser) -> None:
         # context has to be running, and it was not — the sampled-piano branch of the
         # player returned before it ever called `Tone.start()`, so the instrument was
         # silent with no error anywhere.
+        #
+        # The silence before the click is what makes the peak afterwards mean something:
+        # an analyser that is hot on its own would make any assertion about sound true.
+        page.evaluate("() => window.__audio.reset()")
+        page.wait_for_timeout(150)
+        quiet = page.evaluate("() => window.__audio.peak()")
+        check(quiet == 0, f"the master output is silent before anything is played ({quiet})")
         click_button(page, "Test")
         page.wait_for_timeout(600)
+        peak = page.evaluate("() => window.__audio.peak()")
+        check(peak > 0.001, f"the sampled piano puts sound on the master output (peak {peak})")
         check(
             page.get_attribute("[data-audio-state]", "data-audio-state") == "running",
             f"and the browser's audio is running ({page.get_attribute('[data-audio-state]', 'data-audio-state')})",
@@ -3023,24 +3082,32 @@ def scenario_playback(browser) -> None:
             page.locator("[data-sound-error]").count() == 0,
             "with nothing reported as failed",
         )
-
-        # The synthesiser takes the same route, and must not be worse off for it.
-        page.select_option("#instrument", "synth")
-        click_button(page, "Test")
-        page.wait_for_timeout(600)
-        check(
-            page.get_attribute("[data-audio-state]", "data-audio-state") == "running",
-            "and the synthesiser plays through a running context too",
-        )
-        check(
-            page.locator("[data-sound-error]").count() == 0,
-            "with nothing reported as failed there either",
-        )
-        page.select_option("#instrument", "midi")
     else:
-        # Without the samples installed this scenario cannot check the instrument, and
+        # Without the samples installed this arm cannot check the instrument, and
         # pretending otherwise would be a green tick over nothing.
-        print("      this half is not installed; the MIDI-output checks below still run")
+        print("      the samples are not installed; the synthesiser and MIDI checks still run")
+
+    # The synthesiser takes the same route, and must not be worse off for it. It is
+    # always available, so it is checked whether or not the samples are installed.
+    page.evaluate("() => window.__audio.reset()")
+    page.select_option("#instrument", "synth")
+    click_button(page, "Test")
+    page.wait_for_timeout(600)
+    synth_peak = page.evaluate("() => window.__audio.peak()")
+    check(synth_peak > 0.001, f"the synthesiser puts sound on the master output (peak {synth_peak})")
+    check(
+        page.get_attribute("[data-audio-state]", "data-audio-state") == "running",
+        "and the synthesiser plays through a running context too",
+    )
+    check(
+        page.locator("[data-sound-error]").count() == 0,
+        "with nothing reported as failed there either",
+    )
+
+    # What Stop does to Tone playback is not asserted here: the chord is under a second,
+    # so it would fall silent on its own and any assertion about the silence would pass
+    # with Stop removed. The cancellation that *can* be observed is MIDI's, below.
+    page.select_option("#instrument", "midi")
 
     # --- playing, through the piano ---
     # Selecting a sitting reads its detail; the notes are fetched on the first play,

@@ -833,7 +833,10 @@ about a field nobody could identify.
   sounding *now*, while `triggerAttackRelease` had already scheduled notes for seconds
   ahead. There is now one shared player, playback is a `Tone.Part` that is cancelled on
   stop, and MIDI output is handed out in a rolling window so at most a fraction of a
-  second is in flight. **Stop means stop** is checked in the browser suite against a
+  second is in flight. A part rides the **Transport**, so the Transport is started with it
+  and stopped with it: a part on its own schedules a performance nobody hears, which is
+  what the synthesiser and the sampled piano were for a while (2026-09-20 in
+  `AGENT-LOG.md`). **Stop means stop** is checked in the browser suite against a
   simulated piano: a note-off for the note still sounding, an all-notes-off sweep on
   every channel, and a second sweep after the window drains — because a note-on already
   given to the MIDI stack can be followed by silence but not recalled.
@@ -873,6 +876,20 @@ separately on the first gesture anywhere in the page (`unlockOnFirstGesture`), w
 where a browser allows it. The device bar reports the context state and has a **Test**
 button, because "no sound" with no explanation is the worst possible failure — and in
 this case the app had been producing it in three different ways at once.
+
+**A fourth silence, and the one nothing could see.** The Transport under the `Tone.Part` was
+never started. A part places its events on the Transport timeline — `ToneEvent.start()`
+converts its time with `toTicks` and hands each event to `transport.schedule` — so a part
+with a stopped Transport fires nothing at all, and the failure is invisible from every
+readout the interface had: the button said *playing*, the position advanced, the pill said
+`audio ok`, the context reported `running`, and the master output sat at exactly zero. It hit
+both Tone instruments on every machine, including a phone with no piano attached, while the
+piano itself played perfectly because MIDI never touches Tone. `playThrough` now starts the
+Transport with the part and stops it with the part. Because none of those readouts could
+distinguish this from working, the browser suite stopped reading them: `AUDIO_TAP` in
+`backend/tools/e2e_browser.py` taps the master output with an analyser, and
+`scenario_playback` requires the output to be **silent before** the chord and non-zero
+**during** it, for the sampled piano and the synthesiser both.
 
 **The sampled piano did not play at all either**, and the reason is worth writing down: the
 files are spelled with an `s` (`Ds4.mp3`) because a `#` in a URL starts a fragment, while

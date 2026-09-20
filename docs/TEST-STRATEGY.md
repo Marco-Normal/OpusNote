@@ -87,6 +87,9 @@ not the fixture (`:1226`); `scenario_playback` does the same for the sampled pia
 prints *"All browser scenarios passed."* either way. In pytest the same shape appears at
 `test_repertoire.py:773`, where **every media-conversion test vanishes** if `ffmpeg` is
 absent — and the whole media failure surface is behind it.
+(2026-09-20: the synthesiser arm of `scenario_playback` no longer sits inside that skip — it
+is always available, so it now runs with or without the samples, and it is the arm that
+asserts the master output is audible. The sampled-piano arm still skips.)
 
 **A scenario that never checks its own errors and never closes its page.**
 `scenario_repertoire` collects `console`/`pageerror`/HTTP failures at `:1235` and never

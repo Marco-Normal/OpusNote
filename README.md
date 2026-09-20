@@ -270,6 +270,13 @@ making sound". The pill beside it reports the browser's audio state — `suspend
 the browser is waiting for a click, `audio ok` means the app is playing into a machine
 whose speakers, sound server or tab-mute setting is somebody else's problem.
 
+That last sentence was wrong for a while, which is why the browser suite now measures the
+master output instead of trusting the readouts: for the sampled piano and the synthesiser,
+`audio ok`, a "playing" button and an advancing position were all true while not one
+sample reached the speakers, because their notes were scheduled on a Tone `Transport`
+that nothing started. `scenario_playback` taps the output and fails if the chord is
+silent, so "the app is playing" is asserted rather than read.
+
 Two naming schemes meet at the sampler and are not interchangeable: the files use `Ds4`
 (a `#` in a URL starts a fragment, so `D#4.mp3` would fetch `D`), while a note name needs
 `D#4`. Getting that wrong leaves the sampled piano silent and quietly falls back to the

@@ -1948,3 +1948,71 @@ only step that reads the policy file). The changes after that run are this entry
 in the two plans, and the break script — no behaviour, and the policy file is byte-identical to the
 one it was run against.
 
+## 2026-09-20 — sight-reading agent — the synthesiser and the sampled piano were scheduled onto a clock nobody started
+
+Scope: `frontend/src/lib/pianoPlayer.ts`, `backend/tools/e2e_browser.py` (`AUDIO_TAP` and
+`scenario_playback`), `backend/tools/falsifications/let_the_part_ride_a_stopped_transport.sh` (new),
+`README.md`, `docs/ECOSYSTEM.md`, `docs/TEST-STRATEGY.md`.
+
+The user reported it from use, not from review: *the piano itself plays, and neither the
+synthesiser nor the Salamander samples make a sound* — on the piano machine, on their phone and on
+their personal computer — *while both report that audio is ready*. Three machines is what made it a
+code bug rather than a device one, and "audio is ready" was true the whole time.
+
+**Did.** `playThrough` built a `Tone.Part` and called `part.start(Tone.now() + LEAD_IN_S)`. A
+`Tone.Part` does not schedule on the audio clock. `ToneEvent.start()` converts its time with
+`toTicks` and hands every event to `this.context.transport.schedule`
+(`tone/build/esm/event/ToneEvent.js:95`), and a stopped Transport never fires them — and nothing in
+this app has *ever* started the Transport (`grep -rn "Transport" frontend/src` returned nothing).
+So the part was cancelled correctly by Stop, `data-playing` was right, the position advanced from
+`performance.now()`, the context reported `running`, and not one note was ever going to sound. The
+fix starts the clock the part rides and stops it with the part: `transport.stop()`,
+`transport.cancel(0)`, `transport.seconds = 0`, then `part.start(0)` — the part's event times are
+onsets within the material, so its zero is the Transport's zero — then
+`transport.start(Tone.now() + LEAD_IN_S)` carries the lead-in. `stop()` clears the Transport inside
+the existing `if (this.part)` block, so a stop with nothing playing never builds an audio context.
+
+**Why MIDI and the metronome were never affected.** Web MIDI does not touch Tone at all, which is
+why "through the piano" was the one instrument that worked. The metronome calls
+`triggerAttackRelease(freq, dur, absoluteTime)`; `Source.start` schedules on the audio clock unless
+`.sync()` has been called (`tone/build/esm/source/Source.js:124-168`), and nothing here syncs. Only
+`Part`/`ToneEvent` ride the Transport — which is exactly why the Part was chosen (a note scheduled
+four seconds out has to be cancellable by Stop, and `releaseAll()` only releases what is already
+sounding), and exactly why the one class that needs the Transport is the one that was silent.
+
+**The old assertion said sound was unobservable, and that was the bug's habitat.** `scenario_playback`
+contained, in as many words, *"Nothing here asserts sound — that is not observable from a test"*.
+It is observable: an `AnalyserNode` connected in parallel with the master output reads what the
+speakers get, and it does not change what is heard. The harness now injects `AUDIO_TAP` before any
+page script — it hooks the last `connect(destination)` hop, keeps the loudest sample since the last
+reset, and samples every 16 ms — and `scenario_playback` requires the output to be **silent before**
+the chord and **non-zero during** it, for the sampled piano and the synthesiser. Measured: piano
+`peak 0` before the fix, `0.151` after; synthesiser `0.120`. The `--mute-audio` the suite launches
+with mutes the output *device*, not the graph, which is what lets the tap work underneath it.
+
+**Falsified before it was trusted.** `let_the_part_ride_a_stopped_transport.sh` puts the bug back —
+`part.start(start)` with no Transport start — and the scenario fails at *"the sampled piano puts
+sound on the master output (peak 0)"*; restored, it passes. One trap worth recording: the browser is
+served `frontend/dist`, which is gitignored, so a falsification of frontend behaviour that does not
+`npm run build` first proves nothing at all.
+
+**A skip narrowed while here.** The synthesiser arm of `scenario_playback` was nested inside
+`if installed["available"]:`, so a machine without the samples skipped the synthesiser too — the one
+instrument that is always available, and in practice the one a viewer with no piano hears. It sits
+outside that branch now and asserts sound unconditionally; `TEST-STRATEGY.md`'s register of
+self-skipping green ticks carries the correction rather than being left to claim otherwise.
+
+**What was deliberately not asserted.** Stop's effect on Tone playback: the Test chord is under a
+second, so it falls silent on its own and an assertion about the silence would pass with Stop
+deleted. The cancellation that can be observed is MIDI's, and the scenario already checks that
+exhaustively. Notes are in the file where the temptation would be.
+
+No frontend unit test was added: `node --test` has no Web Audio, and a test of the player would have
+to be a browser test, which is what this now is.
+
+Verified: `scenario_playback` green — 38 assertions, three of them new and seen to fail first; the
+**whole browser tier** green (`backend/tools/run_e2e.sh`, all fourteen scenarios) rather than only
+the playback one, because the change makes the player a second owner of the global Transport clock
+and the metronome scenarios had to be re-run rather than assumed; `./check.sh --fast` green.
+
+

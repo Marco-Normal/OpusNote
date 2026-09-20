@@ -23,6 +23,11 @@
  * scheduled as a `Tone.Part` and cancelled on stop; MIDI output is handed out in a
  * short rolling window, so at most a few hundred milliseconds of notes can be in
  * flight, and a second all-notes-off is sent after that window has passed.
+ *
+ * **A part rides the Transport.** `Tone.Part` places its events on the Transport
+ * timeline, so the Transport has to be started with the part and stopped with it.
+ * Starting only the part is a performance nobody hears, which is what the synthesiser
+ * and the sampled piano were for a while: see `playThrough`.
  */
 
 import * as Tone from 'tone';
@@ -304,6 +309,11 @@ export class PianoPlayer {
       this.part.cancel();
       this.part.dispose();
       this.part = null;
+      // The clock the part rode. `cancel` clears its events; leaving the Transport
+      // running would leave a clock ticking for the next performance to start behind.
+      // Guarded by `this.part` so a stop with nothing playing never builds a context.
+      Tone.getTransport().stop();
+      Tone.getTransport().cancel(0);
     }
     this.synth?.releaseAll();
     this.piano?.releaseAll();
@@ -332,7 +342,18 @@ export class PianoPlayer {
     material: SynthNote[],
     options: PlayOptions,
   ): void {
-    const start = Tone.now() + LEAD_IN_S;
+    // A `Tone.Part` schedules its events on the **Transport**, not on the audio clock:
+    // `ToneEvent.start()` converts its time with `toTicks` and hands each event to
+    // `transport.schedule`. A stopped Transport never fires them, so scheduling a part
+    // and starting nothing is a performance no one hears — the interface said "playing",
+    // the position advanced, the context reported `running`, and the master output sat at
+    // exactly zero for every note. Ridden properly, it is still the right tool: the
+    // Transport is what makes a note scheduled four seconds out cancellable by Stop.
+    const transport = Tone.getTransport();
+    transport.stop();
+    transport.cancel(0);
+    transport.seconds = 0;
+
     this.part = new Tone.Part((time, value) => {
       const note = value.note;
       instrument.triggerAttackRelease(
@@ -342,7 +363,11 @@ export class PianoPlayer {
         note.velocity,
       );
     }, material.map((note) => ({ time: note.onset, note })));
-    this.part.start(start);
+    // The part starts at the Transport's own zero, because its event times are onsets
+    // within the material. The lead-in is when the Transport itself starts, so the first
+    // note is scheduled rather than played late.
+    this.part.start(0);
+    transport.start(Tone.now() + LEAD_IN_S);
 
     this.startedAt = performance.now();
     this.playing = true;
