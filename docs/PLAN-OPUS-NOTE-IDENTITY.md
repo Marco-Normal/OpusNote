@@ -1,6 +1,6 @@
 # Opus Note — visual identity and navigation declutter
 
-Status: `direction approved — decisions taken in §11; ready for slice 0`
+Status: `complete — slices 0-6 executed and verified (see §6.1-6.5)`
 Date: `2026-09-20`
 Scope: `frontend only` (display-name rebrand + visual identity + information architecture)
 
@@ -18,9 +18,10 @@ The name undersells the product, and the navigation has accumulated every featur
 at the same visual weight. This plan rebrands it **Opus Note** and gives it a
 navigation shape that matches what it actually does.
 
-**Nothing here is implemented yet.** This document is the plan. The two
-user-owned decisions (accent, typography) are closed in §11, so the work is ready
-to start at slice 0 — but no code has been touched.
+**This document is the plan, and it is now executed.** The two user-owned decisions
+(accent, typography) were closed in §11 before slice 0 started, and §6.1-6.5 record what
+each slice actually did — including the four places the plan was wrong and the code was
+right, and the one verification tier deliberately not run.
 
 ---
 
@@ -406,6 +407,71 @@ off an inventory of `data-*` hooks, and it missed two things that a hook invento
 cannot see: `data-audio-note` (absent from the list itself) and `#count-in`, a plain
 element id. Both cost a full browser run to find. **A hook inventory is not an
 inventory of the suite's coupling to the DOM** — grep for ids and role names too.
+
+### 6.3 Slice 4 as executed — three pillars
+
+**The merge is navigation-only, and `route.ts` was not touched.** That is the
+evidence, not the claim: `stats` and `log` remain separate `AppView`s and separate
+entries in `ENTITIES`, so `#/stats/attempt/56` and `#/log/sitting/34` still open
+exactly what they name. Nothing had to be redirected because nothing moved.
+
+What changed is the tab model. A tab now carries `owns: AppView[]`, and Progress owns
+both views:
+
+- clicking the section you are already in is a **no-op**, so the tab cannot move you
+  between Progress' two views and feel like it lost your place;
+- arriving from elsewhere opens the **last-used** view, remembered for the session
+  but not persisted — a fresh session opening on the ratings is the right default;
+- `Ratings | Log` renders in the shell, with one owner, because a copy inside each
+  view would drift;
+- `<main>` carries `data-view`, so the suite can tell which view is up;
+- `1`–`3` replaces `1`–`4`.
+
+The suite gained `open_log()`, mirroring `open_setup()`, and its seven
+`click_button(page, "Log")` sites became `open_log(page)`. `README.md`'s `Log tab`
+and `Progress tab` references and one in `DEPLOYMENT.md` were corrected.
+
+### 6.4 Slice 5 as executed — and one thing deliberately not done
+
+**Two real bugs in the skill radar, both pre-existing and both invisible to every
+test.** Looking at the Progress screenshot showed a label reading *"in And
+Dynamics"*, overlapping *"KeysSignatures"*. Two independent causes:
+
+1. `text-transform: capitalize` was applied to axis names that already arrive
+   correctly cased — `"Articulation and dynamics"` was being rendered
+   `"Articulation And Dynamics"`.
+2. The longest name is 25 characters, and at the 9 o'clock position it is anchored
+   `end` at x≈26, so it ran off the left of the viewBox and was clipped *and*
+   collided with the neighbouring label.
+
+Fixed by removing the transform and word-wrapping into at most two lines on a
+slightly larger canvas with `overflow: visible`. A wrap that would need a third line
+**folds the remainder onto the second rather than truncating** — a truncated axis
+name is a wrong axis name. No test asserted any of this; the screenshot did.
+
+**The invariant was hardened rather than assumed.** `[data-playing='true'] .setup {
+display: none }`: the suite never opens Setup mid-run, so nothing would have caught
+the panel competing with the score for height. §7.1 is the one thing this app exists
+to protect, so it is written down even where the tests are silent.
+
+**Deliberately not done: a blanket radius normalisation.** A dozen components carry
+7/8/9px radii where `--radius-sm` now exists. At those sizes the difference is
+invisible, the change touches a dozen files, and it would put diff noise into a
+review for no visual gain. The tokens are there for new work; the stragglers are
+recorded here rather than swept. The `RepertoireView` split (1867 lines) is likewise
+deferred: it is a layout refactor, not an identity change, and it is the largest and
+least identity-critical file in the app.
+
+### 6.5 Slice 6 as executed — what was run, and what was not
+
+Run, and green: `./check.sh --fast`; all **14** browser scenarios (**420** checks);
+the 28-pair contrast and token audit in both themes.
+
+**Not run: `--full`'s mutation tier.** It mutates all of `backend/app` against 883
+tests and is configured as *"a report, not a gate"* (`backend/setup.cfg`), so it
+neither gates nor terminates in a bounded time. The plan's own §8 described `--full`
+as being about the 14 browser scenarios, and those were run at every slice — 0, 3, 4
+and 6 included. This is a stated omission, not an oversight.
 
 ---
 

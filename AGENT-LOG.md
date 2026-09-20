@@ -2094,4 +2094,46 @@ the same 420 as before the device bar was restructured, which is the evidence th
 did not quietly drop an assertion; a token/contrast audit over both themes; and screenshots in light
 and dark, which is how the white-input defect was found at all.
 
+**Slices 4–6, and the end of the plan.** The navigation is three sections now — Practice, Library,
+Progress — and Progress holds **Ratings** and **Log** as two views of one question, which is what
+they always were: two tabs a reader could not tell apart from the outside. The merge is
+*navigation-only*, and the evidence is that `route.ts` was not touched: `stats` and `log` are still
+separate views with separate routes, so a pasted `#/stats/attempt/56` or `#/log/sitting/34` opens
+exactly what it names. Checked by hand rather than assumed — every documented route was loaded in
+Chromium and reported the right view, and `#/nonsense/1/2` correctly left the app where it was,
+which is what the parser documents itself as doing.
+
+A tab now carries `owns: AppView[]`, so clicking the section you are already in is a no-op instead
+of shuffling you between Progress' two views, and arriving from elsewhere returns you to the one you
+last used — remembered for the session, not persisted. `1`–`3` replaces `1`–`4`.
+
+**Two bugs in the skill radar that no test could have caught.** The Progress screenshot showed a
+label reading *"in And Dynamics"* sitting on top of *"KeysSignatures"*. Two independent causes: the
+axis names already arrive correctly cased and `text-transform: capitalize` was turning
+"Articulation and dynamics" into "Articulation And Dynamics"; and that name is 25 characters, which
+at the 9 o'clock position ran off the left of the viewBox and collided with its neighbour. Both
+fixed by removing the transform and word-wrapping to two lines. A wrap needing a third line folds
+the remainder onto the second rather than truncating, because a truncated axis name is a wrong axis
+name. Worth recording as a method note: **a screenshot found what 420 assertions did not**, and this
+is the second defect this session that only looking could find — the white dark-mode inputs were the
+first.
+
+**One invariant hardened against a gap rather than a failure.** `[data-playing='true'] .setup`
+now hides the Setup panel. No scenario opens Setup mid-run, so nothing would ever have caught the
+panel competing with the score for height — and the music never being allowed to scroll is the one
+thing this app exists to train against, so it is written down where the tests are silent.
+
+**What was deliberately not done, and why it is recorded rather than done.** A dozen components
+still carry 7/8/9px radii where `--radius-sm` exists. At those sizes the difference is invisible and
+the sweep would touch a dozen files for no visual gain: that is diff noise, not polish. The tokens
+are there for new work. `RepertoireView` (1867 lines, carrying list, detail, editor, journal,
+passages, scores, recordings and takes) is still one component; splitting it is a layout refactor
+rather than an identity change, and it is the largest and least identity-critical file in the app.
+
+**On `--full`.** Its mutation tier was not run: `backend/setup.cfg` mutates all of `backend/app`
+against 883 tests and describes the score as *"a report, not a gate"*, so it neither gates nor
+terminates in a bounded time. The browser tier that `--full` actually adds — the part this work
+could break — was run at every slice and is green. Stated here so the omission is a decision on the
+record rather than a gap somebody finds later.
+
 

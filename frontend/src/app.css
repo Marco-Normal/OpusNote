@@ -421,6 +421,16 @@ th {
   display: none;
 }
 
+/*
+ * Setup is configuration, and configuration has no business competing with the score during a
+ * performance. The browser suite never opens it mid-run, so nothing would catch this — which
+ * is exactly why it is written down rather than assumed: the failure it prevents is the music
+ * starting to scroll, the one thing this app exists to train against.
+ */
+[data-playing='true'] .setup {
+  display: none;
+}
+
 /* Focus mode: the score owns the window. */
 [data-focus='true'] .topbar,
 [data-focus='true'] .device-bar,
