@@ -29,7 +29,7 @@ export interface ControllerMove {
   channel: number;
 }
 
-export type HandsfreeAction = 'toggle_workout' | 'toggle_audio_capture';
+export type HandsfreeAction = "toggle_workout" | "toggle_audio_capture";
 
 /**
  * The one pedal that is *not* played.
@@ -66,7 +66,10 @@ export class PedalGesture {
    * not played, so a press on it is unambiguous, while a press on the damper is exactly what
    * playing looks like.
    */
-  accept(move: ControllerMove, lastNoteMs: number | null): HandsfreeAction | null {
+  accept(
+    move: ControllerMove,
+    lastNoteMs: number | null,
+  ): HandsfreeAction | null {
     this.seen.add(move.controller);
     const isDown = move.value >= DOWN;
     const wasDown = this.down.get(move.controller) ?? false;
@@ -74,18 +77,25 @@ export class PedalGesture {
 
     if (HANDSFREE_CONTROLLERS.includes(move.controller)) {
       // A dedicated pedal: one deliberate press and release is the whole gesture.
-      return wasDown && !isDown ? 'toggle_audio_capture' : null;
+      return wasDown && !isDown ? "toggle_audio_capture" : null;
     }
 
     if (move.controller === 64 && wasDown && !isDown) {
-      const quiet = lastNoteMs === null || move.epochMs - lastNoteMs >= SILENCE_MS;
+      const quiet =
+        lastNoteMs === null || move.epochMs - lastNoteMs >= SILENCE_MS;
       if (!quiet) {
         this.lastTapMs = null;
         return null;
       }
-      if (this.lastTapMs !== null && move.epochMs - this.lastTapMs <= DOUBLE_TAP_MS) {
+      if (
+        this.lastTapMs !== null &&
+        move.epochMs - this.lastTapMs <= DOUBLE_TAP_MS
+      ) {
         this.lastTapMs = null;
-        return 'toggle_workout';
+        // Decision from a human, as o right now, I'll be deactivating the workout on the
+        // sustain pedal.
+        // return 'toggle_workout';
+        return null;
       }
       this.lastTapMs = move.epochMs;
     }
