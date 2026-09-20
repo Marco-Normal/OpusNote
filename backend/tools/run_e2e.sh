@@ -11,7 +11,7 @@
 # happens to be running on the documented port is a test whose result depends on somebody
 # else's session. Override with SRT_E2E_PORT.
 #
-#   ./run_e2e.sh              all twelve scenarios
+#   ./run_e2e.sh              every scenario in the registry
 #   ./run_e2e.sh playback     one scenario, by the ONLY filter
 set -euo pipefail
 

@@ -127,7 +127,7 @@ address becomes the proxy's and the check must move to a trusted header.
 
 ### Is the notebook actually logging?
 
-Two independent signals, both visible from any machine in the Log tab:
+Two independent signals, both visible from any machine under Progress › Log:
 
 - **Capture** — the origin that last checked in and how long ago the last note
   arrived. The heartbeat is ephemeral (in memory, 15 s cadence, treated as gone after

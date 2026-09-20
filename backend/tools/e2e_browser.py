@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""End-to-end browser verification of the sight-reading loop.
+"""End-to-end browser verification of the whole app.
 
 Drives the real built client in Chromium against the real API, with a
 *simulated* Web MIDI implementation injected before any page script runs. That
@@ -470,15 +470,33 @@ def click_button(page: Page, label: str, timeout: float = 20_000) -> None:
     page.get_by_role("button", name=label, exact=True).first.click(timeout=timeout)
 
 
-def open_ports(page: Page) -> None:
-    """Make sure the per-port list is on screen.
+def open_setup(page: Page) -> None:
+    """Make sure the Setup panel is on screen.
 
-    It is a toggle, so clicking unconditionally *closes* it when it is already open
-    — which is what happens after a device disappears and returns.
+    Ports, pedals, latency, count-in, the click and the playback instrument all live behind
+    one disclosure now, so a scenario that reads any of them opens it first — which is what a
+    person does too.
     """
-    if page.locator("[data-port]").count() == 0:
-        page.get_by_role("button", name=re.compile(r"^Ports")).first.click()
-        page.wait_for_selector("[data-port]", timeout=10_000)
+    if page.locator("[data-setup]").count() == 0:
+        page.get_by_role("button", name="Setup", exact=True).first.click(timeout=10_000)
+        page.wait_for_selector("[data-setup]", timeout=10_000)
+
+
+def open_ports(page: Page) -> None:
+    """Make sure the per-port list is on screen. It lives in the Setup panel now."""
+    open_setup(page)
+
+
+def open_log(page: Page) -> None:
+    """Open the Log, which is the second of Progress' two views.
+
+    `Log` is not a tab of its own any more: it and the ratings answer the same question, so
+    they share one section. A scenario therefore has to enter Progress before it can pick Log.
+    """
+    if page.locator('[data-view="log"]').count() == 0:
+        click_button(page, "Progress")
+        page.locator('[data-subview="log"]').click(timeout=10_000)
+        page.wait_for_selector('[data-view="log"]', timeout=20_000)
 
 
 def ensure_midi(page: Page, timeout: float = 15_000) -> None:
@@ -489,7 +507,7 @@ def ensure_midi(page: Page, timeout: float = 15_000) -> None:
     scenario exists to check. The click is only for a browser that refused without a
     gesture.
     """
-    page.wait_for_selector("text=Sight-Reading Trainer", timeout=timeout)
+    wait_for_app(page, timeout)
     connect = page.get_by_role("button", name="Connect MIDI", exact=True)
     if connect.count():
         try:
@@ -502,6 +520,18 @@ def ensure_midi(page: Page, timeout: float = 15_000) -> None:
             pass
     page.wait_for_selector("text=MIDI connected", timeout=timeout)
     check(page.evaluate("() => window.__fakeMidi.ready()"), "app installed a MIDI message handler")
+
+
+def wait_for_app(page: Page, timeout: float = 30_000) -> None:
+    """Wait until the client shell has rendered.
+
+    The product name used to be the sentinel here. That made every scenario
+    depend on a *display string*: renaming the product broke all of them at
+    their first assertion, and the failure pointed at the brand rather than at
+    anything real. ``[data-app-ready]`` is a hook the app owns deliberately, in
+    the same style as the other ``data-*`` markers this suite already keys off.
+    """
+    page.wait_for_selector("[data-app-ready]", timeout=timeout)
 
 
 def wait_for_phase(page: Page, phase: str, timeout: float = 30_000) -> None:
@@ -521,7 +551,7 @@ def start_run(page: Page) -> None:
 def load_first_exercise(page: Page) -> dict[str, Any]:
     """Click through to a rendered exercise and return the API payload behind it."""
     page.goto(BASE_URL, wait_until="domcontentloaded")
-    page.wait_for_selector("text=Sight-Reading Trainer")
+    wait_for_app(page)
 
     ensure_midi(page)
 
@@ -720,7 +750,10 @@ def scenario_calibration_and_stats(browser) -> None:
     print("\n[3] Calibration ladder and progress view")
     page, errors = new_page(browser)
     page.goto(BASE_URL, wait_until="domcontentloaded")
-    click_button(page, "Calibrate")
+    # Calibration is a page reached from Setup rather than a tab of its own: it is a
+    # diagnostic you run occasionally, and it was competing for the same row as Practice.
+    open_setup(page)
+    page.locator("[data-calibrate-link]").click(timeout=10_000)
     page.wait_for_selector("text=Ready to calibrate")
 
     with page.expect_response(lambda r: "/api/calibration/next" in r.url) as caught:
@@ -817,7 +850,7 @@ def scenario_theming(browser) -> None:
     )
 
     page.goto(BASE_URL, wait_until="domcontentloaded")
-    page.wait_for_selector("text=Sight-Reading Trainer")
+    wait_for_app(page)
     check(
         page.evaluate("() => document.documentElement.dataset.theme") == "light",
         "a fresh profile starts in light",
@@ -959,7 +992,7 @@ def scenario_long_exercises(browser) -> None:
         page, errors = new_page(browser)
         page.set_viewport_size(viewport)
         page.goto(BASE_URL, wait_until="domcontentloaded")
-        page.wait_for_selector("text=Sight-Reading Trainer")
+        wait_for_app(page)
         ensure_midi(page)
         load_first_exercise(page)
 
@@ -1080,7 +1113,7 @@ def scenario_two_hands(browser) -> None:
     set_all_ratings(1300)  # comfortably two-handed
     page, errors = new_page(browser)
     page.goto(BASE_URL, wait_until="domcontentloaded")
-    page.wait_for_selector("text=Sight-Reading Trainer")
+    wait_for_app(page)
     ensure_midi(page)
 
     patterns: set[str] = set()
@@ -1306,8 +1339,8 @@ def scenario_repertoire(browser) -> None:
     # The duplicate-upload check provokes a 409 on purpose.
     page, errors = new_page(browser, allow_statuses={409})
     page.goto(BASE_URL, wait_until="domcontentloaded")
-    page.wait_for_selector("text=Sight-Reading Trainer")
-    click_button(page, "Repertoire")
+    wait_for_app(page)
+    click_button(page, "Library")
     page.wait_for_selector(".panel", timeout=20_000)
 
     # First run, before any import: an empty library must still offer a way to add
@@ -1447,7 +1480,7 @@ def scenario_repertoire(browser) -> None:
     pinned.first.locator("button").click()
     page.wait_for_timeout(300)
 
-    click_button(page, "Repertoire")
+    click_button(page, "Library")
     page.wait_for_selector(".row-piece", timeout=20_000)
 
     # --- editing: create, journal, edit, delete ---
@@ -1585,7 +1618,7 @@ def scenario_repertoire(browser) -> None:
 
     # --- a paused piece is not reported as neglected ---
     api(f"/api/repertoire/pieces/{nocturne['id']}", "PATCH", {"status": "paused"})
-    click_button(page, "Log")
+    open_log(page)
     page.wait_for_selector("text=Neglected", timeout=20_000)
     check(
         nocturne["title"] not in page.inner_text(".neglected"),
@@ -1593,7 +1626,7 @@ def scenario_repertoire(browser) -> None:
     )
 
     # Back to the piece the rest of this scenario works on.
-    click_button(page, "Repertoire")
+    click_button(page, "Library")
     page.wait_for_selector(".row-piece", timeout=20_000)
     page.locator(".row-piece", has_text=nocturne["title"]).first.click()
     page.wait_for_selector(".detail-title", timeout=10_000)
@@ -2106,7 +2139,7 @@ def scenario_takes(browser) -> None:
 
     page, errors = new_page(browser)
     page.goto(BASE_URL, wait_until="domcontentloaded")
-    page.wait_for_selector("text=Sight-Reading Trainer")
+    wait_for_app(page)
     ensure_midi(page)
 
     if not page.evaluate(
@@ -2122,7 +2155,7 @@ def scenario_takes(browser) -> None:
     # First, a switch that must refuse: with the note log paused the server stores no playing, so
     # every take would be refused and thrown away — exactly the "looks armed, records nothing"
     # state this control exists to prevent.
-    click_button(page, "Log")
+    open_log(page)
     page.wait_for_selector('[data-capture="on"]', timeout=20_000)
     click_button(page, "Pause logging")
     page.wait_for_selector('[data-capture="off"]', timeout=10_000)
@@ -2187,7 +2220,7 @@ def scenario_takes(browser) -> None:
     )
 
     # --- two of them compare, each with its own controls ---
-    click_button(page, "Repertoire")
+    click_button(page, "Library")
     page.wait_for_selector(".row-piece", timeout=20_000)
     page.locator(".row-piece", has_text=piece["title"]).first.click()
     page.wait_for_selector(".detail-title", timeout=10_000)
@@ -2263,11 +2296,11 @@ def scenario_bench(browser) -> None:
 
     page, errors = new_page(browser)
     page.goto(BASE_URL, wait_until="domcontentloaded")
-    page.wait_for_selector("text=Sight-Reading Trainer")
+    wait_for_app(page)
     ensure_midi(page)
 
     # --- nothing is bound to a pedal the piano has not been seen to send ---
-    click_button(page, "Pedals")
+    open_setup(page)
     page.wait_for_selector("[data-pedals]", timeout=10_000)
     check(
         page.inner_text("[data-pedal='66']").endswith("not seen yet"),
@@ -2309,10 +2342,12 @@ def scenario_bench(browser) -> None:
     page.wait_for_selector('[data-audio-capture="off"]', timeout=10_000)
     check(True, "while a second press stops it")
 
-    # --- the damper double tap toggles a workout: the acceptance bullet's second action ---
+    # --- the damper is inert: a played pedal must never carry a gesture ---
+    # The double tap used to toggle a workout, and was retired deliberately because it fired
+    # during ordinary pedalling. This asserts the retirement rather than assuming it, and it
+    # checks the capture state too: the damper must not reach the action only the sostenuto
+    # carries.
     def double_tap_damper() -> None:
-        # Two taps in silence. `lastNoteMs` is null on this page — no notes have been played,
-        # only controller moves — which is exactly the state the gesture requires.
         for _ in range(2):
             page.evaluate("() => window.__fakeMidi.send([0xb0, 64, 127])")
             page.evaluate("() => window.__fakeMidi.send([0xb0, 64, 0])")
@@ -2320,24 +2355,30 @@ def scenario_bench(browser) -> None:
         page.wait_for_timeout(700)
 
     double_tap_damper()
-    check(api("/api/workout/current") is not None, "a damper double tap starts a workout")
-    double_tap_damper()
-    check(api("/api/workout/current") is None, "and another one finishes it")
-
-    # --- the gesture is inert during a scored attempt: the failure that matters most ---
-    load_first_exercise(page)
-    start_run(page)
-    double_tap_damper()
     check(
         api("/api/workout/current") is None,
-        "and it starts nothing while a run is in progress",
+        "a damper double tap starts no workout: that gesture was retired",
+    )
+    check(
+        page.locator('[data-audio-capture="off"]').count() == 1,
+        "and it leaves take recording alone, which only the sostenuto carries",
+    )
+
+    # --- the gesture is inert during a scored attempt: the failure that matters most ---
+    # The sostenuto is now the only live gesture, so it is the one that has to be proved inert.
+    load_first_exercise(page)
+    start_run(page)
+    press_sostenuto()
+    check(
+        page.locator('[data-audio-capture="off"]').count() == 1,
+        "and the sostenuto arms nothing while a run is in progress",
     )
 
     # --- a link opens the thing it names, and Back comes home ---
     # Navigating abandons the run above, which is why this needs no teardown. The hashed
     # practice URL first, so Back has an entry to return to that describes a screen.
     page.goto(f"{BASE_URL}/#/practice", wait_until="domcontentloaded")
-    page.wait_for_selector("text=Sight-Reading Trainer")
+    wait_for_app(page)
     page.goto(f"{BASE_URL}/#/repertoire/piece/{target['id']}", wait_until="domcontentloaded")
     page.wait_for_selector(".detail-title", timeout=20_000)
     check(
@@ -2381,8 +2422,10 @@ def scenario_bench(browser) -> None:
     # one on top of it is a different test.
     bench, bench_errors = new_page(browser)
     bench.goto(BASE_URL, wait_until="domcontentloaded")
-    bench.wait_for_selector("text=Sight-Reading Trainer")
+    wait_for_app(bench)
     ensure_midi(bench)
+    # The count-in is a Setup preference now rather than a permanent control in the bar.
+    open_setup(bench)
     bench.select_option("#count-in", "2")
     load_first_exercise(bench)
     start_run(bench)
@@ -2396,6 +2439,7 @@ def scenario_bench(browser) -> None:
     )
     # A preference that a reload forgets is not a preference.
     bench.reload(wait_until="domcontentloaded")
+    open_setup(bench)
     bench.wait_for_selector("#count-in", timeout=20_000)
     check(
         bench.input_value("#count-in") == "2",
@@ -2418,10 +2462,10 @@ def scenario_practice_log(browser) -> None:
 
     page, errors = new_page(browser)
     page.goto(BASE_URL, wait_until="domcontentloaded")
-    page.wait_for_selector("text=Sight-Reading Trainer")
+    wait_for_app(page)
     ensure_midi(page)
 
-    click_button(page, "Log")
+    open_log(page)
     page.wait_for_selector("text=Practice calendar", timeout=20_000)
 
     # --- capture is a standing switch, not a per-sitting button ---
@@ -2584,7 +2628,7 @@ def scenario_practice_log(browser) -> None:
     page.screenshot(path=str(SHOTS / "13-log-segments.png"), full_page=True)
 
     # The repertoire side must show the same measurement, not a rival number.
-    click_button(page, "Repertoire")
+    click_button(page, "Library")
     page.wait_for_selector(".row-piece", timeout=20_000)
     page.locator(".row-piece", has_text=target["title"]).first.click()
     page.wait_for_selector(".detail-title", timeout=10_000)
@@ -2595,7 +2639,7 @@ def scenario_practice_log(browser) -> None:
     check("min played" in logged, f"with the measured time ({logged.split('logged practice')[1][:90]!r})")
     check("0 min played" not in logged, "and it is a measurement, not a zero placeholder")
 
-    click_button(page, "Log")
+    open_log(page)
     page.wait_for_selector("text=Practice calendar", timeout=20_000)
     with page.expect_response(lambda r: f"/api/practice/sittings/{seeded}" in r.url):
         page.click(f'[data-sitting="{seeded}"]')
@@ -2826,7 +2870,7 @@ def scenario_midi_autodetect(browser) -> None:
     print("\n[9] MIDI that sets itself up: one dead port, one live, no clicking")
     page, errors = new_page(browser)
     page.goto(BASE_URL, wait_until="domcontentloaded")
-    page.wait_for_selector("text=Sight-Reading Trainer")
+    wait_for_app(page)
 
     # No click anywhere in this block: on the notebook a managed policy grants the
     # MIDI permission, so connecting is the app's job.
@@ -3018,12 +3062,14 @@ def scenario_playback(browser) -> None:
 
     page, errors = new_page(browser)
     page.goto(BASE_URL, wait_until="domcontentloaded")
-    page.wait_for_selector("text=Sight-Reading Trainer")
+    wait_for_app(page)
     ensure_midi(page)
-    click_button(page, "Log")
+    open_log(page)
     page.wait_for_selector("[data-identification]", timeout=20_000)
 
     # --- the instrument choice ---
+    # The playback instrument, the click and the sample install all live in Setup now.
+    open_setup(page)
     check(page.locator("[data-sound]").count() == 1, "there is a playback instrument control")
     options = page.evaluate(
         "() => [...document.querySelectorAll('#instrument option')].map((o) => ({ value: o.value, disabled: o.disabled }))"
@@ -3379,9 +3425,9 @@ def scenario_autotag(browser) -> None:
     # --- what the interface does with all that ---
     page, errors = new_page(browser)
     page.goto(BASE_URL, wait_until="domcontentloaded")
-    page.wait_for_selector("text=Sight-Reading Trainer")
+    wait_for_app(page)
     ensure_midi(page)
-    click_button(page, "Log")
+    open_log(page)
     page.wait_for_selector("text=Practice calendar", timeout=20_000)
     page.wait_for_selector("[data-identification]", timeout=20_000)
 
@@ -3549,7 +3595,7 @@ def scenario_lan_viewer(browser) -> None:
         ),
     )
     page.goto(BASE_URL, wait_until="domcontentloaded")
-    page.wait_for_selector("text=Sight-Reading Trainer")
+    wait_for_app(page)
     ensure_midi(page)
 
     banner = page.locator('[data-host-warning="remote"]')
@@ -3559,7 +3605,7 @@ def scenario_lan_viewer(browser) -> None:
     check("192.168.1.50" in text, "and the address it is being viewed from")
 
     # The heartbeat makes the notebook's capture state visible from here.
-    click_button(page, "Log")
+    open_log(page)
     page.wait_for_selector("text=Practice calendar", timeout=20_000)
     check(
         page.locator('[data-capture-stat="reporting"]').count() == 1,
@@ -3572,7 +3618,7 @@ def scenario_lan_viewer(browser) -> None:
     page.screenshot(path=str(SHOTS / "15-lan-viewer.png"), full_page=True)
 
     # Deleting is refused here, and the control says so rather than failing later.
-    click_button(page, "Repertoire")
+    click_button(page, "Library")
     page.wait_for_selector(".row-piece", timeout=20_000)
     page.locator(".row-piece").first.click()
     page.wait_for_selector(".detail-title", timeout=10_000)
@@ -3612,7 +3658,7 @@ def scenario_lan_viewer(browser) -> None:
     # And on the piano machine itself, with the server's real answer, neither appears.
     page, errors = new_page(browser)
     page.goto(BASE_URL, wait_until="domcontentloaded")
-    page.wait_for_selector("text=Sight-Reading Trainer")
+    wait_for_app(page)
     ensure_midi(page)
     page.wait_for_timeout(600)
     check(

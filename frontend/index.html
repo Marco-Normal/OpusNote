@@ -3,13 +3,26 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!-- Inline icon: avoids a favicon round-trip (and a 404) without shipping an asset. -->
+    <!--
+      Inline icon: avoids a favicon round-trip (and a 404) without shipping an asset.
+
+      The accent below is a *documented exception* to "the accent lives only in app.css": a
+      data-URI cannot read a custom property. It is the one place the value is restated, and
+      it is restated here rather than in a build step on purpose — generating a favicon is
+      more machinery than a 32px glyph is worth.
+
+      The glyph is the `Op.` monogram, set in a serif the system will have: a favicon cannot
+      fetch the webfont, and Georgia is the closest thing to Spectral that is always there.
+    -->
     <link
       rel="icon"
-      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%234338ca'/%3E%3Ctext x='16' y='23' font-size='19' text-anchor='middle' fill='white'%3E%E2%99%AA%3C/text%3E%3C/svg%3E"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230e6b6b'/%3E%3Ctext x='16' y='22' font-family='Georgia,serif' font-weight='600' font-size='14' text-anchor='middle' fill='white'%3EOp.%3C/text%3E%3C/svg%3E"
     />
-    <meta name="description" content="Adaptive sight-reading trainer for a real MIDI piano." />
-    <title>Sight-Reading Trainer</title>
+    <meta
+      name="description"
+      content="Adaptive sight-reading practice and a repertoire journal for a real MIDI piano."
+    />
+    <title>Opus Note</title>
     <!--
       Resolve the theme before first paint so a dark-mode reload never flashes
       white. Kept inline and dependency-free for that reason; `theme.svelte.ts`

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import DeviceBar from './components/DeviceBar.svelte';
+  import DeviceStatus from './components/DeviceStatus.svelte';
+  import SetupPanel from './components/SetupPanel.svelte';
   import PracticeView from './components/PracticeView.svelte';
   import CalibrationView from './components/CalibrationView.svelte';
   import StatsView from './components/StatsView.svelte';
@@ -14,19 +15,58 @@
   import type { AppView } from './lib/types';
   import type { Route } from './lib/route';
 
-  const tabs: { id: AppView; label: string }[] = [
-    { id: 'practice', label: 'Practice' },
-    { id: 'calibrate', label: 'Calibrate' },
-    { id: 'stats', label: 'Progress' },
-    { id: 'log', label: 'Log' },
-    { id: 'repertoire', label: 'Repertoire' },
+  /**
+   * Three sections, which is the shape the name describes: you play, you keep pieces, you
+   * look at how it is going.
+   *
+   * `Calibrate` is gone from here because it was never a section: it is a diagnostic you run
+   * occasionally, and it was sitting as a peer of Practice. It is reached from Setup › Timing
+   * instead, and its route still resolves.
+   *
+   * `Progress` and `Log` are one section with two views — ratings over time, and what you
+   * actually played. They were two tabs answering the same question ("how is this going?")
+   * with no way to tell them apart from the outside. The merge is at the *navigation* level
+   * only: `stats` and `log` stay separate views and separate routes, so every pasted
+   * `#/stats/attempt/56` and `#/log/sitting/34` link still opens what it names.
+   */
+  interface Tab {
+    id: AppView;
+    label: string;
+    /** The views this tab is "on". More than one only for Progress. */
+    owns: AppView[];
+  }
+
+  const tabs: Tab[] = [
+    { id: 'practice', label: 'Practice', owns: ['practice'] },
+    { id: 'repertoire', label: 'Library', owns: ['repertoire'] },
+    { id: 'stats', label: 'Progress', owns: ['stats', 'log'] },
   ];
 
   let paletteOpen = $state(false);
+  let setupOpen = $state(false);
+
+  /**
+   * Which of the two Progress views the tab opens on.
+   *
+   * Remembered for the session rather than reset every time: someone who lives in the Log
+   * would otherwise be sent back to the ratings on every visit. Not persisted — a fresh
+   * session opening on the ratings is the right default.
+   */
+  let lastProgressView = $state<AppView>('stats');
+  $effect(() => {
+    if (app.view === 'stats' || app.view === 'log') lastProgressView = app.view;
+  });
 
   function go(route: Route): void {
     app.navigate(route);
     paletteOpen = false;
+  }
+
+  /** Clicking the section you are already in does nothing, rather than moving you between
+   *  Progress' two views — which would make the tab feel like it had lost your place. */
+  function goTab(tab: Tab): void {
+    if (tab.owns.includes(app.view)) return;
+    go({ name: tab.id === 'stats' ? lastProgressView : tab.id });
   }
 
   /**
@@ -45,6 +85,13 @@
     if (event.key === 'Escape' && paletteOpen) {
       event.preventDefault();
       paletteOpen = false;
+      return;
+    }
+
+    // Setup is a disclosure rather than an overlay, but Escape should still close it: it is
+    // the key people press to get out of a panel.
+    if (event.key === 'Escape' && setupOpen) {
+      setupOpen = false;
       return;
     }
 
@@ -71,7 +118,7 @@
     const index = Number(event.key);
     if (Number.isInteger(index) && index >= 1 && index <= tabs.length) {
       event.preventDefault();
-      go({ name: tabs[index - 1].id });
+      goTab(tabs[index - 1]);
       return;
     }
 
@@ -95,13 +142,19 @@
   });
 </script>
 
-<div class="shell">
+<!-- `data-app-ready` is the browser suite's readiness sentinel. It exists so the
+     suite never has to wait on a display string: the product name is a brand
+     decision, and renaming it must not break verification. -->
+<div class="shell" data-app-ready>
   <header class="topbar">
     <div class="brand">
-      <span class="mark">♪</span>
+      <!-- `Op.` is the catalogue abbreviation — Op. 27 No. 2 — so the monogram is the
+           wordmark's own shorthand rather than a decorative music glyph. Hidden from
+           assistive tech, which should hear the name once, not twice. -->
+      <span class="mark" aria-hidden="true">Op.</span>
       <div>
-        <h1>Sight-Reading Trainer</h1>
-        <p class="muted tagline">Adaptive exercises for a real piano</p>
+        <h1>Opus Note</h1>
+        <p class="muted tagline">Notes you play. Notes you keep.</p>
       </div>
     </div>
 
@@ -109,9 +162,9 @@
       <nav class="tabs" aria-label="Sections">
         {#each tabs as tab (tab.id)}
           <button
-            class:active={app.view === tab.id}
-            aria-current={app.view === tab.id ? 'page' : undefined}
-            onclick={() => go({ name: tab.id })}
+            class:active={tab.owns.includes(app.view)}
+            aria-current={tab.owns.includes(app.view) ? 'page' : undefined}
+            onclick={() => goTab(tab)}
           >
             {tab.label}
           </button>
@@ -127,7 +180,11 @@
     </div>
   </header>
 
-  <DeviceBar />
+  <DeviceStatus onsetup={() => (setupOpen = true)} />
+
+  {#if setupOpen}
+    <SetupPanel onclose={() => (setupOpen = false)} />
+  {/if}
 
   <WorkoutBar />
 
@@ -140,7 +197,33 @@
     </div>
   {/if}
 
-  <main>
+  <!--
+    The two views of Progress: ratings over time, and what you actually played. This is
+    navigation chrome rather than part of either view, so it lives here and has one owner —
+    a copy inside each view would drift.
+  -->
+  {#if app.view === 'stats' || app.view === 'log'}
+    <nav class="subtabs" aria-label="Progress views">
+      <button
+        class:active={app.view === 'stats'}
+        aria-current={app.view === 'stats' ? 'page' : undefined}
+        data-subview="stats"
+        onclick={() => go({ name: 'stats' })}
+      >
+        Ratings
+      </button>
+      <button
+        class:active={app.view === 'log'}
+        aria-current={app.view === 'log' ? 'page' : undefined}
+        data-subview="log"
+        onclick={() => go({ name: 'log' })}
+      >
+        Log
+      </button>
+    </nav>
+  {/if}
+
+  <main data-view={app.view}>
     {#if app.view === 'practice'}
       <PracticeView />
     {:else if app.view === 'calibrate'}
@@ -193,12 +276,15 @@
   .mark {
     display: grid;
     place-items: center;
-    width: 2.1rem;
-    height: 2.1rem;
-    border-radius: 9px;
+    width: 2.2rem;
+    height: 2.2rem;
+    border-radius: var(--radius-sm);
     background: var(--accent);
     color: var(--accent-ink);
-    font-size: 1.1rem;
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 0.9rem;
+    letter-spacing: -0.03em;
   }
 
   .tagline {
@@ -211,7 +297,7 @@
     gap: 0.25rem;
     background: var(--surface);
     border: 1px solid var(--line);
-    border-radius: 10px;
+    border-radius: var(--radius);
     padding: 0.2rem;
   }
 
@@ -219,7 +305,7 @@
     border: none;
     background: transparent;
     padding: 0.4rem 0.85rem;
-    border-radius: 8px;
+    border-radius: var(--radius-sm);
     color: var(--muted);
     font-size: 0.9rem;
   }
@@ -234,6 +320,31 @@
     display: flex;
     flex-direction: column;
     gap: 0.9rem;
+  }
+
+  /* A quieter sibling of the section tabs: the same shape, no container, so it reads as
+     belonging to the view rather than competing with the header. */
+  .subtabs {
+    display: flex;
+    gap: 0.25rem;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .subtabs button {
+    border: none;
+    background: transparent;
+    padding: 0.4rem 0.7rem;
+    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+    color: var(--muted);
+    font-size: 0.9rem;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+  }
+
+  .subtabs button.active {
+    color: var(--accent);
+    font-weight: 600;
+    border-bottom-color: var(--accent);
   }
 
   .footer {

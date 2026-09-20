@@ -1,10 +1,19 @@
-# Sight-Reading Trainer
+# Opus Note
 
-An adaptive sight-reading trainer for a real piano. It shows a short,
-level-appropriate excerpt, counts you in over a metronome, listens to your MIDI
-keyboard, and scores pitch, rhythm, and continuity. The next exercise is chosen
-from your weakest skill, with the difficulty aimed so you succeed about 78% of
-the time.
+**Notes you play. Notes you keep.**
+
+An adaptive sight-reading coach and a practice journal for a real piano. It shows a
+short, level-appropriate excerpt, counts you in over a metronome, listens to your MIDI
+keyboard, and scores pitch, rhythm, and continuity. The next exercise is chosen from your
+weakest skill, with the difficulty aimed so you succeed about 78% of the time. Between
+exercises it logs what you actually played, keeps a library of your pieces with journal
+notes, scores and recordings, and shows how both halves are going.
+
+Formerly **Sight-Reading Trainer**. The name changed because the app outgrew it: only one
+of its three sections is sight-reading. The *internal* names did not change — `SRT_*`
+environment variables, `srt.*` browser storage, the data directories and the service names
+are all still spelled the old way, deliberately, so an existing installation upgrades with
+nothing to rename and nothing to migrate.
 
 Built for a **Casio PX-870** over USB Type-B, but it works with any
 class-compliant MIDI keyboard.
@@ -41,7 +50,7 @@ matters on Linux, where ALSA always exposes a virtual `Midi Through Port-0` besi
 your keyboard: it is a real Web MIDI input that never sends anything, and choosing a
 device by position picks it roughly half the time.
 
-Open **Ports** in the device bar to see every input with what has been heard from it
+Open **Setup** in the device bar, then read the port list, to see every input with what has been heard from it
 — `17 notes · last 4 s ago`, or `no notes yet` for the loopback port — and which one
 is in use (`Auto · CASIO USB-MIDI MIDI 1`).
 
@@ -55,12 +64,13 @@ is in use (`Auto · CASIO USB-MIDI MIDI 1`).
   that splits zones across ports loses nothing.
 
 **Pedals.** The PX-870 has three, and the middle one (sostenuto) is barely used musically — so it
-is the one hands-free switch. Open **Pedals** in the device bar to see which controller
+is the one hands-free switch. Open **Setup** to see which controller
 numbers this piano has actually sent: press each pedal once and the bar reports it, together with
 what each pedal is bound to. One press and release of the sostenuto arms the recording and another
-stops it, and a double tap of the damper in silence starts a workout, or finishes the running one.
-The soft pedal is bound to nothing, deliberately: it *is* played, so a press mid-phrase would end
-the take being recorded. The gesture is inert during a scored attempt, and nothing is ever bound to
+stops it. The damper and the soft pedal are bound to nothing, deliberately: both *are* played, so a
+press mid-phrase would end the take being recorded — and the damper's double tap, which used to
+start and finish a workout, was retired for exactly that reason. A workout is declared from the
+banner instead. The gesture is inert during a scored attempt, and nothing is ever bound to
 a message the piano has not been seen to send. There is a **Count-in** choice (none, 1 bar, 2 bars)
 and a click volume beside it; both are remembered, and the transport says how many beats the
 count-in actually used.
@@ -145,7 +155,7 @@ those markers, the audio outside them is dimmed, and the markers are saved with 
 recording rather than in the browser — so the same passage is there on the other
 machine. A recording over 64 MB is not decoded for a picture (it still plays).
 
-Starting empty is a supported path: with no pieces at all, the Repertoire tab offers
+Starting empty is a supported path: with no pieces at all, the Library tab offers
 both *Import from piano-progress* (if that database is on this machine) and **New
 piece**.
 
@@ -219,20 +229,20 @@ comparable with itself over time, not an absolute metronome reading.
 
 ### Progress, and hearing the past
 
-- **Rating over time** (Progress tab): every rating change is recorded, so each skill
+- **Rating over time** (Progress › Ratings): every rating change is recorded, so each skill
   has a curve rather than a single number. The Elo engine nudges all nine dimensions on
   every attempt, so each point records whether its skill was that attempt's *focus*;
   the chart draws the whole line and tells you how many points were focus attempts.
 - **Click a row in Recent exercises** to open that attempt: its sub-scores, its counts,
   and the same *Hear it* player a fresh result gets — your performance, or the exercise
   as written, either hand.
-- **This week** (Log tab): minutes over the last seven days, workouts and streak, the
+- **This week** (Progress › Log): minutes over the last seven days, workouts and streak, the
   most improved skill, and the piece you have neglected longest.
 
 **Everything is a link.** The address bar describes what you are looking at —
 `#/repertoire/piece/12`, `#/log/sitting/34`, `#/stats/attempt/56` — so a piece can be opened on the
 other machine by pasting it, and Back works. Press `/` (or `Ctrl`/`Cmd`+`K`) for a search box over
-the library, the journal and recent sittings, and `1`–`5` to switch sections.
+the library, the journal and recent sittings, and `1`–`3` to switch sections. Progress holds two views, **Ratings** and **Log**, which share the one section.
 
 ### Hearing it back
 
@@ -243,14 +253,14 @@ Two players, because there are two things worth hearing:
   counted in at, and your own notes carry the hands the scorer matched them to. This is
   the one that teaches something — a hesitation or a wrong note you only saw as a
   colour becomes audible.
-- **In the Log tab**, a sitting or a single segment can be played back from the notes
+- **In the Log**, a sitting or a single segment can be played back from the notes
   themselves. **Click anywhere on the timeline strip to start from there** — a two-hour
   sitting is unusable if the only way in is the beginning — and `« 30 s` / `30 s »` move
   the playhead without losing the range you were playing. The position readout shows
   where you are, and notes are fetched on demand (a long sitting is thousands of them).
   A segment starts at its first note rather than waiting out the silence before it.
 
-**Which instrument** is chosen in the device bar, and there are three because they suit
+**Which instrument** is chosen in the Setup panel, and there are three because they suit
 three situations:
 
 | | What it is | When |
@@ -260,7 +270,7 @@ three situations:
 | *Synthesiser* | An FM voice built from Tone's oscillators | Before the samples are installed, and as the fallback when nothing else is available |
 
 The sampled piano is a **one-time 2 MB download**, fetched by the backend and served
-from this machine from then on: install it from the device bar (*Install (2 MB, once)*),
+from this machine from then on: install it from Setup (*Install (2 MB, once)*),
 and nothing at play time touches the network. Salamander Grand Piano V3 by Alexander
 Holm, [CC BY 3.0](https://archive.org/details/SalamanderGrandPianoV3).
 
@@ -280,7 +290,7 @@ silent, so "the app is playing" is asserted rather than read.
 Two naming schemes meet at the sampler and are not interchangeable: the files use `Ds4`
 (a `#` in a URL starts a fragment, so `D#4.mp3` would fetch `D`), while a note name needs
 `D#4`. Getting that wrong leaves the sampled piano silent and quietly falls back to the
-synthesiser, so the device bar reports when the samples fail to load rather than leaving
+synthesiser, so Setup reports when the samples fail to load rather than leaving
 you to guess.
 
 **Falling notes.** Tick *Falling notes* in the sitting transport for a piano-roll view —
@@ -319,7 +329,7 @@ exercise knows which hand each note is.
   `SRT_BACKUP_DIR` and keeps the newest `SRT_BACKUP_KEEP` (14 by default); the installer
   enables a systemd timer at 03:10 with `Persistent=true`. Run it by hand any time —
   it is the same code the *Download backup* button uses.
-- **A System panel** in the Log tab: database size and WAL, recordings present, pending
+- **A System panel** in the Log: database size and WAL, recordings present, pending
   or missing, backups kept and how old the newest is, whether ALSA's sequencer is there,
   and which clients it can see — which is how you tell "the piano is off" from "the
   kernel module is missing".
@@ -369,7 +379,7 @@ large copy).
 Recordings are playable straight away. Each one is reported as **in library**
 (copied into this app), **not copied yet** (still only in the old
 `piano-progress` directory, and streamed from there), or **file missing** (in
-neither place). The Repertoire tab offers a one-click copy for anything still
+neither place). The Library tab offers a one-click copy for anything still
 pending.
 
 `GET /api/practice-suggestions` maps the pieces you are working on onto a
@@ -545,7 +555,7 @@ comes from the notation: the generator emits the right hand as part 1 and the
 left as part 2, and each expected note carries its hand. Feedback is reported
 per hand.
 
-**Latency.** The Calibrate tab measures your round-trip delay by having you play
+**Latency.** Setup › Timing › *Calibrate by playing…* measures your round-trip delay by having you play
 along with a metronome and taking the median offset; the scorer subtracts it.
 
 ---

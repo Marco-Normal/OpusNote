@@ -2015,4 +2015,83 @@ Verified: `scenario_playback` green — 38 assertions, three of them new and see
 the playback one, because the change makes the player a second owner of the global Transport clock
 and the metronome scenarios had to be re-run rather than assumed; `./check.sh --fast` green.
 
+## 2026-09-20 — sight-reading agent — the app is renamed Opus Note, and the bar it was hiding behind
+
+The product is called **Opus Note** now. The user chose the name; the plan is
+`docs/PLAN-OPUS-NOTE-IDENTITY.md`. Four slices landed, each verified by `./check.sh --fast` and the
+whole browser tier, not just the scenario being edited.
+
+**The rename is display-only, and that boundary is the point.** What changed is what a *person*
+reads: the `<h1>`, `<title>`, meta description, favicon, README, `package.json` description, and the
+FastAPI title (which is user-visible at `/docs`, so leaving it would have been the app still
+introducing itself by the old name). What deliberately did **not** change: `SRT_*` environment
+variables, `srt.*` browser storage, the data directories, the service names, the `sight_reading`
+practice source and the `#/repertoire/*` routes. Those are domain language and durable surfaces, not
+branding — renaming them would have risked the deployed piano machine to buy nothing a reader can
+see. The README says so out loud, so the next person does not "finish the job".
+
+**Slice 0 existed to de-risk the rename, and it found the suite already red.** Sixteen call sites in
+`e2e_browser.py` used `text=Sight-Reading Trainer` as the app-ready sentinel, so renaming the `<h1>`
+would have broken all fourteen scenarios at their first assertion — and the failure would have
+pointed at the brand rather than at anything real. They now wait on `[data-app-ready]`, a hook the
+app owns, in the same style as the other ninety-odd `data-*` markers the suite already keys off.
+While doing that, `check.sh --fast` turned out to be failing *before* any of this work: commit
+`90fdb93` ("Remove workout from sustain (Human Decision)") had disabled the damper double-tap but
+left its retirement unfinished in six places, two of them user-facing. The app was telling the reader
+that the damper starts a workout when a damper tap did nothing at all. The user chose to finish the
+retirement rather than restore it, so the dead branch, its constants, the unreachable
+`toggle_workout` member and the now-pointless `lastNoteMs` parameter are gone, and the label, the
+README, the unit tests and `scenario_bench` all agree with the code. The bench assertion that a
+gesture is inert during a scored attempt was retargeted at the sostenuto — the live gesture — rather
+than deleted, so it now proves something true.
+
+**The identity is ivory and petrol, in one owner.** `app.css` holds the palette; `--chart-*` are
+declared as `var(--accent)`/`var(--good)`/`var(--warn)` and `theme.svelte.ts` reads them through
+`getComputedStyle`, which removed six hex literals that had been copied into TypeScript and could
+drift. Verified, not assumed: browsers substitute `var()` inside a custom property at computed-value
+time (probed against Chromium before relying on it), and `color-mix()` deliberately does *not*
+resolve — it is left for `fill: var(--radar-fill)` to evaluate, which is why the audit checks for a
+dangling `var()` rather than for a resolved colour. A contrast audit over 28 token pairs in both
+themes passes at ≥4.5:1.
+
+**The font is one weight because the first attempt shipped two.** Spectral 400 was included, and
+Chromium never fetched it: only `h1`/`h2` use the serif and both are semibold. A dead 21 kB in an app
+whose whole point is that play time touches no network. Removed, with the reason left in the CSS.
+
+**One real defect found by looking rather than by testing.** The dark-mode screenshot showed the
+journal's search and tag fields as white boxes: the shared control rule covered `select` and
+`input[type='number']` and nothing else, so every text input fell back to the UA's white. Invisible
+on a white page, glaring on a dark one. Fixed, and `accent-color` now themes the slider and the
+checkbox so the app's one non-palette colour — the browser's default blue — is gone too.
+
+**The device bar is one line.** `DeviceBar.svelte` (409 lines, ten concerns: status, ports, pedals,
+latency, count-in, click, instrument, sample install, test, capture) became `DeviceStatus.svelte`
+(state you must *notice*) and `SetupPanel.svelte` (everything you configure). `Calibrate` is off the
+tab bar — it is a diagnostic, and it was sitting as a peer of Practice — and `Repertoire` is
+`Library`. The split has a rule: **state stays, configuration goes.** Three things stayed in tier 1
+against the plan's tidy-up: the take switch (a standing switch whose failure mode is the trap the
+module exists to prevent), the audio state (`suspended` is the commonest cause of silence and is
+invisible everywhere else) and the latency offer (an offer in a closed drawer is not an offer).
+
+The plan was wrong in three further places and the code was right, which is recorded in §6.2 of it
+rather than quietly worked around: `WorkoutBar` stays app-wide because the suite asserts a workout
+can be started from anywhere, `HostBanner` stays inline because it is a warning and warnings in
+drawers are not read, and the navigation is four sections rather than three until the Progress/Log
+merge is done as its own change.
+
+**A note for next time.** The first pass at migrating the browser suite was driven off an inventory
+of `data-*` hooks, and it missed `data-audio-note` (not on the list) and `#count-in` (a plain
+element id). Each cost a full browser run. A hook inventory is not an inventory of how the suite is
+coupled to the DOM — grep the ids and the role names too.
+
+One falsification script was retired rather than repaired: `drop_handsfree_silence_gate.sh` broke the
+silence gate that no longer exists, so it could only ever report a false alarm.
+`drop_the_pedal_binding_readout.sh` was retargeted at `SetupPanel.svelte`; its needle still matches
+unchanged.
+
+Verified: `./check.sh --fast` green at every slice; **all fourteen browser scenarios, 420 checks** —
+the same 420 as before the device bar was restructured, which is the evidence that moving the markup
+did not quietly drop an assertion; a token/contrast audit over both themes; and screenshots in light
+and dark, which is how the white-input defect was found at all.
+
 

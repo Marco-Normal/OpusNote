@@ -10,7 +10,7 @@ import { AudioCaptureClient } from './audioCapture';
 import { CaptureClient, type CaptureStatus } from './capture';
 import { MidiInput, type MidiDeviceInfo, type MidiOutputInfo } from './midi';
 import { fingerprint, type PortSnapshot } from './midiDevice';
-import { PedalGesture, type ControllerMove, type HandsfreeAction } from './pedalGesture';
+import { PedalGesture, type ControllerMove } from './pedalGesture';
 import { parseRoute, routeHash, type Route, type RouteEntity } from './route';
 import { PianoPlayer, sharedPlayer, unlockOnFirstGesture, type Instrument } from './pianoPlayer';
 import type { AppView, HostInfo, PianoStatus, Profile, Workout } from './types';
@@ -426,35 +426,28 @@ class AppState {
 
   /** Feed one controller move to the recogniser, then act on what it decided. */
   handleController(move: ControllerMove): void {
-    const action = this.pedalGesture.accept(move, this.lastNoteMs);
+    const action = this.pedalGesture.accept(move);
     this.seenControllers = [...this.pedalGesture.seen].sort((a, b) => a - b);
     if (action === null || this.exerciseActive) return;
-    void this.runHandsfree(action);
+    void this.runHandsfree();
   }
 
   /**
    * What the pedals do.
    *
-   * Two actions: the sostenuto arms and stops capture, and the damper's double tap
-   * toggles a workout. Capture goes through the same `toggleAudioCapture` the button uses,
-   * so the pedal inherits its guards (the log must be running, the server must report its
-   * gap) rather than bypassing them.
+   * One action: the sostenuto arms and stops capture. It goes through the same
+   * `toggleAudioCapture` the button uses, so the pedal inherits its guards (the log must be
+   * running, the server must report its gap) rather than bypassing them.
+   *
+   * The `accept` null check above is the trigger, so there is no action left to branch on.
+   * A second pedal action would come back as a parameter here, and the compiler would point
+   * at every caller rather than letting a silent no-op through.
    */
-  async runHandsfree(action: HandsfreeAction): Promise<void> {
-    if (action === 'toggle_audio_capture') {
-      await this.toggleAudioCapture();
-      this.pedalActionNote = this.audioArmed
-        ? 'Recording takes from the pedal'
-        : 'Take recording stopped from the pedal';
-      return;
-    }
-    if (this.workout?.running) {
-      await this.finishWorkout();
-      this.pedalActionNote = 'Workout finished from the pedal';
-      return;
-    }
-    await this.startWorkout();
-    this.pedalActionNote = 'Workout started from the pedal';
+  async runHandsfree(): Promise<void> {
+    await this.toggleAudioCapture();
+    this.pedalActionNote = this.audioArmed
+      ? 'Recording takes from the pedal'
+      : 'Take recording stopped from the pedal';
   }
 
   /** What the server can tell us about this machine and this request. */
@@ -462,7 +455,7 @@ class AppState {
   /**
    * A latency this machine's own timing history suggests, in ms, or null.
    *
-   * Suggested, never applied: see DeviceBar.
+   * Suggested, never applied: see SetupPanel.
    */
   latencySuggestionMs = $state<number | null>(null);
 

@@ -38,22 +38,45 @@ function prefersDark(): boolean {
   return typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches;
 }
 
-function chartPalette(theme: ResolvedTheme): ChartPalette {
-  return theme === 'dark'
-    ? {
-        overall: '#8b93ff',
-        pitch: '#4ade80',
-        rhythm: '#fbbf24',
-        radarFill: 'rgba(139, 147, 255, 0.22)',
-        radarStroke: '#8b93ff',
-      }
-    : {
-        overall: '#4338ca',
-        pitch: '#15803d',
-        rhythm: '#b45309',
-        radarFill: 'rgba(67, 56, 202, 0.16)',
-        radarStroke: '#4338ca',
-      };
+/**
+ * Placeholder until the stylesheet has been read.
+ *
+ * `currentColor` rather than a hex, so the worst case if a chart ever renders before the
+ * effect below runs is a correctly-coloured-but-unstyled chart rather than an invisible one.
+ * The effect runs after mount and before paint, so this is not expected to be seen.
+ */
+const UNREAD_PALETTE: ChartPalette = {
+  overall: 'currentColor',
+  pitch: 'currentColor',
+  rhythm: 'currentColor',
+  radarFill: 'transparent',
+  radarStroke: 'currentColor',
+};
+
+/**
+ * Read the chart colours the stylesheet declares.
+ *
+ * `app.css` owns them — as `--chart-*`, themselves derived from `--accent`, `--good` and
+ * `--warn`. Before this, the same six colours were typed out a second time here as hex
+ * literals, which meant a rebrand had two owners and the two could silently drift. Now
+ * there is one.
+ *
+ * Browsers substitute `var()` *inside* a custom property at computed-value time, so what
+ * comes back is a resolved colour rather than the string `var(--accent)` — verified against
+ * Chromium, which is the only engine this app runs on.
+ */
+function readChartPalette(): ChartPalette {
+  const style = getComputedStyle(document.documentElement);
+  const read = (name: string, fallback: string): string =>
+    style.getPropertyValue(name).trim() || fallback;
+
+  return {
+    overall: read('--chart-overall', UNREAD_PALETTE.overall),
+    pitch: read('--chart-pitch', UNREAD_PALETTE.pitch),
+    rhythm: read('--chart-rhythm', UNREAD_PALETTE.rhythm),
+    radarFill: read('--chart-radar-fill', UNREAD_PALETTE.radarFill),
+    radarStroke: read('--chart-radar-stroke', UNREAD_PALETTE.radarStroke),
+  };
 }
 
 class ThemeState {
@@ -71,7 +94,7 @@ class ThemeState {
   /** Whether the *notation* should render light-on-dark. */
   scoreIsDark = $derived(this.scorePaper === 'theme' ? this.resolved === 'dark' : false);
 
-  charts = $derived(chartPalette(this.resolved as ResolvedTheme));
+  charts = $state<ChartPalette>(UNREAD_PALETTE);
 
   constructor() {
     if (typeof window === 'undefined') return;
@@ -89,6 +112,10 @@ class ThemeState {
         root.dataset.scorePaper = this.scoreIsDark ? 'dark' : 'light';
         // Keeps native scrollbars and form controls in step with the theme.
         root.style.colorScheme = this.resolved;
+
+        // Read *after* the theme attribute is applied, so the palette reflects the theme
+        // just set rather than the one being replaced. This is the only writer of `charts`.
+        this.charts = readChartPalette();
       });
     });
   }

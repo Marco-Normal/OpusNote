@@ -15,7 +15,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-TARGET="$ROOT/frontend/src/components/DeviceBar.svelte"
+TARGET="$ROOT/frontend/src/components/SetupPanel.svelte"
 
 python3 - "$TARGET" <<'PY'
 import pathlib, sys

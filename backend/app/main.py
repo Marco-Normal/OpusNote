@@ -54,7 +54,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Sight-Reading Trainer API",
+    title="Opus Note API",
     version="0.1.0",
     description="Generates level-appropriate sight-reading exercises and scores MIDI performances.",
     lifespan=lifespan,

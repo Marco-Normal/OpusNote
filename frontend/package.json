@@ -1,7 +1,7 @@
 {
   "name": "sight-reading-trainer-frontend",
   "version": "1.0.0",
-  "description": "Adaptive sight-reading trainer — browser client",
+  "description": "Opus Note — an adaptive piano practice coach and repertoire journal (browser client)",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

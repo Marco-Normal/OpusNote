@@ -1,4 +1,4 @@
-"""Runtime configuration for the Sight-Reading Trainer API.
+"""Runtime configuration for the Opus Note API.
 
 Everything is overridable by environment variable so the same code runs as a
 local script (SQLite file next to the repo) or as a deployed service without a

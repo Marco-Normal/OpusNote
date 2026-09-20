@@ -22,7 +22,22 @@
     aria-label="Appearance settings"
     onclick={() => (open = !open)}
   >
-    {theme.resolved === 'dark' ? '🌙' : '☀️'}
+    <!--
+      An inline icon rather than the 🌙/☀️ emoji it used to be. A colour emoji ignores
+      `color`, so it rendered amber regardless of the theme and became the one element on the
+      page that belonged to no palette — most obvious once the accent moved to petrol.
+      `currentColor` means it follows the chrome in both themes for free.
+    -->
+    <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+      {#if theme.resolved === 'dark'}
+        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+      {:else}
+        <circle cx="12" cy="12" r="4.2" />
+        <path
+          d="M12 2v2M12 20v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M2 12h2M20 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"
+        />
+      {/if}
+    </svg>
     <span class="label">Appearance</span>
   </button>
 
@@ -80,6 +95,16 @@
     padding: 0.4rem 0.7rem;
   }
 
+  .icon {
+    width: 1rem;
+    height: 1rem;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.6;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
   .popover {
     position: absolute;
     right: 0;
@@ -110,7 +135,7 @@
     display: flex;
     background: var(--surface-2);
     border: 1px solid var(--line);
-    border-radius: 9px;
+    border-radius: var(--radius-sm);
     padding: 0.15rem;
     gap: 0.15rem;
   }
@@ -120,7 +145,7 @@
     border: none;
     background: transparent;
     padding: 0.3rem 0.35rem;
-    border-radius: 7px;
+    border-radius: 4px;
     font-size: 0.8rem;
     color: var(--muted);
     white-space: nowrap;

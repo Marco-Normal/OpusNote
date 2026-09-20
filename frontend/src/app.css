@@ -1,15 +1,40 @@
-:root {
-  /* ---- light theme ---- */
-  --bg: #f2f2ef;
-  --surface: #ffffff;
-  --surface-2: #f8f8f6;
-  --line: #e2e2dd;
-  --ink: #1b1b1a;
-  --muted: #6b6f76;
+/*
+ * Spectral — the one face the app ships.
+ *
+ * Self-hosted rather than linked, because this app is deliberately offline-first: the
+ * sampled piano is fetched once and served from this machine, and a play button must
+ * never wait on the network. A CDN font would be the one asset that breaks that rule,
+ * and it would break it on the piano machine first.
+ *
+ * One weight, latin subset, ~23 kB. 400 was shipped first and then removed: nothing uses
+ * `--font-display` except the headings, which are semibold, so Chromium never fetched it —
+ * a dead 21 kB in an app whose whole point is that it does not touch the network. If a
+ * lighter serif is ever wanted, adding it back is one file and one block. OFL 1.1, licence
+ * text beside the file.
+ *
+ * Used for the wordmark and headings only; the interface stays on the system stack, which
+ * is both faster and one less thing to load.
+ */
+@font-face {
+  font-family: 'Spectral';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('./assets/fonts/spectral-600.woff2') format('woff2');
+}
 
-  --accent: #4338ca;
-  --accent-soft: #eef0ff;
-  --accent-line: #d5d8ff;
+:root {
+  /* ---- light theme: ivory, ink, and one petrol accent ---- */
+  --bg: #f4f1ea;
+  --surface: #fffdf8;
+  --surface-2: #f8f5ee;
+  --line: #e3ded2;
+  --ink: #17191c;
+  --muted: #6a665e;
+
+  --accent: #0e6b6b;
+  --accent-soft: #e4f0ee;
+  --accent-line: #b9d8d4;
   --accent-ink: #ffffff;
 
   --good: #15803d;
@@ -25,32 +50,61 @@
   --warn-line: #eed6b4;
 
   /* Reusable surfaces that are not semantic colours. */
-  --track: #e9e9e4;
+  --track: #eae5da;
   --scrim: rgba(0, 0, 0, 0.05);
-  --shadow: 0 1px 2px rgba(20, 20, 20, 0.06), 0 6px 18px rgba(20, 20, 20, 0.05);
+  /* Reserved for the command palette, the app's only overlay. Cards get a hairline. */
+  --shadow: 0 10px 30px rgba(30, 26, 16, 0.18), 0 2px 6px rgba(30, 26, 16, 0.1);
+  --shadow-card: 0 1px 0 rgba(30, 26, 16, 0.03);
   --score-bg: #ffffff;
 
+  /*
+   * The chart palette is *derived*, never re-typed. `theme.svelte.ts` reads these four
+   * through `getComputedStyle`, so the accent lives once — here — instead of being copied
+   * as six hex literals into TypeScript, which is how it drifted before.
+   */
+  --chart-overall: var(--accent);
+  --chart-pitch: var(--good);
+  --chart-rhythm: var(--warn);
+  --chart-radar-fill: color-mix(in srgb, var(--accent) 16%, transparent);
+  --chart-radar-stroke: var(--accent);
+
+  /* Type: a small ramp instead of ad-hoc rem values. */
+  --text-xs: 0.78rem;
+  --text-sm: 0.85rem;
+  --text-base: 0.95rem;
+  --text-md: 1.05rem;
+  --text-lg: 1.3rem;
+  --text-xl: 1.6rem;
+  --num-xl: 2rem;
+
+  /* Shape: controls are tighter than cards, pills are pills. */
+  --radius-sm: 6px;
   --radius: 10px;
+  --radius-lg: 14px;
+  --radius-pill: 999px;
+
+  --font-ui: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-display: 'Spectral', Georgia, 'Iowan Old Style', 'Times New Roman', serif;
   --mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
 
   color-scheme: light;
-  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-family: var(--font-ui);
   color: var(--ink);
   background: var(--bg);
 }
 
 [data-theme='dark'] {
-  --bg: #0f1012;
-  --surface: #17191d;
-  --surface-2: #1e2126;
-  --line: #2b2f36;
-  --ink: #e7e8ea;
-  --muted: #9aa1ab;
+  --bg: #101315;
+  --surface: #171b1d;
+  --surface-2: #1e2326;
+  --line: #2c3336;
+  --ink: #e9e7e2;
+  --muted: #9aa09e;
 
-  --accent: #8b93ff;
-  --accent-soft: #23264a;
-  --accent-line: #3a3f78;
-  --accent-ink: #0f1012;
+  --accent: #5fc9be;
+  --accent-soft: #14312f;
+  --accent-line: #2c5f5a;
+  --accent-ink: #08110f;
 
   --good: #4ade80;
   --good-soft: #14301f;
@@ -64,9 +118,10 @@
   --warn-soft: #3a2c12;
   --warn-line: #7d5f24;
 
-  --track: #2b2f36;
+  --track: #2c3336;
   --scrim: rgba(255, 255, 255, 0.07);
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 6px 18px rgba(0, 0, 0, 0.35);
+  --shadow: 0 12px 34px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.45);
+  --shadow-card: 0 1px 0 rgba(0, 0, 0, 0.25);
   --score-bg: #0b0c0e;
 
   color-scheme: dark;
@@ -111,7 +166,7 @@ body {
 button {
   font: inherit;
   cursor: pointer;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--line);
   background: var(--surface);
   color: var(--ink);
@@ -155,21 +210,45 @@ button.ghost:hover:not(:disabled) {
   border-color: transparent;
 }
 
+/*
+ * Every control the app does not draw itself.
+ *
+ * The list is explicit rather than a bare `input`, because the browser draws sliders and
+ * checkboxes itself and a border plus a surface behind either is wrong. Text-like inputs
+ * were previously left out altogether — invisible on a white page, and a *white box* on a
+ * dark one, which is how the journal's search and tag fields looked in dark mode.
+ */
 select,
-input[type='number'] {
+input[type='number'],
+input[type='text'],
+input[type='search'],
+input[type='date'],
+input:not([type]),
+textarea {
   font: inherit;
   padding: 0.4rem 0.55rem;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--line);
   background: var(--surface);
   color: var(--ink);
+}
+
+/*
+ * The controls the browser draws. `accent-color` themes the click slider and the library's
+ * piece checkboxes in one declaration — without it they keep the browser's default blue,
+ * which is the one colour in the app that belongs to nobody.
+ */
+input[type='range'],
+input[type='checkbox'],
+input[type='radio'] {
+  accent-color: var(--accent);
 }
 
 .card {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow-card);
 }
 
 .muted {
@@ -209,7 +288,7 @@ input[type='number'] {
   align-items: center;
   gap: 0.35rem;
   padding: 0.15rem 0.55rem;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-size: 0.78rem;
   background: var(--surface-2);
   border: 1px solid var(--line);
@@ -249,25 +328,42 @@ h4 {
   line-height: 1.25;
 }
 
+/*
+ * The serif earns its place here and nowhere else. `h1` is the wordmark and `h2` a card
+ * title — the two places a reader looks at a *word*. `h3` is a small-caps section label and
+ * stays on the UI stack: a serif at 0.85rem inside a dense data card reads as decoration
+ * rather than as identity, and this app is mostly dense data cards.
+ */
+h1,
+h2 {
+  font-family: var(--font-display);
+  font-weight: 600;
+}
+
 h1 {
-  font-size: 1.15rem;
-  letter-spacing: -0.01em;
+  font-size: var(--text-lg);
+  letter-spacing: -0.005em;
 }
 
 h2 {
-  font-size: 1rem;
+  font-size: 1.12rem;
 }
 
 h3 {
-  font-size: 0.85rem;
+  font-size: var(--text-sm);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--muted);
 }
 
+/*
+ * The one surface that is allowed to be loud. A left rule rather than a heavier border, so
+ * it reads as a flag on the page instead of as another card that happens to be red.
+ */
 .error-banner {
   background: var(--bad-soft);
   border: 1px solid var(--bad-line);
+  border-left: 3px solid var(--bad);
   color: var(--bad);
   padding: 0.65rem 0.85rem;
   border-radius: var(--radius);
