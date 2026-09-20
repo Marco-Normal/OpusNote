@@ -56,8 +56,8 @@ Then:
 | uvicorn | system service | survives reboots and crashes |
 | Chromium kiosk | user session | Web MIDI needs a browser, and MIDI needs `localhost` |
 | capture | that browser tab | one capture path; the page reports a heartbeat |
-| MIDI permission | managed Chromium policy | no prompt on a machine nobody is sitting at |
-| audio-capture permission | the same managed policy | `AudioCaptureAllowedForUrls` auto-grants the microphone to `localhost`/`127.0.0.1`, and `AudioCaptureAllowed: false` turns every other origin into a silent refusal instead of a prompt — which is what makes it an allow-list rather than a question asked on a machine nobody is sitting at |
+| MIDI permission | managed Chromium policy | no prompt on a machine nobody is sitting at. `MidiAllowedForUrls` is a real name on builds that gate Web MIDI behind a permission prompt; current Chromium defines no MIDI policy at all, so on the notebook it is inert — harmless, and kept for the builds where it is not |
+| audio-capture permission | the same managed policy | `AudioCaptureAllowedUrls` auto-grants the microphone to `localhost`/`127.0.0.1`, and `AudioCaptureAllowed: false` turns every other origin into a silent refusal instead of a prompt — which is what makes it an allow-list rather than a question asked on a machine nobody is sitting at. The name is `AudioCaptureAllowedUrls` and **not** `AudioCaptureAllowedForUrls`: capture policies have no `...ForUrls` form, and a key Chromium does not define is not ignored with a warning — it is not read at all. That misspelling beside `AudioCaptureAllowed: false` is a policy that refuses the microphone to *every* origin, the notebook's own included, without saying so. `deploy/browser.test.sh` pins the name |
 | `snd_seq` | `modules-load.d` | without it Web MIDI finds *no* devices at all |
 | kiosk autostart | `~/.config/autostart/` | **not** a systemd user unit: `sudo -u user systemctl --user` has no user bus to talk to — that is what `Failed to connect to bus: No medium found` means — and XDG autostart works on Cinnamon, MATE and XFCE alike |
 

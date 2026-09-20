@@ -39,6 +39,12 @@ backend pytest -q -m "not slow"
 step "frontend tests"
 frontend npm test
 
+# Plain bash and 0.2 s, and it is the only check that reads the kiosk's managed policy file.
+# It went unwired while the policy named a Chromium key that does not exist, which is how the
+# microphone stayed refused on the notebook with every tier green: nothing here looked at it.
+step "deploy tests"
+bash "$ROOT/deploy/browser.test.sh"
+
 step "typecheck"
 frontend npm run check
 

@@ -2773,6 +2773,13 @@ Saver off, so a backgrounded tab is never *discarded* — which would silently s
 capture. Timer throttling in a background tab is harmless, because every note
 carries its own absolute timestamp.
 
+> **Corrected 2026-09-20 (`AGENT-LOG.md`).** The first line is inert on current Chromium: that
+> build defines no MIDI policy at all, so the line grants nothing there — and MIDI works on the
+> notebook anyway, which is what kept the inert line invisible. It is kept because it is a real
+> policy name on the builds that *do* gate Web MIDI. What the same reasoning cost later is in
+> `PLAN-PHASE20E.md` — the microphone allow-list was spelled by analogy with this line and does
+> not exist, and there the mistake was fatal because `AudioCaptureAllowed: false` sat beside it.
+
 Installed to `/etc/chromium/policies/managed/piano-ecosystem.json` on
 Chromium/Arch (`/etc/opt/chrome/policies/managed/` for Google Chrome).
 

@@ -476,7 +476,7 @@ settings:
 
 | Policy | Effect on a planted notebook |
 | --- | --- |
-| `MidiAllowedForUrls` | Grants the MIDI permission for an origin automatically — no prompt, ever |
+| `MidiAllowedForUrls` | Grants the MIDI permission for an origin automatically, on the builds that gate Web MIDI behind a permission prompt. Current Chromium defines no MIDI policy at all, so there it grants nothing — and MIDI works on the notebook regardless, which is why an inert line beside it stayed invisible |
 | `HighEfficiencyModeEnabled` | Memory Saver off, so a backgrounded tab is never discarded |
 
 Timer throttling in a background tab is harmless here **because the wire format
@@ -1592,8 +1592,10 @@ sharing."*
 - `media` gains `source` (`'uploaded' | 'captured'`), `sitting_id` and `segment_id`, all
   nullable and additive. The content-hashing, ffprobe pass, waveform and A/B machinery are
   unchanged: a captured take is an ordinary recording row.
-- Deployment gains `AudioCaptureAllowedForUrls` beside the existing `MidiAllowedForUrls` in
-  `deploy/chromium-policy.json`.
+- Deployment gains `AudioCaptureAllowedUrls` beside the existing `MidiAllowedForUrls` in
+  `deploy/chromium-policy.json` — the name as Chromium defines it, without a `ForUrls`; see
+  the note in `deploy/README.md`, which this line originally got wrong in a way that refused
+  the microphone to every origin.
 - **No automatic pruning.** The System panel reports captured-audio size, and deletion stays
   on the loopback-only side of the D8 boundary. If the machine has no input device at all,
   the UI says so rather than cheerfully writing silence.

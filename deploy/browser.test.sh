@@ -23,7 +23,7 @@ check() {
   fi
 }
 
-WORK=".scratch/browser-test"
+WORK="$(cd "$HERE/.." && pwd)/.scratch/browser-test"
 rm -rf "$WORK"
 mkdir -p "$WORK"
 
@@ -78,6 +78,60 @@ check "flatpak Chromium is found" \
 check "and gets a profile inside its own sandbox" \
   "$(PATH="$FLATPAK"; browser_user_data_dir "$(browser_command)")" \
   "$HOME/.var/app/org.chromium.Chromium/config/piano-ecosystem-kiosk"
+
+# --- the managed policy file -------------------------------------------------
+#
+# A key Chromium does not define is not ignored with a warning: it is not read at all, and
+# nothing — no log line, no UI, nothing on `chrome://policy` unless you go looking — says so.
+# This file named the microphone allow-list `AudioCaptureAllowedForUrls`, by analogy with
+# `MidiAllowedForUrls`. Chromium's capture policies are `AudioCaptureAllowed` and
+# `AudioCaptureAllowedUrls`, and capture has never had a `...ForUrls` form. The allow-list
+# therefore granted nothing while `AudioCaptureAllowed: false` turned prompts off, so *every*
+# origin — the notebook's own included — was refused with no dialog. On the notebook that is
+# one sentence: "the browser refused the microphone".
+#
+# The names are pinned below against Chromium's own index,
+# `components/policy/resources/templates/policies.yaml` — checked at the tag the notebook runs,
+# `refs/tags/152.0.7977.82`: 1544 policies, with `AudioCaptureAllowedUrls` and without
+# `AudioCaptureAllowedForUrls`. Adding a policy means looking the name up there first. That lookup
+# is the step whose absence shipped the bug.
+POLICY="$HERE/chromium-policy.json"
+
+policy_value() {
+  python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$POLICY" "$1" 2>/dev/null
+}
+policy_has() {
+  python3 -c 'import json,sys; sys.exit(0 if sys.argv[2] in json.load(open(sys.argv[1])) else 1)' \
+    "$POLICY" "$1" 2>/dev/null && echo yes || echo no
+}
+policy_grants() {
+  python3 -c 'import json,sys; sys.exit(0 if sys.argv[2] in json.load(open(sys.argv[1])).get(sys.argv[3], []) else 1)' \
+    "$POLICY" "$1" "$2" 2>/dev/null && echo yes || echo no
+}
+
+echo "the managed policy file:"
+check "it is valid JSON" \
+  "$(python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$POLICY" 2>/dev/null && echo ok)" \
+  "ok"
+check "prompts are off, so the list is the whole permission" \
+  "$(policy_value AudioCaptureAllowed)" "False"
+check "the microphone allow-list uses Chromium's name" \
+  "$(policy_has AudioCaptureAllowedUrls)" "yes"
+check "and the invented ...ForUrls spelling is not there" \
+  "$(policy_has AudioCaptureAllowedForUrls)" "no"
+check "the notebook's own origin is the one auto-granted" \
+  "$(policy_grants http://localhost:8000 AudioCaptureAllowedUrls)" "yes"
+check "and so is 127.0.0.1" \
+  "$(policy_grants http://127.0.0.1:8000 AudioCaptureAllowedUrls)" "yes"
+check "every key is a policy name that was looked up, not guessed" \
+  "$(python3 - "$POLICY" <<'PY'
+import json, sys
+# `MidiAllowedForUrls` is deliberately kept: current Chromium defines no MIDI policy at all,
+# so it is inert here, but it is a real name on builds that gate Web MIDI and costs nothing.
+KNOWN = {"AudioCaptureAllowed", "AudioCaptureAllowedUrls", "HighEfficiencyModeEnabled", "MidiAllowedForUrls"}
+print(" ".join(sorted(set(json.load(open(sys.argv[1]))) - KNOWN)) or "none")
+PY
+)" "none"
 
 rm -rf "$WORK"
 

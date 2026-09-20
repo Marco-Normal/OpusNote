@@ -1,6 +1,6 @@
 {
   "MidiAllowedForUrls": ["http://localhost:8000", "http://127.0.0.1:8000"],
-  "AudioCaptureAllowedForUrls": ["http://localhost:8000", "http://127.0.0.1:8000"],
+  "AudioCaptureAllowedUrls": ["http://localhost:8000", "http://127.0.0.1:8000"],
   "AudioCaptureAllowed": false,
   "HighEfficiencyModeEnabled": false
 }

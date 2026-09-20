@@ -1536,6 +1536,15 @@ cd frontend && npm test && npm run check && npm run build
 grants audio capture to **every** origin, not only the two named. The named list is the whole
 permission; the boolean is what keeps it from being a blanket yes.
 
+> **Corrected 2026-09-20 (see `AGENT-LOG.md`).** The allow-list key above is wrong, and wrong in
+> the one way that matters: Chromium's capture policies are `AudioCaptureAllowed` and
+> `AudioCaptureAllowedUrls`, with no `...ForUrls` form — that suffix belongs to content settings,
+> which is why the MIDI line next to it looks like a template. A key Chromium does not define is
+> not ignored with a warning, it is not read at all, so the list stayed empty while
+> `AudioCaptureAllowed: false` turned prompts off: every origin, the notebook's own included, was
+> refused with no dialog. The shipped file says `AudioCaptureAllowedUrls`, and
+> `deploy/browser.test.sh` now pins every key in it.
+
 Document both in `deploy/README.md` (beside the MIDI permission paragraph) and in
 `docs/DEPLOYMENT.md`, in the same terms: the piano machine's kiosk is *automatically* granted the
 microphone for its own origin, and nothing else is. Also update the installer's own echo, which

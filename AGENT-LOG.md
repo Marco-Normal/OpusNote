@@ -1877,3 +1877,74 @@ browser falsification, since it is gitignored and `falsify.sh` leaves the broken
 `./check.sh --fast` green in 72s, and `./check.sh --full` green in 518s (backend suite, coverage, the
 whole browser tier and the mutation report) against commit `3aee82c`; this paragraph is the only
 change after it.
+
+## 2026-09-20 — sight-reading agent — the microphone was refused by a policy key that does not exist
+
+Scope: `deploy/chromium-policy.json`, `deploy/browser.test.sh`, `check.sh`, `deploy/README.md`,
+`docs/DEPLOYMENT.md`, `docs/ECOSYSTEM.md`, `docs/PLAN-PHASE20E.md`, `docs/PLAN-PHASE8-9.md`,
+`backend/tools/falsifications/invent_a_microphone_policy_name.sh` (new).
+
+The user reported it from the bench, testing audio capture for the first time: *"The browser refused
+microphone."* The attached kiosk log (`~/.local/state/piano-kiosk.log`) has **nothing about the
+microphone in it** — no media error, no permission line, no crash on that path — and that silence was
+the first real clue rather than a missing one: a policy denial produces no log line at all.
+
+**Did.** `deploy/chromium-policy.json` named the microphone allow-list `AudioCaptureAllowedForUrls`.
+**Chromium has no such policy.** Its capture policies are `AudioCaptureAllowed` and
+`AudioCaptureAllowedUrls`; the `...ForUrls` suffix belongs to content settings, and the file's own
+`MidiAllowedForUrls` on the line above is exactly that shape, which is why the name looked like a
+template. Checked against Chromium's own index rather than a docs page:
+`components/policy/resources/templates/policies.yaml` at **the tag the notebook actually runs**
+(`refs/tags/152.0.7977.82`, the version in the log) — 1544 policies, listing `AudioCaptureAllowed`
+and `AudioCaptureAllowedUrls`, and no `AudioCaptureAllowedForUrls`. The schema
+text of `AudioCaptureAllowed` is what makes the misspelling fatal rather than cosmetic: *"Setting the
+policy to Disabled turns off prompts, and audio capture is only available to URLs set in the
+AudioCaptureAllowedUrls list."* The file sets `AudioCaptureAllowed: false`, so prompts were off and
+the only permitted URLs were the ones in a list Chromium never read — an allow-list of nothing. Every
+origin, `http://localhost:8000` included, was refused with no dialog; `getUserMedia` rejected with
+`NotAllowedError`, which is precisely the `data-audio-device="denied"` sentence the DeviceBar already
+had. One key was renamed.
+
+**Why nothing caught it, three ways.** The line above it is inert too, and nobody could tell:
+the same index at the same tag has **no MIDI policy at all** — no `MidiAllowedForUrls`, no
+`MidiSysexAllowedForUrls`, nothing — while MIDI works on the notebook regardless. Why it works is not
+something this log settles: either that build does not gate non-sysex Web MIDI behind a prompt, or the
+kiosk profile carries a grant remembered from an earlier click (the installer's own flatpak note tells
+the operator to click Allow once and says the profile remembers it). Either way the MIDI key is not
+doing it, so the file *looked* like it was working and could not be checked by the one feature next to
+it. The browser tier launches Chromium
+with `--use-fake-ui-for-media-stream` against a machine with no managed policy installed, so it
+grants the microphone by flag and never touches the file. And `deploy/browser.test.sh` existed with
+ten passing cases and was wired into **nothing**, so `./check.sh --fast` never read the policy.
+
+**What was added, and what was deliberately not.** The policy file's keys are now pinned in
+`deploy/browser.test.sh` against Chromium's index — adding a policy means looking its name up, which
+is the step whose absence shipped this — and that file is now a `check.sh --fast` step, so the
+assertions are executed rather than admired. `MidiAllowedForUrls` is kept on purpose: it is a real
+name on the builds that gate Web MIDI, it costs nothing where it is not, and removing it would break
+those builds to tidy a file. The frontend is untouched: its `denied` sentence was accurate and is now
+actionable. No install-time "unknown policy" warning was added — that needs Chromium's policy list at
+install time, and the pinned names in the repo test give the same protection earlier and offline.
+
+**Falsified before it was trusted.** The new cases were run against the *unfixed* file first: five
+fail (`the microphone allow-list uses Chromium's name`, the invented spelling still present, both
+loopback origins not granted, and `every key is a policy name that was looked up, not guessed`),
+0.15 s; after the rename all seventeen pass. The break is kept as
+`invent_a_microphone_policy_name.sh` and was rehearsed the way `falsify.sh` would run it — applied,
+caught by `bash deploy/browser.test.sh` (exit 1), restored, green — so re-certifying the guard does
+not depend on this paragraph. The plan snippets that carried the wrong name were annotated in place
+(`PLAN-PHASE20E.md`, and the `PLAN-PHASE8-9.md` MIDI rationale it was copied from), because a reader
+copying from them would otherwise re-ship the defect.
+
+**To fix the notebook** (the code being right is not the machine being right): `git pull` and
+`sudo ./deploy/install.sh` there — it is idempotent and rewrites the managed policy — then click
+*Record takes*; both policies are `dynamic_refresh: true`, so no reboot and no kiosk restart is
+needed. `chrome://policy` in the kiosk profile should now show `AudioCaptureAllowedUrls` with the two
+loopback origins, and the device bar should read `microphone ready`.
+
+Verified: `bash deploy/browser.test.sh` green (17 cases, five of them new and seen to fail first);
+`./check.sh --fast` green in 74 s with `deploy tests` wired in as its own step (0 s of that, and the
+only step that reads the policy file). The changes after that run are this entry, the corrected prose
+in the two plans, and the break script — no behaviour, and the policy file is byte-identical to the
+one it was run against.
+
