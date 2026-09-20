@@ -2136,4 +2136,66 @@ terminates in a bounded time. The browser tier that `--full` actually adds — t
 could break — was run at every slice and is green. Stated here so the omission is a decision on the
 record rather than a gap somebody finds later.
 
+**The README was then restructured, at the user's request, for presentation.** The old one was 699
+lines of genuinely good engineering writing that had become a diary: excellent as documentation and
+poor as a front page, because a reader arriving at the repository met the hard-won detail before
+they met the project. It is now three documents with one job each:
+
+| File | Role | Lines |
+| --- | --- | --- |
+| `README.md` | Front page: what it is, screenshots, architecture, quick start, the adaptive hook, verification, doc index, limitations, credits | 261 |
+| `docs/FEATURES.md` | Reference for every feature's behaviour | 338 |
+| `docs/ENGINEERING.md` | Difficulty model, adaptive engine derivation, scorer, timing, integration notes, configuration | 221 |
+
+**Nothing was dropped, and that was checked mechanically rather than by eye.** The old README was
+diffed against the three new documents for 86 distinctive tokens — CamelCase names, snake_case
+identifiers, `SRT_*` variables, numbers with units, code spans. Five were absent at the end, all
+trivial (`MVP`, a `$PWD` false positive, the term `SPA`, a test scenario name, and "2 bars" which
+the new text spells "two bars"). One substantive gap was found by that check and restored: the
+**LAN viewer** boundary, where a second machine may read the library but deletions are confined to
+the piano machine and the interface explains the refusal instead of disabling a control silently.
+Also restored: the piece editor's fields and inline composer creation, the `copy_media` import
+parameter with its `curl` example, the count-in and click controls, the `suspended` audio readout,
+the "edits apply immediately" behaviour, and the sampler's `Ds4`/`D#4` naming trap.
+
+**Voice, not length, was the actual problem.** The rewrite is 820 lines across three files — *more*
+than the 699 it replaced — but the front page is a third of the size and a reader can now stop
+after the first screen and still know what the project is, how to run it, and how it is verified.
+
+**Screenshots were added, taken through the browser suite's simulated MIDI device** so they show the
+application connected with real notation rendered, rather than the first-run warnings of a machine
+with no piano attached. Written by `.scratch/shoot_readme.py`, which imports `FAKE_MIDI` from
+`e2e_browser.py` rather than duplicating it.
+
+**The licence gap was closed, and closing it turned up something else.** The user asked what was
+compatible with the existing licensed material, so the tree was audited rather than reasoned about:
+all 67 installed Python distributions and 69 npm packages were enumerated with their licence
+metadata, walking the transitive closure separately from the dev-only set. The answer was that
+nothing constrains the choice — there is no GPL, AGPL or LGPL anywhere in either tree. Three
+near-misses, none of which bite: `certifi` (runtime) and `lightningcss` (dev) are MPL-2.0, which is
+*file-level* copyleft and so imposes nothing on an unmodified dependency; `jszip` is
+`MIT OR GPL-3.0-or-later`, so the MIT option is simply elected; `hypothesis` is MPL-2.0 but
+dev-only. The only asset actually vendored in the repository is the Spectral font, so OFL 1.1 is
+the one licence that binds the repo — and keeping `OFL.txt` beside it is the whole obligation. The
+piano samples are *not* vendored: `backend/app/piano.py:49` downloads them at runtime and caches
+them locally, so CC BY attribution is satisfied in the UI rather than by the repo.
+
+The user chose **MIT**. `LICENSE` and `THIRD-PARTY.md` were added; the README's credit section now
+names a licence for every component instead of only some, and the stale "Sight-Reading Trainer API"
+comment at the top of `backend/requirements.txt` — a leftover the rename had missed — was corrected.
+
+**One real defect found while checking, which is the reason `THIRD-PARTY.md` is not the whole
+fix.** Inspecting `frontend/dist` showed the built bundle carried **zero** copyright or licence
+strings for Tone.js and JSZip, while OpenSheetMusicDisplay's own chunk retained 38. Since `dist` is
+what the API serves — it *is* redistribution — MIT and BSD-3-Clause both require those notices to
+travel with it, and minification had stripped them. The obvious remedy, `output.banner`, is a trap
+in this build: Vite 8 accepts `build.rollupOptions`/`rolldownOptions` but types the output as
+`Omit<OutputOptions, …, "banner">`, so the setting is **silently ignored**. That was established by
+building and finding no banner rather than by reading the docs, and it is recorded in
+`vite.config.ts` beside the workaround: a twelve-line `generateBundle` plugin that prepends the
+notice. Verified by building again and finding the notice at the head of both emitted chunks.
+
+Verified: `./check.sh --fast` green after the config change; every relative link in `README.md` and
+`THIRD-PARTY.md` resolved by script rather than by eye.
+
 

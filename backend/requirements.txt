@@ -1,4 +1,4 @@
-# Runtime dependencies for the Sight-Reading Trainer API.
+# Runtime dependencies for the Opus Note API.
 # Install into a virtual environment:
 #   python3.11 -m venv .venv
 #   .venv/bin/pip install -r requirements.txt

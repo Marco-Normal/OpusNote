@@ -2,698 +2,265 @@
 
 **Notes you play. Notes you keep.**
 
-An adaptive sight-reading coach and a practice journal for a real piano. It shows a
-short, level-appropriate excerpt, counts you in over a metronome, listens to your MIDI
-keyboard, and scores pitch, rhythm, and continuity. The next exercise is chosen from your
-weakest skill, with the difficulty aimed so you succeed about 78% of the time. Between
-exercises it logs what you actually played, keeps a library of your pieces with journal
-notes, scores and recordings, and shows how both halves are going.
+An adaptive sight-reading coach and practice journal for a real acoustic piano. Opus Note
+engraves a short, level-appropriate excerpt, counts the player in over a metronome, listens to a
+MIDI keyboard, and scores pitch, rhythm and continuity. Between exercises it logs everything
+played, keeps a library of repertoire with journal notes, scores and recordings, and reports how
+both halves are progressing.
 
-Formerly **Sight-Reading Trainer**. The name changed because the app outgrew it: only one
-of its three sections is sight-reading. The *internal* names did not change — `SRT_*`
-environment variables, `srt.*` browser storage, the data directories and the service names
-are all still spelled the old way, deliberately, so an existing installation upgrades with
-nothing to rename and nothing to migrate.
+Built for a **Casio PX-870** over USB, and compatible with any class-compliant MIDI keyboard.
+Python 3.11 / FastAPI / SQLite / music21 on the server; Svelte 5 / TypeScript / Vite in the
+browser.
 
-Built for a **Casio PX-870** over USB Type-B, but it works with any
-class-compliant MIDI keyboard.
+![Practice view](docs/images/practice.png)
+
+*An exercise with the adaptive rationale, expected-note timeline and per-hand attribution.*
 
 ---
 
-## Quick start
-
-Two processes: the API and the browser client.
-
-```bash
-# 1. API  (from the repo root)
-cd backend
-python3.11 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-.venv/bin/python -m uvicorn app.main:app --reload --port 8000
-
-# 2. Client  (in a second terminal)
-cd frontend
-npm install
-npm run dev
-```
-
-Open **http://localhost:5173**, click **Connect MIDI**, pick your keyboard, and
-press **Get my first exercise**.
-
-> Use `localhost`, not `127.0.0.1`, for the dev server — that is where Vite binds
-> by default. Web MIDI requires a secure context, and `localhost` counts as one.
-
-### MIDI devices
-
-The app connects by itself and picks the port that actually carries notes. That
-matters on Linux, where ALSA always exposes a virtual `Midi Through Port-0` beside
-your keyboard: it is a real Web MIDI input that never sends anything, and choosing a
-device by position picks it roughly half the time.
-
-Open **Setup** in the device bar, then read the port list, to see every input with what has been heard from it
-— `17 notes · last 4 s ago`, or `no notes yet` for the loopback port — and which one
-is in use (`Auto · CASIO USB-MIDI MIDI 1`).
-
-- **Nothing to click.** The app connects on load and again when the piano is switched
-  on later, so a machine left running picks it up by itself. Press **Connect MIDI**
-  once if the browser has never been granted MIDI access.
-- **Use only this** pins a device when you would rather be certain than inferred; the
-  choice survives a reload. **Back to automatic selection** undoes it.
-- **Echoes are dropped, not ports ignored.** Every port stays attached, and a note
-  reported twice within 30 ms by two different ports is counted once — so a keyboard
-  that splits zones across ports loses nothing.
-
-**Pedals.** The PX-870 has three, and the middle one (sostenuto) is barely used musically — so it
-is the one hands-free switch. Open **Setup** to see which controller
-numbers this piano has actually sent: press each pedal once and the bar reports it, together with
-what each pedal is bound to. One press and release of the sostenuto arms the recording and another
-stops it. The damper and the soft pedal are bound to nothing, deliberately: both *are* played, so a
-press mid-phrase would end the take being recorded — and the damper's double tap, which used to
-start and finish a workout, was retired for exactly that reason. A workout is declared from the
-banner instead. The gesture is inert during a scored attempt, and nothing is ever bound to
-a message the piano has not been seen to send. There is a **Count-in** choice (none, 1 bar, 2 bars)
-and a click volume beside it; both are remembered, and the transport says how many beats the
-count-in actually used.
-- On the piano machine use `http://localhost:8000`: Web MIDI requires a secure
-  context, and a LAN hostname is not one.
-
-### Two hands and the left-hand library
-
-From texture level 3 up, exercises are written on a grand staff and both hands
-are read together. The left hand is drawn from a library of **18 named
-accompaniment figures** spanning the common vocabulary:
-
-- **Sustained** — held root, root-and-fifth, block chords
-- **Pulse** — root-fifth "boom-chick", march bass, waltz bass, stride bass, tenths
-- **Broken chord** — Alberti bass, the 6/8 (compound) form, ascending broken
-  chords, wide arpeggios, broken octaves
-- **Independent** — walking bass, a free left-hand line, countermelody, and canon
-  (the left hand answers the melody a bar later)
-
-The figure is chosen from the meter and the texture level — a waltz bass never
-appears in 4/4 — and every figure is unit-tested for exact bar fill, register,
-and diatonicism. The exercise header shows which figure you are reading.
-
-Figures need something to outline, so a small diatonic progression engine
-supplies a chord per bar (I–V at the beginner end, through vi and ii and
-inversions later) and always cadences onto the dominant then the tonic. When both
-hands play, the melody's downbeats are anchored to the chord; a solo line is left
-free because it has nothing to clash with.
-
-### Exercise length and Focus mode
-
-The **Bars** control picks 4 / 8 / 12 / 16 bars. Length is a *preference*, not
-part of difficulty, so `difficulty_elo` keeps meaning one thing.
-
-The hard rule for sight-reading is that **the music must never scroll during a
-performance** — looking away is the failure this app exists to train against.
-So:
-
-- The engraving scales down (to a floor of 55%) until the whole exercise fits.
-- While a run is in progress the surrounding chrome collapses, so nothing is
-  competing with the score for height.
-- **Focus** hides the header, device bar, and note strip outright, which is the
-  right choice for a small window.
-- If a length genuinely cannot fit even at minimum zoom, the app says so and
-  offers a shorter one. It never leaves you with a score that scrolls.
-
-### Adding to the library
-
-**Repertoire** tab, top right: **New piece**. The editor takes a title, opus, key,
-difficulty, status and a description, and it can create a **composer** inline
-(*+ new composer…* in the composer list), so a fresh install needs nothing else. From
-a piece's detail you can add journal entries, edit it, attach a score, upload a
-recording and delete it. All of it works from any machine on the LAN except deleting,
-which is piano-machine only (see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)).
-
-Journal entries carry **tags** and two ratings — how hard it felt and how well it went — and the
-journal feed can be filtered by a tag. A tag matches the label you wrote, never a word that happens
-to appear in the prose. An entry can also point at the **recording** it is about (*Write about this
-take*), and deleting the recording leaves the prose alone.
-
-**Passages to work on** live on the piece: a bar range and a note ("bars 12–14, the left-hand
-leaps"), with *Worked on it* stamping the date so the untouched ones stay at the top. The app cannot
-find these for you — it cannot see your score — but a passage can record that it was seeded from a
-recording's A/B loop. The library can be sorted by **last played**, **least time invested** or
-**most time invested**, several pieces can be selected and re-statused at once, and the filters and
-sort you choose are remembered.
-
-A piece you set to **paused** stops appearing in *Neglected*: the status is your decision, and the
-list was arguing with it.
-
-**Scores** go in beside the recordings: a **PDF** is shown in the browser's own viewer,
-and **MusicXML** is engraved in the app by the same renderer the exercises use. Neither
-is re-encoded — the file you attach is the file you read — and both are checked on
-upload, so a `.pdf` that is not a PDF or an XML file that is not MusicXML is refused
-before it can become a blank frame at the piano. (A compressed `.mxl` has to be unzipped
-first.) Scores are counted separately from recordings everywhere.
-
-**Recordings** get a waveform and an **A/B loop**. Open a recording, press *Waveform*,
-and the peaks are decoded in the browser (nothing new is generated server-side); click
-the picture to move the playhead, then *Set A* and *Set B*. Playback then stays inside
-those markers, the audio outside them is dimmed, and the markers are saved with the
-recording rather than in the browser — so the same passage is there on the other
-machine. A recording over 64 MB is not decoded for a picture (it still plays).
-
-Starting empty is a supported path: with no pieces at all, the Library tab offers
-both *Import from piano-progress* (if that database is on this machine) and **New
-piece**.
-
-### Practice log
-
-Everything you play is logged without pressing anything, once a MIDI device is
-connected — capture is a standing switch, not a per-sitting button. The server
-groups notes into **sittings** by silence (five minutes closes one) and into
-**segments** by shorter silence (twenty seconds), which is normally one piece per
-segment. Nothing is recomputed behind your back: a boundary you move by hand stays
-moved.
-
-- **Segments** are cut at 8 seconds of silence, chosen by measuring a real 42-minute
-  session: the piece changes in it sat on gaps of 9.5 s and 11.7 s, while pauses *within*
-  a piece sat at 15 s — so no threshold is perfect, and this one errs towards more
-  segments because merging one is a click and splitting one means typing a position.
-- **Log** tab: today, streak, a twelve-week calendar, time per piece, neglected
-  pieces, and the sitting timeline where you tag a segment with a piece, split a
-  boundary the silence detector got wrong, merge two it split, or re-segment.
-  Re-segmenting is the only destructive action and asks first when segments carry
-  labels. Each segment row has two fields: the **piece** it was, and **Split at** — a
-  position to cut the segment in two, typed as a clock (`1:30:12`) or in seconds
-  (`5412`), which is what the *Split here* button then does.
-- **How you practised is a second axis from what you played.** Each segment can be
-  marked run-through, slow, section, hands-separate, from memory, warm-up or other, and
-  *How the time was spent* splits logged minutes by it — segments nobody characterised
-  keep their own bucket, so the split still adds up to the log. The app will **offer**
-  *slow* (this was well under your usual note rate for the piece) or *section* (you
-  stopped and started repeatedly) as a question with Yes/No beside it. An offer counts
-  for nothing until you answer it and never overwrites a kind you chose, and
-  hands-separate is never guessed: a register balance is not a measurement of the hands.
-- **Workouts** are declared, not inferred: *Start workout* in the banner, play,
-  *Finish workout*. Everything inside the window is labelled sight-reading rather
-  than mistaken for ordinary practice, and a finished workout links to the sitting
-  it happened inside. The Progress/Log views then separate "how long did I play"
-  from "how much deliberate sight-reading did I do".
-- **A sitting ends when the piano does.** Switching the piano off is taken as "I am
-  done": the sitting is closed and appears in the log at once instead of five minutes
-  later, and playing again afterwards starts a new one. Turning the piano off in the
-  middle of playing is not taken as a boundary — the server waits out a second and a half
-  of silence first — so a USB hiccup does not split a session. The log also refreshes
-  itself while it is open, so nothing needs a reload.
-- **The app learns which piece you are drilling.** Tag a segment by hand and it becomes
-  a reference; the next time you play something similar the timeline offers the piece it
-  thinks it was, with the percentage and the arithmetic behind it. A match it is sure of
-  is filled in on its own, marked *guessed*, with "It's right" and "Not this" beside it —
-  and the piece dropdown corrects it either way. Nothing is ever applied without a way to
-  disagree, and correcting a guess is what teaches it that two of your pieces sound
-  alike. The **Recognising what you played** panel reports how often it is right *on your
-  own library*, measured by hiding each of your tagged segments in turn, and how often
-  the labels it wrote unasked survived you looking at them. One-hand drilling is the
-  case it finds hardest, and the panel says so rather than hiding it.
-- Per-piece, the Repertoire detail shows measured minutes from MIDI beside the
-  minutes written in the journal — deliberately not summed, because a session can
-  be both measured and written down, and adding them would count it twice.
-- **The pedal blur tells you where.** A blur is an attack that brought new harmony over
-  notes the pedal was already holding, and the count now comes with its clock times: the
-  sitting strip carries a hairline at each one, and the segment row reads *"9 pedal blur —
-  at 1:23, 2:04, 4:11, 6:38 …"* (the whole list is in the tooltip). The rule is unchanged
-  and still observed from the pitches rather than from a score; what is new is that "nine"
-  is now something you can find on a long sitting.
-- **Editing is immediate.** Labelling, splitting, merging and re-tagging apply the server's
-  own answer as it arrives, and refresh only the totals. The matcher's measured accuracy,
-  the machine's health and the week's ratings are reads about the library rather than about
-  the edit, so they load when the tab opens instead of after every click — which is where a
-  one-second stall per label came from.
-
-Pieces are measured, not claimed: `median_tempo` is a **note rate** over attack
-clusters (chords are one attack, so they do not read as infinite BPM). It is
-comparable with itself over time, not an absolute metronome reading.
-
-### Progress, and hearing the past
-
-- **Rating over time** (Progress › Ratings): every rating change is recorded, so each skill
-  has a curve rather than a single number. The Elo engine nudges all nine dimensions on
-  every attempt, so each point records whether its skill was that attempt's *focus*;
-  the chart draws the whole line and tells you how many points were focus attempts.
-- **Click a row in Recent exercises** to open that attempt: its sub-scores, its counts,
-  and the same *Hear it* player a fresh result gets — your performance, or the exercise
-  as written, either hand.
-- **This week** (Progress › Log): minutes over the last seven days, workouts and streak, the
-  most improved skill, and the piece you have neglected longest.
-
-**Everything is a link.** The address bar describes what you are looking at —
-`#/repertoire/piece/12`, `#/log/sitting/34`, `#/stats/attempt/56` — so a piece can be opened on the
-other machine by pasting it, and Back works. Press `/` (or `Ctrl`/`Cmd`+`K`) for a search box over
-the library, the journal and recent sittings, and `1`–`3` to switch sections. Progress holds two views, **Ratings** and **Log**, which share the one section.
-
-### Hearing it back
-
-Two players, because there are two things worth hearing:
-
-- **After an attempt**, the results panel has *Hear it*: **Play yours**, **Play as
-  written**, or either hand alone. Written notes are played at the tempo you were
-  counted in at, and your own notes carry the hands the scorer matched them to. This is
-  the one that teaches something — a hesitation or a wrong note you only saw as a
-  colour becomes audible.
-- **In the Log**, a sitting or a single segment can be played back from the notes
-  themselves. **Click anywhere on the timeline strip to start from there** — a two-hour
-  sitting is unusable if the only way in is the beginning — and `« 30 s` / `30 s »` move
-  the playhead without losing the range you were playing. The position readout shows
-  where you are, and notes are fetched on demand (a long sitting is thousands of them).
-  A segment starts at its first note rather than waiting out the silence before it.
-
-**Which instrument** is chosen in the Setup panel, and there are three because they suit
-three situations:
-
-| | What it is | When |
-| --- | --- | --- |
-| *Through the piano* | The notes go out of a MIDI **output** to the PX-870 itself | Wherever a piano is connected — the piano machine, always. The only genuinely real piano sound, and it costs nothing |
-| *Sampled piano* | The Salamander Grand Piano (a Yamaha C5), 30 samples, CC BY 3.0 | A viewer with no piano attached, or when you would rather not hear the room |
-| *Synthesiser* | An FM voice built from Tone's oscillators | Before the samples are installed, and as the fallback when nothing else is available |
-
-The sampled piano is a **one-time 2 MB download**, fetched by the backend and served
-from this machine from then on: install it from Setup (*Install (2 MB, once)*),
-and nothing at play time touches the network. Salamander Grand Piano V3 by Alexander
-Holm, [CC BY 3.0](https://archive.org/details/SalamanderGrandPianoV3).
-
-There is a **Test** button next to the instrument choice: it plays a short chord through
-whatever is selected, which separates "the app is not playing" from "this machine is not
-making sound". The pill beside it reports the browser's audio state — `suspended` means
-the browser is waiting for a click, `audio ok` means the app is playing into a machine
-whose speakers, sound server or tab-mute setting is somebody else's problem.
-
-That last sentence was wrong for a while, which is why the browser suite now measures the
-master output instead of trusting the readouts: for the sampled piano and the synthesiser,
-`audio ok`, a "playing" button and an advancing position were all true while not one
-sample reached the speakers, because their notes were scheduled on a Tone `Transport`
-that nothing started. `scenario_playback` taps the output and fails if the chord is
-silent, so "the app is playing" is asserted rather than read.
-
-Two naming schemes meet at the sampler and are not interchangeable: the files use `Ds4`
-(a `#` in a URL starts a fragment, so `D#4.mp3` would fetch `D`), while a note name needs
-`D#4`. Getting that wrong leaves the sampled piano silent and quietly falls back to the
-synthesiser, so Setup reports when the samples fail to load rather than leaving
-you to guess.
-
-**Falling notes.** Tick *Falling notes* in the sitting transport for a piano-roll view —
-a keyboard along the bottom, the notes you played falling onto it, held notes drawn as
-long as they sound. It follows the playhead, so it is also a way to *see* a hesitation
-that is hard to hear.
-
-**Takes.** Press *Record takes* in the device bar and the app records the piano while you
-play — mono Opus at about 14 MB an hour, which is a convenience rather than an archive: the
-piano's own recording to a USB stick is still the one to keep. A take opens on the first note
-and closes when you have stopped for as long as the server treats as a segment boundary, so
-silence is not stored. It lands attached to the passage it was played in — the passage is only
-decided once a playing has closed, so a take appears under it the next time you open the piece
-after that — under **Takes this app recorded**. There two takes can be put side by side, and
-either can be played at 0.85×, 0.7× or 0.5×, slower at the same pitch, which the readout states
-rather than assumes. A machine with no audio input says so instead of arming a switch that
-records nothing. Nothing is deleted for you: the System panel reports how much captured audio
-there is, and deleting a take is a click on the piano machine.
-
-**Stop means stop.** There is one player for the whole app, so nothing can play over the
-top of anything else, and stopping cancels the notes that were scheduled but had not
-sounded yet — as well as sending note-off and all-notes-off to the piano, so nothing is
-left hanging on the instrument.
-
-What is faithful is *timing and touch* — every onset, duration and velocity is the one
-your playing produced, because a note's length is measured at its release — and, in the
-log, **the sustain pedal**: CC64 is stored as it arrived and each note is held to the
-pedal-up that covers its release, so a pedalled chord rings on instead of stopping dead.
-In the passive log the two hands cannot be separated: the piano sends them on one MIDI
-channel, and that is all that is stored. A scored attempt can separate them, because the
-exercise knows which hand each note is.
-
-### Keeping it healthy
-
-- **Nightly backups.** `python -m app.backup` writes `piano-ecosystem-<date>.json` into
-  `SRT_BACKUP_DIR` and keeps the newest `SRT_BACKUP_KEEP` (14 by default); the installer
-  enables a systemd timer at 03:10 with `Persistent=true`. Run it by hand any time —
-  it is the same code the *Download backup* button uses.
-- **A System panel** in the Log: database size and WAL, recordings present, pending
-  or missing, backups kept and how old the newest is, whether ALSA's sequencer is there,
-  and which clients it can see — which is how you tell "the piano is off" from "the
-  kernel module is missing".
-- **Latency is suggested, never changed behind your back.** After a few attempts the
-  device bar offers *Use N ms* when your own timing has been consistently early or late.
-  Accepting it is your click, because it changes what the scorer subtracts.
-
-### Export and backup
-
-**Log → Export & backup** downloads one JSON document containing every table:
-library, journal, media rows, sittings, note events, segments, workouts and
-ratings. Recording *files* are not inside it; copy the media directory alongside
-it. Restoring defaults to *add what is missing*, which never deletes local work;
-*replace everything* empties every table first and takes two clicks.
-
-See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for running it on the piano machine,
-WAL-aware backup, and a machine move — and [`deploy/README.md`](deploy/README.md) for
-the planted-notebook setup: a systemd service, a Chromium kiosk at `localhost` (Web
-MIDI needs a secure context), the policy that grants MIDI with no prompt, and the
-loopback boundary that keeps deletions on the piano machine.
-
-### Repertoire
-
-The app also owns your piece library — composers, pieces, the journal you write
-about them, and your recordings. It is the successor to a separate Rust desktop
-app; see [`docs/ECOSYSTEM.md`](docs/ECOSYSTEM.md) for why the ecosystem is one
-web app rather than three programs sharing a file.
-
-Open the **Repertoire** tab to browse pieces grouped by composer or difficulty,
-filter them, and read the journal and recording catalogue for any piece. Each
-piece shows its *sight-reading fit* — the key and starting level the exercise
-generator would use for it.
-
-To bring an existing `piano-progress` library across:
-
-```bash
-curl -X POST http://127.0.0.1:8000/api/repertoire/import \
-     -H 'Content-Type: application/json' -d '{"copy_media": false}'
-```
-
-The import reads that database **read-only**, can be run again to pick up changes
-while you are still using the old app, and refuses a missing file or a database of
-the wrong shape rather than importing nothing quietly. It copies the recordings
-into the ecosystem media directory by default (`"copy_media": false` to skip a
-large copy).
-
-Recordings are playable straight away. Each one is reported as **in library**
-(copied into this app), **not copied yet** (still only in the old
-`piano-progress` directory, and streamed from there), or **file missing** (in
-neither place). The Library tab offers a one-click copy for anything still
-pending.
-
-`GET /api/practice-suggestions` maps the pieces you are working on onto a
-sight-reading key and level — so exercises can be built around the piece in front
-of you.
-
-### Appearance
-
-The **Appearance** control in the header offers:
-
-- **Interface**: Auto (follows the OS), Light, Dark — persisted, and applied by
-  an inline script before first paint so a dark reload never flashes white.
-- **Sheet music**: Themed, or always paper-white. Inverting notation divides
-  readers, so it is a choice rather than a rule; the notation can be dark while
-  the chrome stays light, or vice versa.
-
-### Single-process mode (production-style)
-
-The API serves the built SPA itself, which is handy for a self-contained setup
-and is what the end-to-end test exercises:
-
-```bash
-cd frontend && npm run build
-cd ../backend && .venv/bin/python -m uvicorn app.main:app --port 8000
-# everything on http://127.0.0.1:8000
-```
-
-### Tests
-
-> **What these must cover is owned by [`docs/TEST-STRATEGY.md`](docs/TEST-STRATEGY.md).**
-> The commands below are the mechanics; the strategy decides which tier a change owes,
-> and a slice is not done until `./check.sh --full` passes.
-
-```bash
-# Backend unit + API integration
-cd backend && .venv/bin/pip install -r requirements-dev.txt
-.venv/bin/python -m pytest -q
-
-# Full browser end-to-end against the running server (see tools/e2e_browser.py).
-# It wants its own database and media directory, and a writable piano directory —
-# the app serves the samples from a static mount it creates at startup:
-SRT_DB_PATH=$PWD/data/e2e.sqlite3 SRT_LEGACY_DB=$PWD/data/legacy-fixture.db \
-  SRT_MEDIA_DIR=$PWD/data/e2e-media SRT_PIANO_DIR=$PWD/data/e2e-piano \
-  .venv/bin/python tools/e2e_browser.py
-
-# How well the matcher recognises a drilled section, on generated material
-# (see tools/measure_autotag.py — this is where the shipped weights come from)
-.venv/bin/python tools/measure_autotag.py
-```
-
-The end-to-end script injects a **simulated Web MIDI device** before any page
-script runs, so the real MIDI input path — status-byte decoding, input
-selection, onset measurement against the count-in anchor — is exercised rather
-than stubbed. It plays a perfect performance (expecting 100/100), an all-wrong
-performance, a silent one, and walks a calibration rung, asserting on the
-rendered notation, the results panel, and the progress view. Twelve scenarios in
-all: they cover the sight-reading loop, the Repertoire library (import, edit,
-scores, upload, stream, playback, the waveform and its A/B loop), the practice log
-(passive capture, the pedal, a workout, tagging, splitting, merging,
-re-segmenting, a backup round trip), MIDI auto-detection, the LAN viewer — and
-recognising a drilled passage (including the case where the matcher is sure and
-wrong, which is the one that matters), and playback — that notes reach the piano's
-MIDI output, that Stop silences them, that clicking the strip seeks, and that the
-falling-notes view draws.
+## Contents
+
+- [Overview](#overview)
+- [Screenshots](#screenshots)
+- [Architecture](#architecture)
+- [Quick start](#quick-start)
+- [The adaptive engine](#the-adaptive-engine)
+- [Verification](#verification)
+- [Project layout](#project-layout)
+- [Documentation](#documentation)
+- [Limitations](#limitations)
+- [Credits and licence](#credits-and-licence)
 
 ---
 
-## How it works
+## Overview
 
-### Three layers
+The application is organised around three sections:
 
-| Layer | Lives in | Responsibility |
+| Section | Purpose |
+| --- | --- |
+| **Practice** | Adaptive sight-reading exercises, scored and calibrated to the player |
+| **Library** | Repertoire, journal entries, passages, scores, recordings and recorded takes |
+| **Progress** | Rating history, practice statistics, and the practice log |
+
+A **Setup** panel holds device, audio and timing configuration, so the interface itself stays
+focused on playing.
+
+Selected capabilities:
+
+- **Adaptive difficulty across nine independent skills.** Elo-based, with the selector aiming
+  below the player's rating so that success lands in the 70–85% band rather than at 50%.
+- **Score generation, not a fixed exercise set.** Exercises are composed from the skill levels
+  via music21 and served as MusicXML, including a left-hand accompaniment library of 18 named
+  figures from Alberti bass to canon.
+- **Real-time scoring against the notation** — pitch, rhythm and continuity, reported per hand,
+  with configurable thresholds.
+- **Passive practice logging.** Notes are captured continuously and grouped into sittings and
+  segments; no button press is required.
+- **Piece recognition.** Hand-tagged segments become training data, and the matcher offers the
+  piece it believes was played, with a way to disagree.
+- **Repertoire management** with a journal, tagged and rated, alongside scores (PDF and
+  MusicXML) and recordings with waveform A/B loops.
+- **Playback** through the piano itself, a sampled Yamaha C5, or a synthesiser, with a
+  piano-roll view and speed-reduced take comparison.
+- **Offline-first operation.** The sampler is fetched once and served locally; nothing at play
+  time touches the network.
+
+## Screenshots
+
+| | |
+| --- | --- |
+| ![Library](docs/images/library.png) | ![Setup](docs/images/setup.png) |
+| The library: pieces grouped by composer, with the journal feed | Setup: devices, pedals, timing, sound and capture in one place |
+
+| | |
+| --- | --- |
+| ![Progress](docs/images/progress.png) | ![Log](docs/images/log.png) |
+| Progress: rating history and the skill radar | The practice log: sittings, segments and time spent |
+
+## Architecture
+
+| Layer | Location | Responsibility |
 | --- | --- | --- |
 | Client | `frontend/src` | Render notation, capture MIDI, run the metronome, display feedback |
 | API | `backend/app/main.py` | Serve exercises as MusicXML, score performances |
 | Storage | `backend/app/store.py` + SQLite | Profiles, skill ratings, exercise library, attempt history |
 
-The client makes **no musical judgements of its own**. Every score comes from the
-API. That is what makes the generator and the scorer replaceable without
-touching the browser.
+The client makes **no musical judgements of its own**; every score comes from the API. Two
+endpoints carry the whole interaction — `GET /api/exercise/next` returns MusicXML plus the
+expected-note timeline, and `POST /api/score` takes played notes and returns per-note feedback
+with sub-scores. This keeps the generator and the scorer replaceable without touching the
+browser.
 
-### The contract
+See [docs/ENGINEERING.md](docs/ENGINEERING.md) for the difficulty model, the adaptive engine,
+the scorer and the timing model.
 
-Two endpoints carry the whole interaction:
+## Quick start
 
-- `GET /api/exercise/next` → MusicXML plus the expected-note timeline
-- `POST /api/score` → played notes in, per-note feedback and sub-scores out
+**Prerequisites:** Python 3.11, Node 20+, and a Chromium-based browser. Web MIDI requires Chrome,
+Edge or Opera on desktop; the interface detects unsupported browsers and reports this rather
+than failing silently.
 
-Everything else (`/api/calibration/next`, `/api/stats`, `/api/profile`) is
-convenience on top.
+Two processes: the API and the browser client.
 
----
+```bash
+# 1. API
+cd backend
+python3.11 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python -m uvicorn app.main:app --reload --port 8000
 
-## Difficulty model
+# 2. Client, in a second terminal
+cd frontend
+npm install
+npm run dev
+```
 
-Nine independent skills, each level 1–10. `backend/app/skills_data.py` is the
-single source of truth, and it asserts at import time that every parameter table
-defines all ten levels.
+Open **http://localhost:5173** and click **Connect MIDI**. The application then selects the
+keyboard automatically; open **Setup** to inspect the available inputs and what has been heard
+from each.
 
-| Skill | Level 1 | Level 10 |
-| --- | --- | --- |
-| Key signatures | C major | minor keys with 3+ accidentals |
-| Meter | 4/4 | alternating irregular meters |
-| Rhythm | quarters/halves | mixed tuplets and syncopation |
-| Intervals | steps only | fully disjunct |
-| Hand position | five-finger RH | free position changes |
-| Texture | right hand alone | four-voice writing |
-| Accidentals | diatonic only | highly chromatic |
-| Tempo | 50–60 BPM | 160–200 BPM |
-| Articulation | legato, no marks | full expressive marking set |
+> Use `localhost` rather than `127.0.0.1` for the development server — that is where Vite binds
+> by default. Web MIDI requires a secure context, and `localhost` qualifies.
 
-Each exercise is generated from a level per skill, then tagged with them.
+### Single-process mode
 
-### The adaptive engine
+The API can serve the built client itself, which is how it is deployed and how the end-to-end
+suite exercises it:
 
-Elo, with one twist that matters.
+```bash
+cd frontend && npm run build
+cd ../backend && .venv/bin/python -m uvicorn app.main:app --port 8000
+# Everything is served from http://127.0.0.1:8000
+```
 
-- Each **skill** has a rating; each **exercise** has a difficulty.
-- Each skill is scored against the Elo implied by **its own level** in the
-  exercise — *not* the exercise's blended difficulty. Otherwise a hard rhythm in
-  an otherwise easy piece would drag every unrelated skill rating down.
-- The targeted skill moves at the full `K`; the others at half `K`.
+For installation as a service with a Chromium kiosk, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
+and [`deploy/README.md`](deploy/README.md).
 
-The twist: **a learner's Elo is the difficulty at which they score 50%**, so
-picking exercises *at* your rating would keep you at a 50% success rate —
-demoralising, and nowhere near the 70–85% zone the design calls for. The
-selector deliberately aims below the rating:
+## The adaptive engine
+
+Nine independent skills, each rated on a 1–10 scale. The design detail worth stating is that a
+learner's Elo is the difficulty at which they score 50%, so selecting exercises *at* that rating
+would hold them at a 50% success rate. The selector therefore aims deliberately below it:
 
 ```
 offset = 400 · log10(1/target − 1)      # target = 0.78  →  offset ≈ −220
 ```
 
-So a rating of 1000 gets exercises around Elo 780. `SRT_TARGET_SUCCESS_RATE`
-tunes this. A simulation in `tests/test_adaptive.py` walks a learner with a
-fixed true ability and asserts the served difficulty converges into the
-70–85% band.
+A rating of 1000 receives exercises around Elo 780. A simulation in `backend/tests/test_adaptive.py`
+walks a learner of fixed true ability and asserts that the served difficulty converges into the
+70–85% band. Full derivation, including the choice of the base anchor, is in
+[docs/ENGINEERING.md](docs/ENGINEERING.md) §4.
 
-The other half of that arithmetic is `SRT_ELO_BASE`, the Elo of the **easiest**
-material, and it has to sit low enough that the offset still lands inside the
-ten-level ladder. It did not: at 600, level 2 was unreachable below a rating of
-870, so every learner under that was served level 1 for ever — 270 points of
-ability collapsed into one level of material, and the exercises never got
-harder. 480 is the one value that satisfies all three constraints at once:
+## Verification
 
-| Constraint | Why |
+`./check.sh` is the single entry point. It has two tiers, because a suite nobody runs is
+decorative:
+
+```bash
+./check.sh --fast    # everything that must pass after every edit (budget: 180 s)
+./check.sh --full    # the above, plus the browser, mutation and scale tiers
+```
+
+| Tier | Scope |
 | --- | --- |
-| 780 must be a level boundary | the line above is then *exact* rather than approximate: 780 = 480 + 3 × 100 |
-| an unrated learner (700) stays on level 1 | level 1 covers ratings up to 480 + 220 + 50 = 750 |
-| as early as possible otherwise | it is the smallest such value, so each level opens 100 rating points above the last |
+| Backend | Unit and API integration tests (`pytest`) |
+| Frontend | Pure modules under `node --test` |
+| Typecheck and build | `svelte-check` and the production build |
+| Browser end-to-end | 14 scenarios in real Chromium against a real server |
+| Mutation | Report only; not a gate until its baseline is established |
 
----
+The browser suite injects a **simulated Web MIDI device** before any page script runs, so the
+genuine MIDI input path — status-byte decoding, input selection, and onset measurement against
+the count-in anchor — is exercised rather than stubbed. It plays a correct performance, a wrong
+one and a silent one, walks a calibration rung, and asserts on the rendered notation, the results
+panel and the progress view. Individual scenarios can be run in isolation during development:
 
-## Scoring
+```bash
+backend/tools/run_e2e.sh playback     # one scenario, by name
+backend/tools/run_e2e.sh              # every scenario
+```
 
-For each expected note, within a ±200 ms window:
-
-- **Pitch** — greedy nearest-first matching on equal pitch, then precision,
-  recall, and F1. Extra notes cost precision; missing notes cost recall. Written
-  over *lists* of notes, so chords already work.
-- **Rhythm** — mean absolute onset error and its spread, converted to beats at
-  the exercise's tempo.
-- **Continuity** — hesitations (a gap more than 500 ms longer than notated) and
-  tempo instability. This uses a separate, much wider matching window, because a
-  hesitation is *late*, not *wrong*: reusing the tight pitch window made stalls
-  invisible.
-
-Overall = 0.5·pitch + 0.3·rhythm + 0.2·continuity. Pass at 80.
-`backend/app/config.py` holds every threshold, all overridable by environment
-variable.
-
-**Hand attribution.** MIDI never says which hand played a note, so the hand
-comes from the notation: the generator emits the right hand as part 1 and the
-left as part 2, and each expected note carries its hand. Feedback is reported
-per hand.
-
-**Latency.** Setup › Timing › *Calibrate by playing…* measures your round-trip delay by having you play
-along with a metronome and taking the median offset; the scorer subtracts it.
-
----
-
-## Timing
-
-Two clocks, deliberately kept apart:
-
-- **Audio** — clicks are scheduled ahead through Tone.js so the Web Audio clock
-  stays accurate.
-- **Capture** — onsets are measured with `performance.now()`, the same clock the
-  MIDI timestamps use.
-
-Metronome clicks are scheduled from the audio clock; the beat indicator and
-recorded onsets both come from `performance.now()`, so what you see and what is
-captured agree with what you heard. The count-in length follows the first bar's
-meter, and per-bar meter is served by the API (`measures[]`) so mixed-meter
-exercises count in correctly.
-
----
+What each tier must cover is owned by [docs/TEST-STRATEGY.md](docs/TEST-STRATEGY.md).
 
 ## Project layout
 
 ```
 backend/
   app/
-    main.py          FastAPI app — thin HTTP layer
-    services.py      Orchestration: generate, score, adapt, persist
-    store.py         All SQL
-    db.py            Schema + connection handling
-    models.py        Request/response schemas
-    skills_data.py   The difficulty model (single source of truth)
-    config.py        Every tunable, env-overridable
+    main.py            FastAPI application — thin HTTP layer
+    services.py        Orchestration: generate, score, adapt, persist
+    store.py           All SQL
+    db.py              Schema and connection handling
+    models.py          Request/response schemas
+    skills_data.py     The difficulty model (single source of truth)
+    config.py          Every tunable, environment-overridable
     music/
-      generator.py   skill levels → music21 score
-      expected.py    score → expected-note timeline
-    scoring/engine.py  pitch / rhythm / continuity
+      generator.py     Skill levels → music21 score
+      expected.py      Score → expected-note timeline
+    scoring/engine.py  Pitch / rhythm / continuity
     adaptive/
-      elo.py         Rating maths
-      selector.py    Which skill, how hard
-  tests/             unit + integration tests
-  tools/e2e_browser.py     Real-browser end-to-end verification
-  tools/measure_autotag.py How well the matcher does on drill-shaped practice
+      elo.py           Rating mathematics
+      selector.py      Which skill, how hard
+    practice/          Passive logging, segmentation, recognition
+    repertoire/        Pieces, journal, media
+  tests/               Unit and integration tests
+  tools/
+    e2e_browser.py     Real-browser end-to-end verification
+    run_e2e.sh         Start a server and run the scenarios
+    measure_autotag.py How well the matcher performs on drill-shaped practice
 frontend/
   src/
-    lib/             api, midi, metronome, score rendering, live matching, state
-    components/      Practice, Calibration, Stats, charts
+    app.css            Design tokens — colour, type, shape (single source)
+    App.svelte         Shell, navigation, keyboard shortcuts
+    lib/               API, MIDI, metronome, scoring display, live matching, state
+    components/        Practice, Library, Progress, Setup, charts
+docs/                  Architecture, features, deployment, test strategy
+deploy/                systemd units, kiosk policy, installer
 ```
 
----
+## Documentation
 
-## OSMD integration notes
+| Document | Contents |
+| --- | --- |
+| [docs/FEATURES.md](docs/FEATURES.md) | Detailed behaviour of every feature |
+| [docs/ENGINEERING.md](docs/ENGINEERING.md) | Difficulty model, adaptive engine, scorer, timing, configuration |
+| [docs/ECOSYSTEM.md](docs/ECOSYSTEM.md) | Why the ecosystem is one application rather than three |
+| [docs/TEST-STRATEGY.md](docs/TEST-STRATEGY.md) | What the tests must cover, and the tiers they belong to |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Running on the piano machine, backup, moving between machines |
+| [deploy/README.md](deploy/README.md) | systemd service, Chromium kiosk, MIDI permission policy |
 
-Three non-obvious behaviours cost real debugging time. They are commented at the
-call site in `frontend/src/lib/score.ts`; summarised here so they are not
-rediscovered:
+## Limitations
 
-- **`Pitch.getHalfTone()` is not a MIDI number.** It returns
-  `12 * (MusicXML octave) + fundamental`, exactly one octave below MIDI. A
-  written C4 comes back as 48. The renderer adds 12 and warns to the console if
-  fewer notes correlate than the exercise contains.
-- **`autoResize` wipes per-note colours.** OSMD's resize observer re-renders on
-  ordinary layout shifts (the results panel appearing is enough), and a
-  re-render rebuilds the SVG. `autoResize` is therefore off and the renderer owns
-  layout, re-rendering only when the *width* changes.
-- **`darkMode` does not colour noteheads.** It lightens the music but leaves
-  `defaultColorNotehead` at black, giving black noteheads on a black page.
-  Explicit ink colours are passed for music, noteheads, stems, and rests.
-- Noteheads are plain `<path>` elements with no class of their own, so any check
-  on notation colour must measure the painted `fill` rather than a selector.
-- **`render()` appends, it does not replace.** Calling it twice stacks two whole
-  scores and the container height becomes their sum. Every re-render clears
-  first, and renders are serialized.
-- **No courtesy time signature at system breaks.** OSMD reprints the clef but not
-  the time signature, and exposes no rule for it. Meter changes are rendered
-  correctly; a constant meter across systems is only shown once. Forcing system
-  breaks with an explicit `<time>` is the alternative — see the roadmap.
-- **Layout can oscillate.** Growing content can toggle the page scrollbar, which
-  changes the width, which re-wraps the music. `scrollbar-gutter: stable` plus a
-  coarse resize threshold breaks that loop.
-- **A tempo marking is not a beat.** Tempo is quarter notes per minute; the beat
-  is whatever the meter says — a dotted quarter in 6/8, a half note in cut time.
-  Treating seconds-per-quarter as seconds-per-beat made the metronome, the
-  count-in, and the end-of-run timer wrong in every compound meter, and the
-  timer silently truncated the performance.
+- **Personal project, single-user by design.** There is no authentication; one local profile is
+  assumed. `POST /api/profile/reset` clears it.
+- **Generated music is generated music.** It is musical and correctly notated, but a curated
+  library can be substituted behind the same API.
+- **Polyphony is approximated at the top of the range.** Textures 7–10 are deliberate
+  simplifications; scoring handles them correctly, but only the composition is simplified.
+- **Tempo is constant within an exercise**, which keeps the beat grid exact.
+- **Desktop only.** Web MIDI is not available in Safari or Firefox, and the interface reports
+  this rather than failing quietly.
+- **Startup cost.** Importing music21 takes a second or two; exercise generation itself is on
+  the order of 20 ms.
 
-## Notes and limitations
+## Credits and licence
 
-- **Browser support.** Web MIDI needs Chrome, Edge, or Opera on desktop.
-  Safari and Firefox are limited; the UI detects this and says so rather than
-  failing silently.
-- **Tempo is constant per exercise.** No ritardando or tempo changes yet, which
-  keeps the beat grid exact.
-- **Polyphony is approximated at the top of the range.** Textures 1–6 are
-  generated properly; 7–10 (inner voices, imitation, dense writing) are
-  deliberate simplifications. Scoring handles them correctly — only the
-  composition is simple.
-- **Generated music is generated music.** It is musical and correctly notated,
-  but a curated library can be dropped in behind the same API.
-- **No authentication.** One local profile, per the MVP design. `POST
-  /api/profile/reset` wipes it.
-- **Startup cost.** Importing music21 takes a second or two; exercises
-  themselves generate in ~20 ms.
+Opus Note is released under the [MIT License](LICENSE). Third-party components and assets remain
+under their own licenses; the full notices are in [THIRD-PARTY.md](THIRD-PARTY.md).
 
----
+| Work | Licence |
+| --- | --- |
+| Opus Note source code | MIT |
+| [OpenSheetMusicDisplay](https://github.com/opensheetmusicdisplay/opensheetmusicdisplay) — MusicXML engraving in the browser | BSD-3-Clause |
+| [VexFlow](https://github.com/vexflow/vexflow) — notation primitives, via OpenSheetMusicDisplay | MIT |
+| [Tone.js](https://tonejs.github.io/) — Web Audio scheduling and the synthesiser voice | MIT |
+| [JSZip](https://stuk.github.io/jszip/) — compressed MusicXML, used under the MIT option | MIT |
+| [Svelte](https://svelte.dev/) — the client framework | MIT |
+| [music21](https://web.mit.edu/music21/) — score construction and manipulation on the server | BSD-3-Clause |
+| **Spectral** by Production Type — the display face, self-hosted so no request leaves the machine | [SIL OFL 1.1](frontend/src/assets/fonts/OFL.txt) |
+| **Salamander Grand Piano V3** by Alexander Holm — the optional 30-sample instrument, fetched once and then served locally | [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/) |
 
-## Configuration
-
-Environment variables, all optional:
-
-| Variable | Default | Meaning |
-| --- | --- | --- |
-| `SRT_DB_PATH` | `~/.local/share/piano-ecosystem/piano.db` | SQLite file for the whole ecosystem |
-| `SRT_MEDIA_DIR` | `~/.local/share/piano-ecosystem/media` | Recordings, content-hashed |
-| `SRT_LEGACY_DB` | `~/.local/share/piano-progress/piano.db` | The Rust app's database, read once by the importer |
-| `SRT_TARGET_SUCCESS_RATE` | `0.78` | Target success rate (sets the selection offset) |
-| `SRT_PASS_THRESHOLD` | `80` | Score needed to pass |
-| `SRT_MATCH_WINDOW_S` | `0.200` | Pitch matching window |
-| `SRT_CONTINUITY_WINDOW_S` | `1.500` | Window for hesitation detection |
-| `SRT_HESITATION_MS` | `500` | Extra gap that counts as a hesitation |
-| `SRT_ELO_BASE` | `480` | Elo of the easiest material — see the anchor's derivation above |
-| `SRT_ELO_PER_LEVEL` | `100` | Elo between one level and the next |
-| `SRT_DEFAULT_RATING` | `700` | Where an uncalibrated learner starts |
-| `SRT_ELO_K` | `32` | Rating step |
-| `SRT_EXERCISE_BARS` | `4` | Bars per exercise |
-| `SRT_WORKOUT_LENGTH` | `8` | Exercises in a workout |
-| `SRT_SITTING_GAP_S` | `300` | Silence that closes a sitting |
-| `SRT_SEGMENT_GAP_S` | `8` | Silence that splits a sitting into segments — measured against a real session; see § *Practice log* |
-| `SRT_RESTART_GAP_MS` | `3000` | Mid-segment silence counted as a restart |
-| `SRT_ATTACK_WINDOW_MS` | `50` | Notes closer than this are one attack, for tempo |
-| `SRT_AUTOTAG_SCORE_AUTO` | `0.85` | Score at or above which a match is written without asking |
-| `SRT_AUTOTAG_MIN_MARGIN` | `0.10` | How far ahead of the runner-up it must be to be written. `0.05` roughly doubles the labels written, at about a 3% measured error rate |
-| `SRT_AUTOTAG_SCORE_PROMPT` | `0.55` | Score at or above which a match is offered |
-| `SRT_AUTOTAG_MIN_NOTES` | `8` | Below this many notes a segment is not recognised at all |
-| `SRT_AUTOTAG_NEIGHBOURS` | `6` | How many of your closest tagged segments count as evidence |
-| `SRT_AUTOTAG_TRAINING_LIMIT` | `600` | How many of your most recent tagged segments the matcher compares against |
-| `SRT_MAX_UPLOAD_MB` | `512` | Largest recording accepted by the upload endpoint |
-| `SRT_PIANO_DIR` | `<data dir>/piano` | Where the one-time sampled piano is kept, and served from |
-| `SRT_BACKUP_DIR` | `<data dir>/backups` | Where the nightly JSON exports are written |
-| `SRT_BACKUP_KEEP` | `14` | How many daily backups to keep |
-| `SRT_API_TARGET` | `http://127.0.0.1:8000` | Proxy target for the dev server |
+The sampled piano is not committed to this repository: it is downloaded from
+`tonejs.github.io` on request and cached on the local machine, with the attribution above shown in
+the interface beside the download control.
