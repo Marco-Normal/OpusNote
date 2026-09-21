@@ -1063,3 +1063,116 @@ def test_today_not_yet_played_does_not_count_against_you(client) -> None:
     body = client.get("/api/practice/analytics/summary?days=30").json()
     assert body["streak_days"] == 2
     assert body["streak_grace_used"] == 0, "an empty today is not a rest day, it is not over"
+
+
+# --------------------------------------------------------------------------
+# Passages: the derived row above the attempts (Phase 22c)
+# --------------------------------------------------------------------------
+
+
+def _passage_sitting(client) -> dict:
+    """A sitting of three attempts at the *same* material, so they form one passage.
+
+    Written out rather than reusing ``recent_sitting``: that helper numbers pitches by
+    position, so a second phrase would carry different notes and be a different passage, and
+    its offsets would run past *now*, which makes ``close`` refuse with "still playing" — the
+    sitting would never be segmented at all.
+    """
+    import time
+
+    base = int(time.time() * 1000) - 60_000
+    phrase = [60, 62, 64, 65, 67, 69, 71, 72]
+    events = [
+        {
+            "epoch_ms": base + start + step * 800,
+            "pitch": pitch,
+            "velocity": 70,
+            "duration_ms": 300,
+            "channel": 0,
+        }
+        for start in (0, 20_000, 40_000)
+        for step, pitch in enumerate(phrase)
+    ]
+    body = client.post(
+        "/api/practice/events",
+        json={"tz_offset_minutes": server_offset_minutes(), "events": events},
+    ).json()
+    closed = client.post("/api/practice/sittings/close")
+    assert closed.status_code == 200, closed.text
+
+    detail = client.get(f"/api/practice/sittings/{body['sitting_id']}").json()
+    assert len(detail["segments"]) == 3, "three attempts, each over the minimum size"
+    assert len(detail["passages"]) == 1, "the same material three times is one passage"
+    assert detail["passages"][0]["attempts"] == 3
+    return detail
+
+
+def test_a_passage_confirmation_writes_every_member_attempt(client) -> None:
+    """Acceptance 5: the row is a view, the label is durable, and re-deriving is stable.
+
+    Labelling a passage is the per-segment route sent once per member — there is no group to
+    keep in step and no new endpoint — so this asserts the outcome that matters: every member
+    attempt carries the piece, and the same labels produce the same groups.
+    """
+    detail = _passage_sitting(client)
+    sitting_id = detail["id"]
+    attempt_ids = detail["passages"][0]["attempt_ids"]
+    assert set(attempt_ids) == {segment["id"] for segment in detail["segments"]}
+
+    piece_id = client.post("/api/repertoire/pieces", json={"title": "Etude"}).json()["id"]
+    for segment_id in attempt_ids:
+        response = client.patch(
+            f"/api/practice/segments/{segment_id}", json={"piece_id": piece_id}
+        )
+        assert response.status_code == 200, response.text
+
+    after = client.get(f"/api/practice/sittings/{sitting_id}").json()
+    assert all(segment["piece_id"] == piece_id for segment in after["segments"]), (
+        "every member attempt carries the piece"
+    )
+    assert [passage["attempt_ids"] for passage in after["passages"]] == [attempt_ids], (
+        "the same labels produce the same groups"
+    )
+    assert after["passages"][0]["piece_id"] == piece_id
+    assert after["passages"][0]["piece_title"] == "Etude"
+    assert after["passages"][0]["attempts"] == 3
+    assert after["passages"][0]["session"] == 0, "one piece, one piece-session"
+
+    # Re-reading is what re-derives, so asking twice must not move anything.
+    again = client.get(f"/api/practice/sittings/{sitting_id}").json()
+    assert again["passages"] == after["passages"]
+
+
+def test_merging_two_attempts_regroups_them_rather_than_storing_anything(client) -> None:
+    """The derived layer follows an edit instead of being kept in step with it."""
+    detail = _passage_sitting(client)
+    sitting_id = detail["id"]
+    left, right = detail["segments"][0]["id"], detail["segments"][1]["id"]
+    response = client.post(f"/api/practice/segments/{left}/merge", json={"other_id": right})
+    assert response.status_code == 200, response.text
+
+    after = client.get(f"/api/practice/sittings/{sitting_id}").json()
+    assert len(after["segments"]) == 2, "two attempts left"
+    assert sum(passage["attempts"] for passage in after["passages"]) == 2
+    assert all(
+        segment_id in sum((p["attempt_ids"] for p in after["passages"]), [])
+        for segment_id in {segment["id"] for segment in after["segments"]}
+    ), "every attempt still belongs to a passage"
+
+
+def test_a_sitting_detail_without_passages_still_validates() -> None:
+    """Acceptance 6: the field is additive with a default, so old readers still hold."""
+    from app.practice.models import SittingDetail
+
+    detail = SittingDetail(
+        id=1,
+        started_at="2026-01-01 00:00:00",
+        ended_at="2026-01-01 00:01:00",
+        local_date="2026-01-01",
+        source="web_midi",
+        note_count=0,
+        duration_s=60.0,
+        closed=True,
+        segments=[],
+    )
+    assert detail.passages == []

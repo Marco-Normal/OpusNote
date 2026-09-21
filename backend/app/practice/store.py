@@ -31,6 +31,7 @@ from .. import db
 from ..config import settings
 from . import capture_status
 from . import kinds
+from . import passages
 from . import schema as practice_schema
 from . import segment
 from . import shingles
@@ -66,6 +67,7 @@ from .models import (
     PiecePracticeDetail,
     PracticeKind,
     PracticeKindSplit,
+    PracticePassageOut,
     SegmentCandidate,
     SegmentMetricsOut,
     SegmentSummary,
@@ -787,6 +789,65 @@ def ensure_segments(
         return _segment_rows(conn, sitting_id)
 
 
+def _passage_rows(conn: sqlite3.Connection, sitting_id: int) -> list[PracticePassageOut]:
+    """The sitting's passages and the piece-session each belongs to.
+
+    Derived on read from the attempts and their labels, so nothing is stored and nothing has to
+    be migrated (22-D1): a re-segment or a re-label changes the input, and the same labels always
+    produce the same groups.
+
+    The weights come from the sitting's own attempts rather than from the library, so the question
+    asked is "is this the same material as the one before it, out of what this sitting contains"
+    — and so that a library with no labels yet, which is where grouping is worth the most, can
+    still group anything at all.
+    """
+    rows = conn.execute(
+        f"SELECT {_SEGMENT_COLUMNS} FROM segments g"
+        " WHERE g.sitting_id = ? ORDER BY g.start_ms",
+        (sitting_id,),
+    ).fetchall()
+    if not rows:
+        return []
+
+    features = _segment_features(conn, rows)
+    weights = shingles.idf(features)
+    derived = passages.derive(
+        [
+            passages.Attempt(
+                id=int(row["id"]),
+                start_ms=int(row["start_ms"]),
+                end_ms=int(row["end_ms"]),
+                piece_id=row["piece_id"],
+            )
+            for row in rows
+        ],
+        features,
+        weights,
+    )
+    session_of = {
+        index: position
+        for position, (_piece_id, members) in enumerate(passages.piece_sessions(derived))
+        for index in members
+    }
+    labels = _piece_labels(conn, [row.piece_id for row in derived if row.piece_id is not None])
+    out: list[PracticePassageOut] = []
+    for index, found in enumerate(derived):
+        label = labels.get(found.piece_id) or {}
+        out.append(
+            PracticePassageOut(
+                start_ms=found.start_ms,
+                end_ms=found.end_ms,
+                piece_id=found.piece_id,
+                piece_title=label.get("title"),
+                composer_name=label.get("composer_name"),
+                attempt_ids=list(found.attempt_ids),
+                attempts=found.attempts,
+                session=session_of.get(index, 0),
+            )
+        )
+    return out
+
+
 def sitting_detail(
     sitting_id: int, now_ms: int | None = None, db_path: Path | None = None
 ) -> SittingDetail:
@@ -827,6 +888,7 @@ def sitting_detail(
             closed=row["closed_ms"] is not None
             or int(row["ended_ms"]) + settings.sitting_gap_s * 1000 < now,
             segments=segments,
+            passages=_passage_rows(conn, sitting_id),
         )
     finally:
         conn.close()

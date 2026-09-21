@@ -48,6 +48,20 @@ test('a merge is undone by splitting at the boundary that was absorbed', () => {
   });
 });
 
+test('the survivor is the row that covers the absorbed one, not the sitting’s first row', () => {
+  // The merge kept the *later* row, so the sitting's first segment is untouched by it. Looking
+  // for "an id in both lists" finds segment 1 and would split it at 70_000 — a boundary outside
+  // it entirely, which the server refuses.
+  const before = [seg(1, 0, 3_000), seg(2, 7_000, 10_000), seg(3, 70_000, 77_000)];
+  const after = [seg(1, 0, 3_000), seg(2, 7_000, 77_000)];
+  assert.deepEqual(inverseOf(before, after), {
+    kind: 'split',
+    segmentId: 2,
+    atMs: 70_000,
+    label: 'Undo merge',
+  });
+});
+
 test('a piece label is undone by putting the old one back, including a cleared one', () => {
   const before = [seg(1, 0, 8_000, 7)];
   const after = [seg(1, 0, 8_000, null)];

@@ -2073,10 +2073,23 @@ def seed_closed_sitting(*, minutes_ago: int = 60) -> int:
     Fresh notes open a sitting, and segmentation deliberately waits for silence,
     so the timeline interactions need one from the past. Test setup, not an
     assertion — the same helper the backend tests use, driven over HTTP.
+
+    Two phrases of eight notes, not four notes spread over a minute: Phase 22a replaced the one
+    fixed gap with an adaptive rule *and* a minimum size, so a lone note is absorbed into its
+    neighbour and a slow passage raises its own threshold. Four isolated notes are one segment
+    now. The two phrases are in opposite registers, so they stay two passages rather than
+    grouping into one.
+
+    The first phrase holds a 3.7 s gap inside it, straddling 6 s — the split control's point,
+    deliberately between onsets so a boundary there cannot count a note in both halves.
     """
     import time
 
     base = int(time.time() * 1000) - minutes_ago * 60_000
+    first = [0, 1_000, 2_000, 3_000, 7_000, 8_000, 9_000, 10_000]
+    second = [70_000 + step * 1_000 for step in range(8)]
+    phrase = [60, 62, 64, 65, 67, 69, 71, 72]
+    low = [45, 48, 52, 55, 57, 60, 48, 52]
     payload = {
         "tz_offset_minutes": -180,
         "source": "web_midi",
@@ -2088,12 +2101,7 @@ def seed_closed_sitting(*, minutes_ago: int = 60) -> int:
                 "duration_ms": 300,
                 "channel": 0,
             }
-            # Two segments, and the first one spans long enough to be worth a
-            # duration: the gaps inside it are under the 8 s segment gap, and the
-            # 60 s note is far beyond it. (Offsets of 0/500/20_000 used to make one
-            # 20 s segment at a 20 s gap; at 8 s that is two, and a "measured time"
-            # assertion would then be reading a half-second segment.)
-            for pitch, offset in zip((60, 64, 67, 72), (0, 4_000, 8_000, 60_000))
+            for offset, pitch in list(zip(first, phrase)) + list(zip(second, low))
         ],
     }
     return api("/api/practice/events", "POST", payload)["sitting_id"]
@@ -3020,7 +3028,7 @@ def held_note_sitting(*, minutes_ago: int = 150) -> int:
     """A sitting whose first note is still sounding a second after it starts.
 
     Needed for the only question about Stop that matters — does a note that *is*
-    sounding get turned off — because the four short notes of the seeded sitting have
+    sounding get turned off — because the short notes of the seeded sitting have
     all finished before anyone can reach the button.
     """
     import time

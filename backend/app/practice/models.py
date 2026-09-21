@@ -305,6 +305,29 @@ class SittingNotes(BaseModel):
     pedals: list[LoggedPedal] = Field(default_factory=list)
 
 
+class PracticePassageOut(BaseModel):
+    """Adjacent attempts of a sitting that are the same musical material.
+
+    Derived on read and never stored (22-D1): the label lives on the member segments (22-D2), so
+    this is a view over them and there is nothing to migrate or keep in step. Named
+    ``PracticePassage`` rather than ``Passage`` because the repertoire already owns that word for
+    a player-marked bar range, which is a different thing the app cannot derive.
+
+    ``session`` is the piece-session this passage belongs to — adjacent passages sharing a piece —
+    as an index into the order the passages arrive in. It is sent rather than re-derived so the
+    view is not a second owner of the grouping rule.
+    """
+
+    start_ms: int
+    end_ms: int
+    piece_id: int | None = None
+    piece_title: str | None = None
+    composer_name: str | None = None
+    attempt_ids: list[int] = Field(default_factory=list)
+    attempts: int = 0
+    session: int = 0
+
+
 class SittingDetail(BaseModel):
     id: int
     started_at: str
@@ -315,6 +338,8 @@ class SittingDetail(BaseModel):
     duration_s: float
     closed: bool
     segments: list[SegmentSummary]
+    #: Additive, with a default, so every pre-existing reader of a sitting still holds.
+    passages: list[PracticePassageOut] = Field(default_factory=list)
 
 
 class AssignRequest(BaseModel):

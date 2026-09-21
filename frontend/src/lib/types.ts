@@ -631,6 +631,28 @@ export interface SittingNotes {
   pedals: LoggedPedal[];
 }
 
+/**
+ * Adjacent attempts of a sitting that are the same musical material (Phase 22c).
+ *
+ * Derived on read and never stored: the label lives on the member segments, so this is a view
+ * over them and re-deriving after an edit loses nothing.
+ *
+ * Named `PracticePassage` rather than `Passage` because the repertoire already owns that word
+ * for a player-marked bar range (`Passage` above), which is a different thing: the app has no
+ * score alignment, so nothing here is known to be bars 40–48, only inferred from sound.
+ */
+export interface PracticePassage {
+  start_ms: number;
+  end_ms: number;
+  piece_id: number | null;
+  piece_title: string | null;
+  composer_name: string | null;
+  attempt_ids: number[];
+  attempts: number;
+  /** Index of the piece-session this passage belongs to, so the view need not re-derive it. */
+  session: number;
+}
+
 export interface SittingDetail {
   id: number;
   started_at: string;
@@ -641,6 +663,11 @@ export interface SittingDetail {
   duration_s: number;
   closed: boolean;
   segments: SegmentSummary[];
+  /**
+   * Additive with a default, so a server that predates Phase 22c still satisfies this type and
+   * every reader can treat it as an empty list.
+   */
+  passages?: PracticePassage[];
 }
 
 export interface CalendarDay {

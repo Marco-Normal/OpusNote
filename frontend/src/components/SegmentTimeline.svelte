@@ -20,6 +20,7 @@
   import {
     type PieceSummary,
     type PracticeKind,
+    type PracticePassage,
     type SegmentMetrics,
     type SegmentSummary,
     type SittingDetail,
@@ -39,6 +40,8 @@
     onresegment: (confirm: boolean) => void;
     /** Answer the matcher: it was right, it was wrong, or stop asking. */
     onidentify: (segmentId: number, action: 'accept' | 'reject' | 'dismiss') => void;
+    /** Label every attempt of one passage at once. */
+    onlabelpassage: (attemptIds: number[], pieceId: number | null) => void;
   }
 
   let {
@@ -51,6 +54,7 @@
     onmerge,
     onresegment,
     onidentify,
+    onlabelpassage,
   }: Props = $props();
 
   /** A segment the matcher wrote, rather than one you did. */
@@ -271,6 +275,66 @@
   }
 
   const labelled = $derived(detail.segments.filter((segment) => segment.piece_id !== null).length);
+
+  /** Where an attempt sits in the stored order, for the "merge with previous" control. */
+  const segmentIndex = $derived(
+    new Map(detail.segments.map((segment, index) => [segment.id, index])),
+  );
+
+  /**
+   * The rows the timeline draws: a piece-session heading, then a passage, then its attempts.
+   *
+   * The passage is the row the player thinks in — "six goes at this bit" — and the attempts stay
+   * the `.segment` elements, because they are what every edit and every test hook acts on. A
+   * segment the server did not place in any passage is still drawn: an attempt must never vanish
+   * from the log because a derivation did not place it.
+   */
+  const rows = $derived.by(() => {
+    const found = detail.passages ?? [];
+    if (found.length === 0) {
+      return detail.segments.map((segment) => ({
+        kind: 'segment' as const,
+        key: `segment-${segment.id}`,
+        segment,
+      }));
+    }
+
+    const byId = new Map(detail.segments.map((segment) => [segment.id, segment]));
+    const drawn: Array<
+      | { kind: 'session'; key: string; session: number; piece: string | null }
+      | { kind: 'passage'; key: string; passage: PracticePassage }
+      | { kind: 'segment'; key: string; segment: SegmentSummary }
+    > = [];
+    let session = -1;
+    for (const passage of found) {
+      if (passage.session !== session) {
+        session = passage.session;
+        drawn.push({
+          kind: 'session',
+          key: `session-${passage.session}`,
+          session: passage.session,
+          piece: passage.piece_title,
+        });
+      }
+      drawn.push({
+        kind: 'passage',
+        key: `passage-${passage.attempt_ids[0] ?? passage.start_ms}`,
+        passage,
+      });
+      for (const id of passage.attempt_ids) {
+        const segment = byId.get(id);
+        if (segment) drawn.push({ kind: 'segment', key: `segment-${id}`, segment });
+      }
+    }
+
+    const placed = new Set(found.flatMap((passage) => passage.attempt_ids));
+    for (const segment of detail.segments) {
+      if (!placed.has(segment.id)) {
+        drawn.push({ kind: 'segment', key: `segment-${segment.id}`, segment });
+      }
+    }
+    return drawn;
+  });
 </script>
 
 <section class="card timeline" data-segments={detail.segments.length}>
@@ -416,7 +480,58 @@
     </div>
 
     <ul class="segments">
-      {#each detail.segments as segment, index (segment.id)}
+      {#each rows as row (row.key)}
+        {#if row.kind === 'session'}
+          <li class="piece-session" data-piece-session={row.session}>
+            <span class="muted small">about</span>
+            <strong>{row.piece ?? 'unidentified'}</strong>
+          </li>
+        {:else if row.kind === 'passage'}
+          <li class="passage" data-passage={row.passage.attempt_ids[0] ?? row.passage.start_ms}>
+            <div class="head row wrap">
+              <span class="pill mono">
+                {row.passage.attempts}
+                {row.passage.attempts === 1 ? 'attempt' : 'attempts'}
+              </span>
+              <span class="mono range">
+                {offset(row.passage.start_ms)}–{offset(row.passage.end_ms)}
+              </span>
+              <strong>{row.passage.piece_title ?? 'unidentified'}</strong>
+              {#if row.passage.composer_name}
+                <span class="muted small">{row.passage.composer_name}</span>
+              {/if}
+            </div>
+            <!-- Labelling the passage labels every member attempt: the label lives on the
+                 segments, so this is the route that already exists sent once per member, and
+                 there is no group to keep in step with them. -->
+            <div class="row wrap controls">
+              <select
+                aria-label="Piece for this passage"
+                disabled={busy}
+                value={row.passage.piece_id ?? ''}
+                onchange={(event) => {
+                  const value = (event.currentTarget as HTMLSelectElement).value;
+                  onlabelpassage(
+                    row.passage.attempt_ids,
+                    value === '' ? null : Number(value),
+                  );
+                }}
+              >
+                <option value="">— label all {row.passage.attempts} —</option>
+                {#each pieces as piece (piece.id)}
+                  <option value={piece.id}>
+                    {piece.title}{piece.composer_name ? ` · ${piece.composer_name}` : ''}
+                  </option>
+                {/each}
+              </select>
+              <span class="muted small">
+                one decision for the whole passage — it writes to each attempt below
+              </span>
+            </div>
+          </li>
+        {:else}
+          {@const segment = row.segment}
+          {@const index = segmentIndex.get(segment.id) ?? 0}
         <li class="segment">
           <div class="head row wrap">
             <span class="mono range">{offset(segment.start_ms)}–{offset(segment.end_ms)}</span>
@@ -668,6 +783,7 @@
             </button>
           </div>
         </li>
+        {/if}
       {/each}
     </ul>
   {/if}
@@ -757,6 +873,27 @@
     border: 1px solid var(--line);
     border-radius: 8px;
     background: var(--surface-2);
+  }
+
+  /* The heading above a run of passages about one piece: "what this sitting was about". */
+  .piece-session {
+    display: flex;
+    align-items: baseline;
+    gap: 0.4rem;
+    margin-top: 0.5rem;
+    padding-bottom: 0.2rem;
+    border-bottom: 1px solid var(--line);
+  }
+
+  /* The row the player thinks in. The attempts it groups are the .segment cards beneath. */
+  .passage {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    padding: 0.45rem 0.55rem;
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    background: var(--surface);
   }
 
   .range {

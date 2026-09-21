@@ -42,11 +42,16 @@ export function inverseOf(before: SegmentSummary[], after: SegmentSummary[]): Un
     return { kind: 'merge', segmentId: left.id, otherId: right.id, label: 'Undo split' };
   }
 
-  // A merge: one row went away and none appeared. The survivor is the row whose id is in
-  // both lists; the absorbed row's start was the boundary the split has to cut at.
+  // A merge: one row went away and none appeared. The survivor is the row that now *covers* the
+  // absorbed one, because a merge produces a row spanning both halves. Identity by "id in both
+  // lists" is not enough: every other segment of the sitting is in both lists too, so the first
+  // of them would be picked and the undo would cut at a boundary that has nothing to do with the
+  // merge — a real failure whenever the merge did not keep the sitting's first row.
   if (removed.length === 1 && added.length === 0) {
     const absorbed = removed[0];
-    const survivor = after.find((segment) => beforeIds.has(segment.id));
+    const survivor = after.find(
+      (segment) => segment.start_ms <= absorbed.start_ms && segment.end_ms >= absorbed.end_ms,
+    );
     if (absorbed === undefined || survivor === undefined) return null;
     return {
       kind: 'split',

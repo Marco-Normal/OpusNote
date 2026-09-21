@@ -198,7 +198,12 @@
     try {
       const result = await action();
       if (detail !== null && Array.isArray(result)) {
-        detail = { ...detail, segments: result as SittingDetail['segments'] };
+        // Re-read rather than patch the segments in place. The response does carry the
+        // segments, but since Phase 22c a sitting's detail also carries its *passages*, which
+        // are derived from the attempts: patching the segments alone would leave the passage
+        // layer describing the state before the edit, so the view would be showing a grouping
+        // of attempts that no longer exist. One read, and the timeline is one consistent thing.
+        detail = await api.practice.sitting(detail.id);
       }
       await refreshTotals();
       // Derived by diffing the rows rather than by remembering which button was pressed, so the
@@ -229,6 +234,25 @@
     if (undo === null) return;
     const action = undo.action;
     await edit(() => applyUndo(action), { undoable: false });
+  }
+
+  /**
+   * Label a whole passage at once.
+   *
+   * The label lives on the segments (22-D2), so this is the route that already exists, sent
+   * once per member rather than a new one: nothing about where a label is stored changes, and
+   * there is no group to keep in step with the segments. `undoable` is off because the inverse
+   * of a many-segment write is not one action, and offering one would be a lie.
+   */
+  async function labelPassage(attemptIds: number[], pieceId: number | null): Promise<void> {
+    await edit(
+      async () => {
+        let last: unknown = [];
+        for (const id of attemptIds) last = await api.practice.assignSegment(id, pieceId);
+        return last;
+      },
+      { undoable: false },
+    );
   }
 
   async function importHistory(): Promise<void> {
@@ -499,6 +523,7 @@
       onsplit={(segmentId, atMs) => void edit(() => api.practice.splitSegment(segmentId, atMs))}
       onmerge={(segmentId, otherId) =>
         void edit(() => api.practice.mergeSegments(segmentId, otherId))}
+      onlabelpassage={(attemptIds, pieceId) => void labelPassage(attemptIds, pieceId)}
       onresegment={async (confirm) => {
         await edit(() => api.practice.resegment(detail!.id, confirm));
         // Re-segmenting rebuilds the rows the matcher was measured against, so its panel is
