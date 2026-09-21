@@ -2388,3 +2388,15 @@ Impact on the other side: no schema change and no route change. Two settings are
 `passages` field, mirrored in `frontend/src/lib/types.ts`. A take's audio boundary and its segment's
 boundary can now differ — takes are still cut at 8 s while a stored sitting is cut adaptively — but
 they are linked by the instant the take started, not by sharing a boundary, so nothing breaks.
+
+## 2026-09-21 — sight-reading agent — correction to the Phase 22 entry above
+
+Scope: `AGENT-LOG.md` only. No code, docs or tests.
+
+Did: the entry above, and the commit messages for `c477361` (22c) and `b6fa84f` (22d), say "926
+backend tests". That number was written from memory and is wrong. Measured at the tip of the phase,
+`pytest -q -m "not slow"` in `backend/` reports **935 passed**. The figures quoted at the other two
+points in the entry are correct: 923 after 22b (measured), and 104 frontend tests via `npm test`.
+`./check.sh --full` is green either way — the count was the only wrong thing.
+
+Impact on the other side: none. Appending rather than editing the entry above, per this file's rule.
