@@ -335,6 +335,18 @@
           <option value={365}>1 year</option>
         </select>
       </label>
+      <label class="row window">
+        <span class="muted small">Target</span>
+        <select
+          value={app.weeklyTargetDays}
+          onchange={(event) =>
+            app.setWeeklyTargetDays(Number((event.currentTarget as HTMLSelectElement).value))}
+        >
+          {#each [1, 2, 3, 4, 5, 6, 7] as target (target)}
+            <option value={target}>{target} days/week</option>
+          {/each}
+        </select>
+      </label>
       <button class="ghost" disabled={busy} onclick={() => void load()}>Refresh</button>
       <button class="ghost" disabled={importing} onclick={() => void importHistory()}>
         {importing ? 'Importing…' : 'Import old history'}
@@ -513,11 +525,12 @@
   <section class="card review" data-week-review>
     <h3>This week</h3>
     <div class="review-grid">
-      <div>
+      <div data-week-target={app.weeklyTargetDays}>
         <span class="muted small">Practised</span>
         <strong>{formatMinutes(summary.calendar.slice(-7).reduce((sum, day) => sum + day.minutes, 0))}</strong>
         <span class="muted small">
-          over {summary.calendar.slice(-7).filter((day) => day.minutes > 0).length} days
+          on {summary.calendar.slice(-7).filter((day) => day.minutes > 0).length} of
+          {app.weeklyTargetDays} target days
         </span>
       </div>
       <div>

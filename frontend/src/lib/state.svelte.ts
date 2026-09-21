@@ -22,6 +22,7 @@ const CAPTURE_STORAGE_KEY = 'srt.capture';
 const MIDI_PIN_STORAGE_KEY = 'srt.midi.pin';
 const COUNT_IN_BARS_STORAGE_KEY = 'srt.countInBars';
 const CLICK_VOLUME_STORAGE_KEY = 'srt.clickVolume';
+const WEEKLY_TARGET_STORAGE_KEY = 'srt.weeklyTargetDays';
 
 /** Exercise lengths offered in the UI. Length is a preference, not difficulty. */
 export const BAR_CHOICES = [4, 8, 12, 16] as const;
@@ -50,6 +51,15 @@ function readCountInBars(): number {
     return value === 0 || value === 1 || value === 2 ? value : 1;
   } catch {
     return 1;
+  }
+}
+
+function readWeeklyTarget(): number {
+  try {
+    const value = Number(localStorage.getItem(WEEKLY_TARGET_STORAGE_KEY));
+    return Number.isInteger(value) && value >= 1 && value <= 7 ? value : 4;
+  } catch {
+    return 4;
   }
 }
 
@@ -157,6 +167,9 @@ class AppState {
 
   /** Bars of count-in before beat 1: 0, 1 or 2. A preference, never part of a score. */
   countInBars = $state(readCountInBars());
+
+  /** Days a week the player is aiming for. A preference, never a score or a streak input. */
+  weeklyTargetDays = $state(readWeeklyTarget());
 
   /** Metronome click volume, 0..127. */
   clickVolume = $state(readClickVolume());
@@ -522,6 +535,16 @@ class AppState {
     this.bars = value;
     try {
       localStorage.setItem(BARS_STORAGE_KEY, String(value));
+    } catch {
+      // Storage may be unavailable (private mode); the in-memory value still works.
+    }
+  }
+
+  setWeeklyTargetDays(value: number): void {
+    if (!Number.isInteger(value) || value < 1 || value > 7) return;
+    this.weeklyTargetDays = value;
+    try {
+      localStorage.setItem(WEEKLY_TARGET_STORAGE_KEY, String(value));
     } catch {
       // Storage may be unavailable (private mode); the in-memory value still works.
     }
