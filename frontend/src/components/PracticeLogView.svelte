@@ -28,6 +28,7 @@
   import SittingList from './SittingList.svelte';
   import { formatClock } from '../lib/clock';
   import { practiceKindLabel } from '../lib/kinds';
+  import { inverseOf, type UndoAction } from '../lib/segmentUndo';
 
   let summary = $state<AnalyticsSummary | null>(null);
   let week = $state<RatingHistory | null>(null);
@@ -44,6 +45,14 @@
   let days = $state(30);
   let selectedId = $state<number | null>(null);
   let busy = $state(false);
+  /**
+   * What the last edit could be taken back with.
+   *
+   * Deliberately **not** persisted: it describes one action in this page's history, and a
+   * remembered undo across a reload would silently apply to a different list of segments
+   * (20-D3). Reloading the page is how you lose the offer, and the card says so.
+   */
+  let undo = $state<{ action: UndoAction } | null>(null);
   let error = $state<string | null>(null);
   let importing = $state(false);
   let importNote = $state<string | null>(null);
@@ -174,21 +183,52 @@
    *
    * `SittingDetail` carries more than its segments, but nothing an edit moves lives outside
    * them: a split changes boundaries, not the sitting's duration or its note count.
+   *
+   * It is also the single funnel every timeline edit goes through, which is what makes it the
+   * right place to work out whether the edit can be taken back — the segments before and after
+   * are both in hand here and nowhere else.
    */
-  async function edit(action: () => Promise<unknown>): Promise<void> {
+  async function edit(
+    action: () => Promise<unknown>,
+    options: { undoable?: boolean } = {},
+  ): Promise<void> {
     busy = true;
     error = null;
+    const before = detail?.segments ?? [];
     try {
       const result = await action();
       if (detail !== null && Array.isArray(result)) {
         detail = { ...detail, segments: result as SittingDetail['segments'] };
       }
       await refreshTotals();
+      // Derived by diffing the rows rather than by remembering which button was pressed, so the
+      // offer cannot disagree with what actually happened. `undoable: false` is for the undo
+      // itself, so pressing it twice cannot ping-pong between two states for ever.
+      const next =
+        options.undoable === false || detail === null ? null : inverseOf(before, detail.segments);
+      undo = next === null ? null : { action: next };
     } catch (cause) {
       error = cause instanceof Error ? cause.message : String(cause);
+      undo = null;
     } finally {
       busy = false;
     }
+  }
+
+  function applyUndo(action: UndoAction): Promise<unknown> {
+    if (action.kind === 'assign') {
+      return api.practice.assignSegment(action.segmentId, action.pieceId);
+    }
+    if (action.kind === 'merge') {
+      return api.practice.mergeSegments(action.segmentId, action.otherId);
+    }
+    return api.practice.splitSegment(action.segmentId, action.atMs);
+  }
+
+  async function undoLast(): Promise<void> {
+    if (undo === null) return;
+    const action = undo.action;
+    await edit(() => applyUndo(action), { undoable: false });
   }
 
   async function importHistory(): Promise<void> {
@@ -422,6 +462,16 @@
   </section>
 
   {#if detail}
+    {#if undo}
+      <div class="row wrap" data-undo>
+        <span class="muted small">
+          Changed the timeline. This offer lasts until the page is reloaded.
+        </span>
+        <button class="ghost tiny" disabled={busy} onclick={() => void undoLast()}>
+          {undo.action.label}
+        </button>
+      </div>
+    {/if}
     <SegmentTimeline
       {detail}
       {pieces}
@@ -440,7 +490,13 @@
         quality = await api.practice.identificationQuality().catch(() => quality);
       }}
       onidentify={(segmentId, action) =>
-        void edit(() => api.practice.identify(segmentId, action))}
+        // Answering the matcher has no inverse. The label does come back, but the
+        // `identification_outcomes` row recording the guess does not — a merge nulls it and nothing
+        // writes it again — so offering "Undo label" here would leave the accuracy figure claiming
+        // a decision that had been taken back. `inverseOf` cannot tell this apart from an ordinary
+        // assignment, because the segments look identical either way, so the suppression lives at
+        // the call site that knows which route it is.
+        void edit(() => api.practice.identify(segmentId, action), { undoable: false })}
     />
   {:else}
     <section class="card empty">

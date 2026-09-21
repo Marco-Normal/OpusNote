@@ -289,7 +289,7 @@
     <button
       class="ghost tiny"
       disabled={busy}
-      title="Recompute the boundaries from the notes, discarding them"
+      title="Recompute the boundaries from the notes, discarding them. Re-segmenting cannot be undone: the boundaries and labels it replaces are rebuilt from the notes."
       onclick={() => onresegment(labelled > 0)}
     >
       Re-segment{labelled > 0 ? ' (discards labels)' : ''}
