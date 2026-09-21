@@ -203,6 +203,7 @@ sessionizer and segmentation move across as-is with their tests.
 | 20 | **Deliberate practice, the piano-side toolkit, and audio takes** | *How* a segment was practised (20a); hands-free control from the unused sostenuto pedal, count-in choice, real URLs and a command palette (20b); undo and a humane streak (20c); journal and library depth (20d); low-bitrate audio takes captured in-app (20e). Five slices, independently shippable. **20a–20e landed.** | medium–high |
 
 | 21 | **The log at speed, and the blur you can find** | Blur positions cached beside the count and marked on the sitting strip; and an edit path that applies the server's own answer instead of refetching the matcher's accuracy, the machine's health and the week's ratings after every click. **Landed.** | S |
+| 22 | **Hearing the piece** | Where the playing actually turns over (an adaptive gap with a 2 s floor, plus minimum and maximum sizes), and a matcher that survives a growing library (tempo-invariant local shingles pooled per piece, IDF containment, a hybrid score). Passages and piece-sessions are derived from attempts, so the log shows *n* attempts at one passage rather than *n* unrelated rows. **Planned: 22a–22d.** | high |
 
 Phases 1-2 are the useful minimum: they get the library out of the Rust app's
 directory and into a browser, which is most of what you asked for.
@@ -1728,6 +1729,12 @@ list by my estimate, since they change what the app is *for* rather than what it
 Also open: **retiring `practice-logger/`** — its code and history are ported and
 importable, so deleting the directory is the user's call — and the **courtesy time
 signature** at system breaks, which OSMD cannot be talked into.
+
+**Narrowed by Phase 22 (still open).** Phase 22 does not generate or loop a section, so the
+feature above is unchanged. What it does remove is the excuse that the log cannot see section
+work: once attempts are grouped into passages, "six attempts at one passage" is a fact the app
+knows, and section practice would be building on a record that is finally accurate rather than
+on a pile of unrelated rows.
 
 ### Risks, stated plainly
 
