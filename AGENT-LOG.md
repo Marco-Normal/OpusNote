@@ -2275,3 +2275,116 @@ than a passenger on this slice.
 
 
 
+## 2026-09-21 — sight-reading agent — Phase 22a–22c: cut where the playing turns over, hear the piece in pieces, show the passage
+
+Scope: `backend/app/practice/{segment,shingles,passages,similarity,store,config,models,sessionize}.py`,
+`backend/tests/{test_segment,test_shingles,test_passages,test_similarity,test_autotag,test_practice_api,test_practice_store,test_backup,test_workout,conftest}.py`,
+`backend/tools/{measure_autotag,measure_real,e2e_browser}.py`,
+`backend/tools/falsifications/{drop_adaptive_gap,drop_tempo_invariance}.sh`,
+`frontend/src/{lib/types.ts,lib/segmentUndo.ts,lib/segmentUndo.test.ts,components/SegmentTimeline.svelte,components/PracticeLogView.svelte}`,
+`docs/{ECOSYSTEM,ENGINEERING,TEST-DATA}.md`, `README.md`.
+
+Did: three slices, in commits `8ee8670` (22a), `58d7dc3` (22b) and `c477361` (22c), plus a final
+docs commit. **22d's two decisions were settled without code**: the auto band was measured and kept
+as it was, and the run-through anchor was measured and dropped. So the phase is 22a–22c landed and
+22d settled-by-measurement, which is why `docs/ECOSYSTEM.md`'s row says `Landed 22a–22c` and its
+§ *Phase 22* block carries the numbers.
+
+**Segmentation.** `practice/segment.py` replaces the one fixed 8 s gap (60 hits in 238,648 note
+transitions on the owner's ten hours) with an adaptive gap — `max(2 s, 2.5 × the passage's own
+median inter-onset interval)`, capped at 30 s — plus a minimum size (8 notes, so a stray touch is
+absorbed) and a maximum size (2 minutes, split at the largest internal pauses). It refuses to split
+a run with no internal silence at all, because that would cut a phrase in half. `segment_gap_s`
+stays: the take-cutter and `PracticeStatus.segment_gap_s` still read it, and three docstrings that
+called it *the* segmenter were corrected rather than left to contradict.
+
+**The matcher.** `practice/shingles.py` extracts tempo-invariant local features — (hand, pitch
+class) notes, chord pitch-class sets, melodic bigrams — and `similarity` pools them **per piece**,
+mixing `0.75 × global + 0.25 × containment` into the score and deciding the band from the mixed
+score. Two windows retired: the top-N *segment* neighbour window (which held a single piece for 47
+of 54 queries, leaving `runner_up` undefined and downgrading 46 segments to "nothing else to
+compare it with") and `SRT_AUTOTAG_TRAINING_LIMIT`'s correctness role. `SRT_AUTOTAG_NEIGHBOURS` and
+`SRT_AUTOTAG_TRAINING_LIMIT` are now read by nothing; both are kept as settings and marked "read by
+nothing" in `docs/ENGINEERING.md` rather than deleted, because removing a documented setting is a
+deployment decision and not a code one.
+
+**Passages.** `practice/passages.py` groups adjacent attempts that are the same material into a
+passage and adjacent same-piece passages into a piece-session, both derived on read. The label stays
+on the segments (22-D2), so there is no group table, no migration, no new route and no
+`SCHEMA_VERSION` change; `SittingDetail` gains one additive `passages` field.
+
+Deviations from `PLAN-PHASE22.md`, each recorded because reality had moved past the plan:
+
+1. **`Passage`/`PassageOut` were already taken** by the repertoire for a player-marked bar range
+   (`piece_passages`, `/repertoire/passages`, `PassageList.svelte`) — a different concept, since the
+   app has no score alignment. A second `export interface Passage` in `types.ts` is a duplicate
+   identifier and fails `npm run check`. The derived type is `PracticePassage` /
+   `PracticePassageOut` (owner's choice), and the field stays `passages`.
+2. **Three of 22a's seven unit tests could not pass against 22a's own module.** Two asserted window
+   counts that the default `min_notes=8` erases; the adaptive test's arithmetic was wrong as well (a
+   "3 s pause" after a note ending at 39,100 ms is 3,900 ms, which is a real break at 2.5 × a 1 s
+   pulse); and the maximum-size fixture built three *contiguous* runs, so the rule correctly refused
+   to split and both assertions failed. Rewritten to isolate each rule, plus one new test pinning the
+   gap-free refusal. 8 tests, not 7.
+3. **`blend`'s docstring in the plan is inverted** — it says `weight` is the global share while its
+   own code and call site make it the containment share. And **the mix has to happen inside `rank`**:
+   the plan blends *after* `identify()` returns, which would leave `band`, `reason`, `runner_up` and
+   `margin` describing the un-mixed scores, so acceptance 4's precision claim would be about numbers
+   the matcher does not use.
+4. **Step 3.7's verification command cannot measure the hybrid** — `measure_autotag.evaluate` is
+   global-only. `evaluate_fragments` was added, using the `middle_notes` axis Task 1 added but
+   nothing called, and it prints both the containment-weight sweep and the acceptance-2 table.
+5. **Six autotag tests pinned the old defect** — a one-note-apart pair was "offered" only because
+   `runner_up` was undefined, and the content term now separates those two pieces. They were
+   rewritten around an `indistinguishable_library` (two pieces, identical material); the win is
+   recorded by `test_the_content_term_tells_one_note_apart_twins_apart`.
+6. **Four fixtures (three backend, one browser) encoded the 8 s rule** and were rebuilt on
+   `tests.conftest.phrase_offsets` and a two-phrase e2e seed. A lone note is not a segment any more,
+   and a slow passage raises its own threshold, so `[0, 500, 30_000, 30_500]` is one segment now.
+7. **The passage threshold and its weights are measured, not transcribed.** The plan cites
+   same-piece/different-piece medians of 0.957 and 0.647 "on this library"; measured with the shipped
+   features they are 0.886 and 0.202, and no different-piece pair reaches 0.466. The threshold is
+   **0.85** — 11 of 19 same-piece pairs group, **none** of 20 different-piece pairs merge — and the
+   weights come from the **sitting's own attempts**, because the plan's library-wide weighting leaves
+   a library with no labels (the case where grouping is worth the most) unable to group anything.
+8. **`identification_quality` now reports on the shipped matcher.** The plan deletes the stale
+   reference-window note but leaves `_labelled_rows(limit=…)` in place, which would have gone on
+   truncating silently; it compares against every labelled segment and applies the same mix.
+9. **`measure_real.py` files under 22a in the plan but imports `shingles`,** which 22b creates, so it
+   landed with 22b. Its plan-given `DEFAULT_PATH` resolves to the repository root while
+   `docs/TEST-DATA.md` documents the corpus one level above it; corrected to match the document, and
+   its `evaluate` calls the shipped `rank`/`identify` rather than reimplementing the mix.
+10. **`PracticeLogView.edit()` patched only `detail.segments`** from an edit's response. Since a
+    sitting's detail also carries *derived* passages, the passage layer described the attempts from
+    before the edit — the view rendered two passages for three attempts and appended the new segment
+    outside any passage. It re-reads the sitting now. This is a deliberate exception to Phase 21's
+    "apply the server's own answer" rule, and the reason is that the response no longer carries
+    everything the timeline draws.
+11. **`segmentUndo.inverseOf` identified a merge's survivor as "the first row whose id is in both
+    lists".** Every other segment of the sitting is in both lists too, so undoing a merge that did not
+    keep the sitting's first row split an untouched segment at a boundary outside it, which the
+    server refuses — the browser scenario caught it as a 422. The survivor is now the row that
+    *covers* the absorbed one.
+12. **22-D6's run-through anchor is deleted, not tuned.** Measured: 9 of the real library's 54
+    labelled attempts (17%) would carry the 2.5× weight and top-1 is **98.1% either way**, so by the
+    rule's own stated condition — kept only if it moves a run-through query — it does not pay.
+13. **Acceptance 2's whole-length number is corrected to its measurement: +4.2, not ≥5.** The plan's
+    own § *The measured case* publishes 61.8% → 66.0%, which is +4.2, so its evidence already
+    contradicted its own criterion. No containment weight closes it (0.10 → +4.9/+7.6; 0.35 →
+    +3.5/+13.9), and it is not a baseline artefact: the retired windowed matcher scores identically to
+    global-only at 8, 16 and 32 pieces. Owner's decision: proceed, with the number recorded. The
+    plan's drift rule — which stops only if the hybrid *cannot beat* the current method — is
+    satisfied at both lengths and every piece count from 16 up.
+
+Acceptance: 1 (0.2/0.7 points against a 3-point bound), 3 (96.8% against 94%), 4 (auto precision
+100% generator / 99.7% real; coverage 53.6% against 50%), 5 and 6 are covered; 2 is +4.2/+12.8 with
+the whole-length clause corrected as above; 7 is `./check.sh --full` green. 926 backend tests, 104
+frontend tests, `practice_log` browser scenario green.
+
+Impact on the other side: no schema change and no route change. Two settings are now read by nothing
+(`SRT_AUTOTAG_NEIGHBOURS`, `SRT_AUTOTAG_TRAINING_LIMIT`) and five segment settings are new
+(`SRT_SEGMENT_FLOOR_MS`, `_PULSE_MULTIPLIER`, `_CEILING_MS`, `_MIN_NOTES`, `_MAX_MS`) plus
+`SRT_AUTOTAG_CONTAINMENT_WEIGHT`; see `docs/ENGINEERING.md`. `SittingDetail` gains an additive
+`passages` field, mirrored in `frontend/src/lib/types.ts`. A take's audio boundary and its segment's
+boundary can now differ — takes are still cut at 8 s while a stored sitting is cut adaptively — but
+they are linked by the instant the take started, not by sharing a boundary, so nothing breaks.

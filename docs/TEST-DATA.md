@@ -116,3 +116,25 @@ Importing the document without the directory gives a library whose every recordi
 * **Prefer it for read-only work** — metrics, sessionising, scoring, MusicXML parsing, the
   import path. It is a snapshot, not a scratch database: if a test needs to *write*, copy it
   first.
+
+## 6. The measurement reader
+
+Since Phase 22 the document has a second job: it is the corpus the **segmentation** claim is
+measured on. `backend/tools/measure_real.py` reads it directly — no database, nothing written — and
+answers two questions the plan's acceptance criteria state as numbers:
+
+* **Does where the cut falls change the answer?** It re-cuts every sitting at floors of 1, 2, 4, 8
+  and 16 seconds, inherits each new window's piece from the stored segment its midpoint falls
+  inside, and reports leave-one-out top-1 for the shipped scorer at each. A representation is only
+  robust to segmentation if that curve is flat; it is (0.2 and 0.7 points at half and twice the
+  chosen floor).
+* **Does the matcher act, and is it right when it does?** The same run reports the auto band's
+  coverage and precision: 53.6% and 99.7% at the chosen floor, against floors of 50% and 95%.
+
+It skips cleanly and exits 0 when the document is absent, per the rule above. `--alpha` overrides
+the weight on the global term; the default is the shipped one.
+
+The re-cut **inherits** the stored labels rather than re-labelling, which is the only honest option
+with real data — and it is why the numbers travel with one caveat: at a fine cut the inherited labels
+create several near-identical sub-segments of one piece, which flatters leave-one-out. Read the count
+and the median segment size beside the percentage, which the tool prints for exactly that reason.

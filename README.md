@@ -60,9 +60,18 @@ Selected capabilities:
 - **Real-time scoring against the notation** — pitch, rhythm and continuity, reported per hand,
   with configurable thresholds.
 - **Passive practice logging.** Notes are captured continuously and grouped into sittings and
-  segments; no button press is required.
+  segments; no button press is required. Boundaries follow the passage rather than a fixed clock:
+  a pause counts when it is long *for what you were playing*, a stray touch is not its own segment,
+  and a long stretch is split at its own internal pauses.
+- **The log shows what you actually did.** Adjacent attempts at the same material are grouped into
+  a **passage** — "six goes at this bit" is one row with its attempts beneath it, not six — under a
+  heading naming the piece that stretch of the sitting was about. Labelling a passage labels every
+  attempt in it, so a session of drilling is a handful of decisions rather than one per pause.
 - **Piece recognition.** Hand-tagged segments become training data, and the matcher offers the
-  piece it believes was played, with a way to disagree.
+  piece it believes was played, with a way to disagree. It compares *local content* — the notes,
+  chords and melodic shapes themselves — not a whole-segment average, so a drill that is a snippet
+  of a piece still matches it, a slower repeat is still the same passage, and the answer does not
+  get worse as the library grows.
 - **An edit can be taken back.** Splitting, merging and re-tagging a segment are reversible: after
   any of them the timeline offers *Undo split*, *Undo merge* or *Undo label*, and it works by
   reversing that one change exactly. The offer lasts until the page is reloaded, and re-segmenting

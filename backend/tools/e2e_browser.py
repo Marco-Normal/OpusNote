@@ -2187,8 +2187,10 @@ def scenario_takes(browser) -> None:
     # --- two phrases are recorded, each take cut on the server's own silence rule ---
     # Two, not one: a take must attach to *its* passage, and a single take cannot tell a
     # correct attachment from an attachment that always picks the sitting's first segment.
+    # Eight notes each and in opposite registers, because Phase 22a absorbs a group under the
+    # minimum size into its neighbour: three notes a phrase is one segment now, not two.
     take_ids: list[int] = []
-    for pitches in ([60, 64, 67], [65, 69, 72]):
+    for pitches in ([60, 62, 64, 65, 67, 69, 71, 72], [45, 48, 52, 55, 57, 60, 48, 52]):
         with page.expect_response(
             lambda r: "/api/repertoire/takes" in r.url and r.request.method == "POST",
             timeout=30_000,
@@ -3448,11 +3450,20 @@ def scenario_autotag(browser) -> None:
         f"correcting a written guess is recorded as the matcher being wrong ({corrected['changed']})",
     )
 
-    # From here the two similar pieces are both known, so the matcher stops
-    # answering and starts asking.
+    # From here both pieces are known, so the matcher stops repeating the mistake. It no longer
+    # *declines* on this pair, though: Phase 22b's content term separates DRILL_A from DRILL_B —
+    # one note is a difference local features can see and a whole-segment average cannot — so the
+    # next DRILL_B is answered confidently and correctly. What the margin rule guards is the case
+    # where the material itself is shared between two pieces, so the scenario makes that case
+    # explicitly: the third piece's drill is also what the first piece has been heard to play.
+    label(drill(114, DRILL_B), first["id"])
+
     twin = drill(108, DRILL_B)
     twin_segment = api(f"/api/practice/sittings/{twin}")["segments"][0]
-    check(twin_segment["piece_id"] is None, "so the next one is not guessed at")
+    check(
+        twin_segment["piece_id"] is None,
+        f"so a segment two pieces both explain is not guessed at ({twin_segment['piece_id']})",
+    )
     check(
         twin_segment["candidates"] and twin_segment["candidates"][0]["band"] == "suggest",
         f"it is offered instead ({twin_segment['candidates'][:1]})",
@@ -3480,9 +3491,15 @@ def scenario_autotag(browser) -> None:
         quality["evaluated"] == quality["labelled"] >= 4,
         f"measured by hiding each of the {quality['labelled']} hand-tagged segments",
     )
+    # Six labels, two of which are the deliberate tie built above: DRILL_B is tagged as both the
+    # first and the third piece, and leave-one-out cannot name either of them right — hiding one
+    # leaves the other as the only exact match. So the floor is 4/6, which is exactly "every label
+    # that has one answer came back", and that is what this asks for. A threshold of 0.75 was
+    # written when the library had no tie in it and would now be asking the panel to be right
+    # about a question that has two answers.
     check(
-        quality["accuracy"] is not None and quality["accuracy"] >= 0.75,
-        f"and it gets the obvious ones right ({quality['accuracy']})",
+        quality["accuracy"] is not None and quality["accuracy"] >= 0.6,
+        f"and every label with one answer comes back ({quality['accuracy']})",
     )
     # The *quality* bar lives in tools/measure_autotag.py, which has a corpus big
     # enough to say something; here the question is whether the number on screen is

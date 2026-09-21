@@ -587,6 +587,33 @@ def main() -> int:
                 f"  {count:>6} {fraction:>6.0%} | {current.accuracy:>8.1%} "
                 f"{hybrid.accuracy:>8.1%} {hybrid.accuracy - current.accuracy:>+7.1%}"
             )
+
+    print(
+        "\nAcceptance 4 — the auto band on the 32-piece corpus. 22-D7 chooses these three"
+        f"\nnumbers from this table; the shipped band is auto {settings.autotag_score_auto},"
+        f"\nprompt {settings.autotag_score_prompt}, margin {settings.autotag_min_margin}:"
+    )
+    large = build_corpus(pieces=pieces_for(32))
+    print(f"  {'auto':>5} {'margin':>7} | {'whole cov':>10} {'whole prec':>11} "
+          f"{'quarter cov':>12} {'quarter prec':>13}")
+    for auto, prompt, margin in (
+        (0.90, 0.60, 0.10),
+        (0.85, 0.55, 0.10),
+        (0.85, 0.55, 0.05),
+        (0.80, 0.50, 0.05),
+        (0.75, 0.50, 0.00),
+    ):
+        whole = evaluate_fragments(
+            large, fraction=1.0, containment_weight=settings.autotag_containment_weight,
+            score_auto=auto, score_prompt=prompt, min_margin=margin,
+        )
+        quarter = evaluate_fragments(
+            large, fraction=0.25, containment_weight=settings.autotag_containment_weight,
+            score_auto=auto, score_prompt=prompt, min_margin=margin,
+        )
+        print(f"  {auto:>5.2f} {margin:>7.2f} | {whole.auto_coverage:>10.1%} "
+              f"{whole.auto_precision:>11.1%} {quarter.auto_coverage:>12.1%} "
+              f"{quarter.auto_precision:>13.1%}")
     return 0
 
 

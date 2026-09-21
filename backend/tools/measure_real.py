@@ -71,11 +71,14 @@ def recut(notes, stored, config: segment.Config):
 
 
 def evaluate(items, *, containment_weight: float):
-    """Leave-one-out top-1 for the current fingerprint and for the hybrid.
+    """Leave-one-out top-1 and band outcomes for the current score and for the hybrid.
 
     ``containment_weight=0.0`` is the global term alone, which is what the app shipped before
     Phase 22b; anything above it mixes in the local content term. Leave-one-out over the pooled
     signatures too, so the segment being asked about is never part of the evidence answering it.
+
+    The auto figures are the ones acceptance 4 turns on: coverage is how many attempts the
+    matcher would label without asking, and precision is how many of those it would get right.
     """
     prints = [S.fingerprint(notes, attack_window_ms=settings.attack_window_ms) for notes, _ in items]
     local = [shingles.features(notes) for notes, _ in items]
@@ -83,7 +86,7 @@ def evaluate(items, *, containment_weight: float):
     for (_, piece), features in zip(items, local):
         pooled.setdefault(piece, collections.Counter()).update(features)
 
-    current = hybrid = 0
+    current = hybrid = auto_attempted = auto_correct = 0
     for index, (_, piece) in enumerate(items):
         examples = [
             S.Example(segment_id=other, piece_id=other_piece, fingerprint=prints[other])
@@ -102,13 +105,32 @@ def evaluate(items, *, containment_weight: float):
                 for found, signature in signatures.items()
             }
         plain = S.rank(prints[index], examples)
-        mixed = S.rank(
-            prints[index], examples, shares=shares, containment_weight=containment_weight
+        mixed = S.identify(
+            prints[index],
+            examples,
+            score_auto=settings.autotag_score_auto,
+            score_prompt=settings.autotag_score_prompt,
+            min_margin=settings.autotag_min_margin,
+            min_notes=settings.autotag_min_notes,
+            shares=shares,
+            containment_weight=containment_weight,
         )
+        top = mixed.best.piece_id if mixed.best else None
         current += bool(plain) and plain[0].piece_id == piece
-        hybrid += bool(mixed) and mixed[0].piece_id == piece
+        hybrid += top == piece
+        if mixed.band == "auto":
+            auto_attempted += 1
+            auto_correct += top == piece
     count = max(1, len(items))
-    return current / count, hybrid / count, len(items)
+    return {
+        "current": current / count,
+        "hybrid": hybrid / count,
+        "items": len(items),
+        "auto_coverage": auto_attempted / count,
+        "auto_precision": (auto_correct / auto_attempted) if auto_attempted else 0.0,
+        "auto_attempted": auto_attempted,
+        "auto_correct": auto_correct,
+    }
 
 
 def main() -> int:
@@ -132,9 +154,14 @@ def main() -> int:
         stored[row["sitting_id"]].append(row)
 
     print(f"REAL library: {len(notes)} sittings, {len(tables['segments'])} stored segments")
-    print(f"alpha={args.alpha:.2f} (weight on the global term)\n")
-    print(f"{'floor':>7} {'segments':>9} {'median notes':>13} | {'current':>8} {'hybrid':>8}")
-    rows: list[tuple[int, int, float]] = []
+    band = (
+        f"auto {settings.autotag_score_auto} / prompt {settings.autotag_score_prompt}"
+        f" / margin {settings.autotag_min_margin}"
+    )
+    print(f"alpha={args.alpha:.2f} (weight on the global term); shipped band {band}\n")
+    print(f"{'floor':>7} {'segments':>9} {'median notes':>13} | {'current':>8} {'hybrid':>8}"
+          f" | {'auto cov':>8} {'auto prec':>9}")
+    rows: list[tuple[int, int, float, float, float]] = []
     for floor in FLOORS_MS:
         items: list[tuple[list[Note], int]] = []
         for sitting_id, sitting_notes in notes.items():
@@ -144,24 +171,28 @@ def main() -> int:
         if len(items) < 5:
             continue
         sizes = sorted(len(names) for names, _ in items)
-        current, hybrid, count = evaluate(items, containment_weight=1.0 - args.alpha)
-        rows.append((floor, count, hybrid))
-        print(f"{floor:>6}ms {count:>9} {sizes[len(sizes) // 2]:>13} | "
-              f"{current:>8.1%} {hybrid:>8.1%}")
+        found = evaluate(items, containment_weight=1.0 - args.alpha)
+        rows.append(
+            (floor, found["items"], found["hybrid"], found["auto_coverage"],
+             found["auto_precision"])
+        )
+        print(f"{floor:>6}ms {found['items']:>9} {sizes[len(sizes) // 2]:>13} | "
+              f"{found['current']:>8.1%} {found['hybrid']:>8.1%} | "
+              f"{found['auto_coverage']:>8.1%} {found['auto_precision']:>9.1%}")
 
     chosen = next((row for row in rows if row[0] == settings.segment_floor_ms), None)
     if chosen is None:
         print(f"\nno row at the shipped floor {settings.segment_floor_ms}ms; cannot judge acceptance 1")
         return 0
-    neighbours = [
-        row for row in rows
-        if row[0] in {chosen[0] // 2, chosen[0] * 2}
-    ]
+    neighbours = [row for row in rows if row[0] in {chosen[0] // 2, chosen[0] * 2}]
     print(f"\nacceptance 1 at the shipped {chosen[0]}ms floor: hybrid {chosen[2]:.1%}")
-    for floor, _count, hybrid in neighbours:
+    for floor, _count, hybrid, _cov, _prec in neighbours:
         spread = abs(hybrid - chosen[2])
         verdict = "within" if spread <= 0.03 else "OUTSIDE"
         print(f"  vs {floor:>6}ms {hybrid:.1%}: {spread * 100:.1f} points — {verdict} the 3-point bound")
+    print(f"\nacceptance 3: hybrid top-1 {chosen[2]:.1%} against a 94% floor")
+    print(f"acceptance 4: auto coverage {chosen[3]:.1%} (floor 50%), "
+          f"precision {chosen[4]:.1%} (floor 95%)")
     return 0
 
 
