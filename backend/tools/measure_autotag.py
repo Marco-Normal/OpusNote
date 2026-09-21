@@ -31,6 +31,7 @@ It reads no database and writes nothing: it is a measurement, not a migration.
 from __future__ import annotations
 
 import argparse
+import collections
 import random
 import statistics
 import sys
@@ -39,8 +40,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from app.config import settings  # noqa: E402
 from app.music import generator  # noqa: E402
 from app.music.expected import extract_expected  # noqa: E402
+from app.practice import shingles  # noqa: E402
 from app.practice.sessionize import Note  # noqa: E402
 from app.practice.similarity import (  # noqa: E402
     DEFAULT_WEIGHTS,
@@ -303,7 +306,6 @@ def evaluate(
     drills: list[Drill],
     *,
     weights: Weights,
-    neighbours: int = 6,
     score_auto: float = 0.85,
     score_prompt: float = 0.55,
     min_margin: float = 0.10,
@@ -353,7 +355,6 @@ def evaluate(
         identification = identify(
             by_id[index].fingerprint,
             others,
-            neighbours=neighbours,
             score_auto=score_auto,
             score_prompt=score_prompt,
             min_margin=min_margin,
@@ -368,6 +369,81 @@ def evaluate(
         outcome.by_transform[drills[index].transform].correct_top += int(top == truth)
         outcome.correct_top += int(top == truth)
         outcome.correct_top3 += int(truth in [c.piece_id for c in identification.candidates[:3]])
+        if identification.band == "auto":
+            outcome.auto_attempted += 1
+            outcome.auto_correct += int(top == truth)
+        elif identification.band == "suggest":
+            outcome.offered_attempted += 1
+            outcome.offered_correct += int(top == truth)
+        else:
+            outcome.unidentified += 1
+    return outcome
+
+
+def evaluate_fragments(
+    drills: list[Drill],
+    *,
+    fraction: float,
+    weights: Weights = DEFAULT_WEIGHTS,
+    containment_weight: float = 0.0,
+    score_auto: float = 0.85,
+    score_prompt: float = 0.55,
+    min_margin: float = 0.10,
+    min_notes: int = 8,
+    seed: int = 7,
+) -> Outcome:
+    """Leave-one-out top-1 when the query is a *middle chunk* of a whole drill.
+
+    This is the axis the "first N notes" table does not cover. There, the query is a drill
+    that stopped early and the reference is equally short; here the reference is the whole
+    drill and the query is what the same playing looks like when the segment boundary fell
+    somewhere else. It is the question acceptance 1 and 2 are actually about.
+
+    ``containment_weight=0.0`` is the current global fingerprint alone; anything above it
+    adds Phase 22b's local content term, mixed exactly as the live matcher mixes it — the
+    coefficients and the ranking both come from ``similarity``, so this table measures the
+    shipped scorer rather than a second implementation of it.
+    """
+    rng = random.Random(seed)
+    queries = [middle_notes(drill, fraction, rng) for drill in drills]
+    references = _examples(drills, list(range(len(drills))))
+    features = [shingles.features(drill.notes) for drill in drills]
+    pooled: dict[int, collections.Counter] = {}
+    for index, drill in enumerate(drills):
+        pooled.setdefault(drill.piece_id, collections.Counter()).update(features[index])
+
+    outcome = Outcome()
+    for index, query in enumerate(queries):
+        truth = drills[index].piece_id
+        signatures = {piece: sig for piece, sig in pooled.items() if piece != truth}
+        remainder = pooled[truth] - features[index]
+        if remainder:
+            signatures[truth] = remainder
+        shares = None
+        if containment_weight > 0 and signatures:
+            feature_weights = shingles.idf(signatures)
+            query_features = shingles.features(query.notes)
+            shares = {
+                piece_id: shingles.containment(query_features, signature, feature_weights)
+                for piece_id, signature in signatures.items()
+            }
+        identification = identify(
+            fingerprint(query.notes, attack_window_ms=ATTACK_WINDOW_MS),
+            [example for example in references if example.segment_id != index],
+            score_auto=score_auto,
+            score_prompt=score_prompt,
+            min_margin=min_margin,
+            min_notes=min_notes,
+            weights=weights,
+            shares=shares,
+            containment_weight=containment_weight,
+        )
+        top = identification.candidates[0].piece_id if identification.candidates else None
+        outcome.total += 1
+        outcome.correct_top += int(top == truth)
+        outcome.correct_top3 += int(
+            truth in [candidate.piece_id for candidate in identification.candidates[:3]]
+        )
         if identification.band == "auto":
             outcome.auto_attempted += 1
             outcome.auto_correct += int(top == truth)
@@ -479,6 +555,38 @@ def main() -> int:
     best = max(results, key=lambda item: (item[2].correct_top, item[2].auto_precision))
     print(f"\nBest top-1 among the schemes tried: {best[0]} ({best[2].accuracy:.1%})")
     print(f"Shipped default: {DEFAULT_WEIGHTS}")
+
+    print(
+        "\nHow much of the score should come from content rather than from the whole-segment"
+        "\naverage (22-D7 chooses `autotag_containment_weight` from this). The query is a middle"
+        f"\nchunk of a whole drill, at eight pieces, seed {args.seed}:"
+    )
+    print(f"  {'containment':>11} | {'whole':>7} {'quarter':>8} {'auto@whole':>10} {'auto@quarter':>12}")
+    for containment in (0.0, 0.15, 0.25, 0.40, 0.50):
+        whole = evaluate_fragments(drills, fraction=1.0, containment_weight=containment)
+        quarter = evaluate_fragments(drills, fraction=0.25, containment_weight=containment)
+        print(
+            f"  {containment:>11.2f} | {whole.accuracy:>7.1%} {quarter.accuracy:>8.1%} "
+            f"{whole.auto_precision:>10.1%} {quarter.auto_precision:>12.1%}"
+        )
+
+    print(
+        "\nAcceptance 2 — does the mix survive a growing library? References are whole drills,"
+        f"\nthe query is a middle chunk of one, seed {args.seed}, containment "
+        f"{settings.autotag_containment_weight}:"
+    )
+    print(f"  {'pieces':>6} {'frag':>6} | {'current':>8} {'hybrid':>8} {'gain':>7}")
+    for count in (8, 16, 32):
+        corpus = build_corpus(pieces=pieces_for(count))
+        for fraction in (1.0, 0.25):
+            current = evaluate_fragments(corpus, fraction=fraction, containment_weight=0.0)
+            hybrid = evaluate_fragments(
+                corpus, fraction=fraction, containment_weight=settings.autotag_containment_weight
+            )
+            print(
+                f"  {count:>6} {fraction:>6.0%} | {current.accuracy:>8.1%} "
+                f"{hybrid.accuracy:>8.1%} {hybrid.accuracy - current.accuracy:>+7.1%}"
+            )
     return 0
 
 

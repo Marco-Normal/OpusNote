@@ -19,6 +19,7 @@ inventing events that never happened.
 
 from __future__ import annotations
 
+import collections
 import sqlite3
 import time
 from dataclasses import dataclass
@@ -32,6 +33,7 @@ from . import capture_status
 from . import kinds
 from . import schema as practice_schema
 from . import segment
+from . import shingles
 from .metrics import SegmentMetrics, segment_metrics
 from .pedal import (
     BASIS_OBSERVED,
@@ -1677,19 +1679,63 @@ def examples_from(conn: sqlite3.Connection, rows: list[sqlite3.Row]) -> list[Exa
     ]
 
 
+def _segment_features(
+    conn: sqlite3.Connection, rows: list[sqlite3.Row]
+) -> dict[int, collections.Counter]:
+    """Each labelled segment's local content features, keyed by segment id."""
+    notes = _notes_for_segments(conn, rows)
+    return {
+        int(row["id"]): shingles.features(notes.get(int(row["id"]), [])) for row in rows
+    }
+
+
+def _pooled_signatures(
+    conn: sqlite3.Connection, *, exclude_segment_id: int | None = None
+) -> dict[int, collections.Counter]:
+    """One content signature per piece, from every segment a person labelled.
+
+    Per piece and not per segment, which is what retires the reference window: matching
+    costs O(pieces) rather than O(labels), a piece learned a year ago is exactly as strong
+    as yesterday's, and one heavily-drilled piece can no longer fill the neighbour window and
+    leave the runner-up undefined — which is why the auto band had never fired.
+    """
+    rows = _labelled_rows(conn, exclude_segment_id=exclude_segment_id)
+    features = _segment_features(conn, rows)
+    signatures: dict[int, collections.Counter] = {}
+    for row in rows:
+        present = features[int(row["id"])]
+        if present:
+            signatures.setdefault(int(row["piece_id"]), collections.Counter()).update(present)
+    return signatures
+
+
+def _shares(
+    query: collections.Counter, signatures: dict[int, collections.Counter]
+) -> dict[int, float]:
+    """Each piece's share of the query's local content, when there is anything to compare."""
+    if not signatures:
+        return {}
+    weights = shingles.idf(signatures)
+    return {
+        piece_id: shingles.containment(query, signature, weights)
+        for piece_id, signature in signatures.items()
+    }
+
+
 def segment_identification(
     conn: sqlite3.Connection,
     segment_id: int,
     *,
     examples: list[Example] | None = None,
+    signatures: dict[int, collections.Counter] | None = None,
     context_piece_id: int | None = None,
     weights: Weights = DEFAULT_WEIGHTS,
 ) -> Identification:
     """Match one segment against your labelled practice.
 
-    ``examples`` is passed in by callers that identify several segments at once —
-    the training set is the same for all of them, and rebuilding it per segment
-    would re-derive every fingerprint for every row.
+    ``examples`` and ``signatures`` are passed in by callers that identify several segments
+    at once — both are the same for all of them, and rebuilding either per segment would
+    re-derive every reference's fingerprint and features for every row.
     """
     row = conn.execute(
         f"SELECT {_SEGMENT_COLUMNS} FROM segments g WHERE g.id = ?", (segment_id,)
@@ -1699,17 +1745,23 @@ def segment_identification(
     if examples is None:
         examples = examples_from(conn, _labelled_rows(conn, exclude_segment_id=segment_id))
 
-    segment_print = _fingerprints(conn, [row])[segment_id]
+    notes = _notes_for_segments(conn, [row]).get(segment_id, [])
+    segment_print = fingerprint(notes, attack_window_ms=settings.attack_window_ms)
+    # Pooled once per call unless the caller already has them: a caller identifying several
+    # segments of one sitting would otherwise re-derive every reference's features per row.
+    if signatures is None:
+        signatures = _pooled_signatures(conn, exclude_segment_id=segment_id)
     return identify(
         segment_print,
         examples,
-        neighbours=settings.autotag_neighbours,
         score_auto=settings.autotag_score_auto,
         score_prompt=settings.autotag_score_prompt,
         min_margin=settings.autotag_min_margin,
         min_notes=settings.autotag_min_notes,
         weights=weights,
         context_piece_id=context_piece_id,
+        shares=_shares(shingles.features(notes), signatures),
+        containment_weight=settings.autotag_containment_weight,
     )
 
 
@@ -1792,10 +1844,13 @@ def candidates_for_sitting(conn: sqlite3.Connection, sitting_id: int) -> dict[in
     ]
     if not undecided:
         return {}
-    labelled = _labelled_rows(conn, limit=settings.autotag_training_limit)
+    labelled = _labelled_rows(conn)
     if not labelled:
         return {}
     examples = examples_from(conn, labelled)
+    # Pooled once for the whole sitting: the reference set is the same for every segment in
+    # it, and Phase 22b's whole point is that its size is O(pieces) rather than O(labels).
+    signatures = _pooled_signatures(conn)
 
     out: dict[int, list[SegmentCandidate]] = {}
     context: int | None = None
@@ -1809,7 +1864,7 @@ def candidates_for_sitting(conn: sqlite3.Connection, sitting_id: int) -> dict[in
         if segment_id not in undecided:
             continue
         identification = segment_identification(
-            conn, segment_id, examples=examples, context_piece_id=context
+            conn, segment_id, examples=examples, signatures=signatures, context_piece_id=context
         )
         if identification.candidates:
             out[segment_id] = _candidate_out(
@@ -1860,7 +1915,7 @@ def _autotag_rows(conn: sqlite3.Connection, rows: list[sqlite3.Row]) -> AutotagR
     way the sitting is already going.
     """
     report = AutotagReport(considered=len(rows))
-    references = _labelled_rows(conn, limit=settings.autotag_training_limit)
+    references = _labelled_rows(conn)
     examples = examples_from(conn, references)
     if not examples:
         report.notes.append(
@@ -1869,6 +1924,7 @@ def _autotag_rows(conn: sqlite3.Connection, rows: list[sqlite3.Row]) -> AutotagR
         )
         report.unresolved = len(rows)
         return report
+    signatures = _pooled_signatures(conn)
 
     # Context starts from whatever this sitting already has, so re-running over an
     # old sitting does not lose what the earlier segments say.
@@ -1878,7 +1934,8 @@ def _autotag_rows(conn: sqlite3.Connection, rows: list[sqlite3.Row]) -> AutotagR
             context = int(row["piece_id"])
             continue
         identification = segment_identification(
-            conn, int(row["id"]), examples=examples, context_piece_id=context
+            conn, int(row["id"]), examples=examples, signatures=signatures,
+            context_piece_id=context,
         )
         if identification.band == "auto" and identification.best is not None:
             best = identification.best
@@ -1947,6 +2004,11 @@ def identification_quality(db_path: Path | None = None) -> IdentificationQuality
     matcher will really be asked about — including the pieces that sound like each
     other.
 
+    Every labelled segment is now a reference (Phase 22b retired the reference window),
+    and the mix over local content is applied here exactly as the live matcher applies it —
+    a report that measured a different scorer than the one that writes labels would be a
+    number nobody could act on.
+
     The work is quadratic in the number of labels, so the newest
     ``autotag_quality_limit`` are evaluated and the report says how many were left
     out rather than quietly sampling.
@@ -1956,7 +2018,7 @@ def identification_quality(db_path: Path | None = None) -> IdentificationQuality
         # The *count* is of everything you have tagged; the *work* is bounded by the
         # cap, and the report says so rather than presenting a sample as the whole.
         total_labelled = labelled_count(conn)
-        labelled = _labelled_rows(conn, limit=settings.autotag_training_limit)
+        labelled = _labelled_rows(conn)
         inferred = int(
             conn.execute(
                 "SELECT COUNT(*) FROM segments WHERE identified_by = 'similarity'"
@@ -1967,12 +2029,6 @@ def identification_quality(db_path: Path | None = None) -> IdentificationQuality
             inferred=inferred,
             **_outcome_counts(conn),
         )
-        if len(labelled) < total_labelled:
-            quality.notes.append(
-                f"compared against your newest {len(labelled)} labelled segments; "
-                f"the older {total_labelled - len(labelled)} are beyond the matcher's "
-                "reference window (SRT_AUTOTAG_TRAINING_LIMIT)"
-            )
         if len(labelled) < 2:
             quality.notes.append(
                 "Two labelled segments are the minimum: with one there is nothing to "
@@ -1984,8 +2040,13 @@ def identification_quality(db_path: Path | None = None) -> IdentificationQuality
         quality.evaluated = len(considered)
         quality.skipped = len(labelled) - len(considered)
         examples = examples_from(conn, labelled)
-        by_id = {example.segment_id: example for example in examples}
         prints = {example.segment_id: example.fingerprint for example in examples}
+        local = _segment_features(conn, labelled)
+        pooled: dict[int, collections.Counter] = {}
+        for row in labelled:
+            pooled.setdefault(int(row["piece_id"]), collections.Counter()).update(
+                local[int(row["id"])]
+            )
 
         if quality.skipped:
             quality.notes.append(
@@ -2001,17 +2062,24 @@ def identification_quality(db_path: Path | None = None) -> IdentificationQuality
             if sitting_id != previous_sitting:
                 context = None
                 previous_sitting = sitting_id
+            truth = int(row["piece_id"])
+            # Leave-one-out over the pooled signatures too: the segment being asked about
+            # must not be part of the evidence that answers it.
+            signatures = {piece: sig for piece, sig in pooled.items() if piece != truth}
+            remainder = pooled[truth] - local[segment_id]
+            if remainder:
+                signatures[truth] = remainder
             identification = identify(
                 prints[segment_id],
                 [example for example in examples if example.segment_id != segment_id],
-                neighbours=settings.autotag_neighbours,
                 score_auto=settings.autotag_score_auto,
                 score_prompt=settings.autotag_score_prompt,
                 min_margin=settings.autotag_min_margin,
                 min_notes=settings.autotag_min_notes,
                 context_piece_id=context,
+                shares=_shares(local[segment_id], signatures),
+                containment_weight=settings.autotag_containment_weight,
             )
-            truth = int(row["piece_id"])
             top = identification.best.piece_id if identification.best else None
             quality.correct_top += int(top == truth)
             quality.correct_top3 += int(

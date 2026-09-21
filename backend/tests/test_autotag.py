@@ -111,6 +111,22 @@ def twin_library() -> tuple[int, int]:
     return piece_a, piece_b
 
 
+def indistinguishable_library() -> tuple[int, int]:
+    """Two pieces with the *same* material, hand-tagged.
+
+    This is what "no confident match" has to mean. The one-note-apart pair above used to be
+    the example, but Phase 22b's content term does tell those two apart — one note is a
+    difference the local features can see and a whole-segment average cannot — so the tests
+    that need a segment the matcher must decline use a pair nothing can separate.
+    """
+    piece_a, piece_b = two_pieces()
+    labelled_drill(0, PIECE_A, piece_a)
+    labelled_drill(1, PIECE_A, piece_a)
+    labelled_drill(2, PIECE_A, piece_b)
+    labelled_drill(3, PIECE_A, piece_b)
+    return piece_a, piece_b
+
+
 def drill_sitting(index: int, pitches: list[int]) -> int:
     """A drill that has been read, so its segments exist and have been identified."""
     sitting_id = make_drill(index, pitches)
@@ -153,9 +169,9 @@ def test_a_confident_match_is_written_as_an_inferred_label(fresh_db):
 
 
 def test_a_match_with_twins_is_offered_rather_than_written(fresh_db):
-    """Two pieces one note apart cannot be told apart with confidence, and the
-    matcher must say so instead of picking one."""
-    piece_a, _piece_b = twin_library()
+    """Two pieces with the same notes cannot be told apart, and the matcher must say so
+    instead of picking one."""
+    piece_a, _piece_b = indistinguishable_library()
     other = make_drill(10, PIECE_A)
     detail = store.sitting_detail(other)
     segment = detail.segments[0]
@@ -168,8 +184,37 @@ def test_a_match_with_twins_is_offered_rather_than_written(fresh_db):
     assert top.pitch_class > 0.9, "the notes do match: that is the problem"
 
 
-def test_the_candidates_carry_the_arithmetic_that_produced_them(fresh_db):
+def test_the_content_term_tells_one_note_apart_twins_apart(fresh_db, monkeypatch):
+    """The measured win, stated as the thing that was broken.
+
+    PIECE_A and PIECE_B differ by one note. The whole-segment average scored them inside the
+    0.10 near-tie margin, so on the owner's library 46 of 54 segments were downgraded for
+    having nothing to compare with and the auto band had never once fired. Asking for the
+    ranking rather than the decision makes the margin itself visible.
+    """
+    piece_a, _piece_b = twin_library()
+    sitting_id = make_drill(10, PIECE_A)
+
+    # `settings` is a frozen dataclass, so it is replaced rather than mutated — the same way
+    # the server-hardening tests narrow a limit. Only the decision is withheld; the scores
+    # are the shipped ones.
+    monkeypatch.setattr(
+        store, "settings", dataclasses.replace(store.settings, autotag_min_margin=1.0)
+    )
+    segment = store.sitting_detail(sitting_id).segments[0]
+    assert segment.candidates[0].piece_id == piece_a
+    assert segment.candidates[0].margin > 0.10, "clear of the near-tie the average saw"
+
+
+def test_the_candidates_carry_the_arithmetic_that_produced_them(fresh_db, monkeypatch):
+    """The ranking is shown, not only the winner: agreeing with a match means seeing the
+    numbers it was made from, and an alternative that differs is what makes that possible."""
     twin_library()
+    # One note apart, so the two pieces do differ in score. The decision is withheld so that
+    # the ranking is what the payload carries rather than an empty list on a written label.
+    monkeypatch.setattr(
+        store, "settings", dataclasses.replace(store.settings, autotag_min_margin=1.0)
+    )
     segment = store.sitting_detail(make_drill(10, PIECE_A)).segments[0]
 
     assert len(segment.candidates) >= 2, "the alternatives come with it"
@@ -267,7 +312,7 @@ def _inferred_segment(index: int = 10) -> tuple[int, int, int]:
 
 def _offered_segment(index: int = 10) -> tuple[int, int]:
     """A sitting whose single segment is *offered* a piece but not given one."""
-    twin_library()
+    indistinguishable_library()
     sitting_id = make_drill(index, PIECE_A)
     segment = store.sitting_detail(sitting_id).segments[0]
     assert segment.piece_id is None and segment.candidates, "offered, not written"
@@ -459,15 +504,12 @@ def test_the_backfill_matches_segments_that_predate_the_matcher(fresh_db):
 def test_the_backfill_leaves_what_it_cannot_judge_alone(fresh_db):
     """It writes the confident band only, exactly like the automatic pass, so
     running it can never invent a label the live path would not have written."""
-    piece_a, piece_b = two_pieces()
-    labelled_drill(0, PIECE_A, piece_a)
-    labelled_drill(1, PIECE_A, piece_a)
-    labelled_drill(2, PIECE_B, piece_b)
-    twin = make_drill(3, PIECE_B)
+    indistinguishable_library()
+    twin = make_drill(10, PIECE_A)
     segment_of(twin)
 
     report = store.autotag_unlabelled()
-    assert report.assigned == 0, "a one-note-apart twin is not a confident match"
+    assert report.assigned == 0, "a segment two pieces both explain is not a confident match"
     assert store.sitting_detail(twin).segments[0].piece_id is None
 
 
@@ -486,7 +528,7 @@ def test_the_autotag_route_reports_what_it_did(client):
 def test_the_offer_route_ranks_a_segment_through_the_api(client):
     """The suggestion is part of the sitting payload, which is what the timeline
     reads — so there is no second request to make it appear."""
-    twin_library()
+    indistinguishable_library()
     sitting_id = make_drill(10, PIECE_A)
 
     detail = client.get(f"/api/practice/sittings/{sitting_id}").json()
@@ -518,9 +560,35 @@ def test_an_unknown_action_is_a_422_not_a_500(client):
     assert response.status_code == 422
 
 
-def test_the_reference_window_is_capped_and_says_so(fresh_db, monkeypatch):
-    """Every read derives a fingerprint per reference, so the set has to be bounded
-    or the log gets slower every month for the rest of the library's life."""
+def test_every_labelled_segment_is_a_reference(fresh_db):
+    """Phase 22b retired the reference window, and this is the retirement.
+
+    Signatures are pooled per piece, so the reference set costs O(pieces) rather than
+    O(labels) and there is no reason to truncate it. Truncating was not free: a piece learned
+    a year ago fell out of the window, which is the cliff the phase exists to remove.
+    """
+    piece_a, piece_b = two_pieces()
+    for index in range(4):
+        labelled_drill(
+            index,
+            PIECE_A if index % 2 == 0 else PIECE_C,
+            piece_a if index % 2 == 0 else piece_b,
+        )
+
+    quality = store.identification_quality()
+    assert quality.labelled == 4, "the count is of everything you tagged"
+    assert quality.evaluated == 4, "and every one of them is compared against the rest"
+    assert quality.skipped == 0
+    assert not any("reference window" in note for note in quality.notes)
+
+
+def test_the_quality_report_says_how_much_it_left_out(fresh_db, monkeypatch):
+    """The *work* is still bounded, because leave-one-out is quadratic.
+
+    `autotag_quality_limit` caps how many segments are tested, and the report names the
+    number rather than presenting a sample as the whole — the same promise the retired
+    reference window made, kept where it still means something.
+    """
     piece_a, piece_b = two_pieces()
     for index in range(4):
         labelled_drill(
@@ -532,10 +600,11 @@ def test_the_reference_window_is_capped_and_says_so(fresh_db, monkeypatch):
     # `settings` is a frozen dataclass, so it is replaced rather than mutated —
     # the same way the server-hardening tests narrow a limit.
     monkeypatch.setattr(
-        store, "settings", dataclasses.replace(store.settings, autotag_training_limit=2)
+        store, "settings", dataclasses.replace(store.settings, autotag_quality_limit=2)
     )
 
     quality = store.identification_quality()
     assert quality.labelled == 4, "the count is of everything you tagged"
-    assert quality.evaluated == 2, "the work is bounded by the window"
+    assert quality.evaluated == 2, "the work is bounded by the evaluation cap"
+    assert quality.skipped == 2
     assert any("newest 2" in note for note in quality.notes)

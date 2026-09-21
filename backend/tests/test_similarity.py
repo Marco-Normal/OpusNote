@@ -172,7 +172,7 @@ def test_the_best_neighbour_of_each_piece_wins_and_agreement_is_reported():
         example(2, 10, *PRIMARY),
         example(3, 20, 57, 60, 64, 69, 56, 59, 63, 68),
     ]
-    ranked = rank(segment, examples, neighbours=6)
+    ranked = rank(segment, examples)
     assert ranked[0].piece_id == 10
     assert ranked[0].support == 2, "two labelled segments agree"
     assert ranked[1].piece_id == 20
@@ -180,25 +180,66 @@ def test_the_best_neighbour_of_each_piece_wins_and_agreement_is_reported():
     assert ranked[0].margin > 0
 
 
-def test_only_the_nearest_neighbours_are_evidence():
-    """k bounds the work and the evidence: a piece that never appears among the
-    closest labels is not a candidate at all."""
+def test_a_heavily_drilled_piece_cannot_crowd_out_another():
+    """The defect 22-D4 retires.
+
+    With a window over *segments*, four labels of one piece filled it and the second piece
+    was not a candidate at all — which is why `runner_up` was None for 46 of the owner's 54
+    labelled segments and the auto band had never once fired. Evidence is pooled per piece
+    now, so a second piece is a candidate however many labels the first one has.
+    """
     segment = profile(*PRIMARY)
     examples = [example(index, 10, *PRIMARY) for index in range(1, 5)]
     examples.append(example(99, 20, 57, 60, 64, 69, 56, 59, 63, 68))
-    assert [c.piece_id for c in rank(segment, examples, neighbours=2)] == [10]
-    assert {c.piece_id for c in rank(segment, examples, neighbours=9)} == {10, 20}
+    assert {candidate.piece_id for candidate in rank(segment, examples)} == {10, 20}
+    assert rank(segment, examples)[0].runner_up is not None
 
 
 def test_a_single_piece_has_no_runner_up_to_beat():
     segment = profile(*PRIMARY)
-    ranked = rank(segment, [example(1, 10, *PRIMARY)], neighbours=6)
+    ranked = rank(segment, [example(1, 10, *PRIMARY)])
     assert ranked[0].runner_up is None
     assert ranked[0].margin == 0.0
 
 
 def test_nothing_labelled_means_no_candidates():
-    assert rank(profile(60), [], neighbours=6) == []
+    assert rank(profile(60), []) == []
+
+
+# --------------------------------------------------------------------------
+# The mix: the local content share folded into the global score
+# --------------------------------------------------------------------------
+
+
+def test_the_mix_reorders_on_the_containment_share():
+    """The local term is what names a fragment the whole-segment average cannot."""
+    segment = profile(*PRIMARY)
+    examples = [example(1, 10, *PRIMARY), example(2, 20, 57, 60, 64, 69, 56, 59, 63, 68)]
+    assert rank(segment, examples)[0].piece_id == 10, "the global term prefers 10"
+    mixed = rank(segment, examples, shares={10: 0.1, 20: 1.0}, containment_weight=0.9)
+    assert mixed[0].piece_id == 20, "the local term prefers 20, and outweighs it"
+
+
+def test_the_runner_up_is_recomputed_after_the_mix():
+    """A stale runner-up would make the margin — and so the band — a claim about the old
+    scores rather than about the ones the matcher returns."""
+    segment = profile(*PRIMARY)
+    examples = [example(1, 10, *PRIMARY), example(2, 20, 57, 60, 64, 69, 56, 59, 63, 68)]
+    mixed = rank(segment, examples, shares={10: 0.0, 20: 1.0}, containment_weight=1.0)
+    assert mixed[0].piece_id == 20
+    assert mixed[0].runner_up == pytest.approx(0.0)
+    assert mixed[0].margin == pytest.approx(1.0)
+
+
+def test_the_band_follows_the_mixed_score_not_the_global_one():
+    """Acceptance 4's precision claim is about the numbers the matcher actually uses."""
+    segment = profile(*PRIMARY)
+    examples = [example(1, 10, *PRIMARY), example(2, 20, 57, 60, 64, 69, 56, 59, 63, 68)]
+    result = bands(
+        segment, examples, shares={10: 0.0, 20: 1.0}, containment_weight=1.0
+    )
+    assert result.best is not None and result.best.piece_id == 20
+    assert result.band == "auto"
 
 
 # --------------------------------------------------------------------------
@@ -208,7 +249,6 @@ def test_nothing_labelled_means_no_candidates():
 
 def bands(segment, examples, **overrides):
     settings = dict(
-        neighbours=6,
         score_auto=0.85,
         score_prompt=0.55,
         min_margin=0.10,
@@ -286,8 +326,8 @@ def test_a_near_tie_goes_to_the_piece_the_sitting_is_already_about():
     # there is.
     segment = profile(*PRIMARY)
     examples = [example(1, 10, *PRIMARY), example(2, 20, *PRIMARY)]
-    without = rank(segment, examples, neighbours=6)
-    with_context = rank(segment, examples, neighbours=6, context_piece_id=20)
+    without = rank(segment, examples)
+    with_context = rank(segment, examples, context_piece_id=20)
     assert without[0].piece_id == 10, "with no context, the first piece id wins the tie"
     assert with_context[0].piece_id == 20, "the sitting's piece takes the near-tie"
     # Moving a candidate is not the same as changing its score.
@@ -305,7 +345,7 @@ def test_the_context_does_not_overrule_a_clear_winner():
         example(1, 10, *PRIMARY),
         example(2, 20, 55, 58, 61, 63, 56, 59, 62, 64),
     ]
-    ranked = rank(segment, examples, neighbours=6, context_piece_id=20)
+    ranked = rank(segment, examples, context_piece_id=20)
     assert ranked[0].piece_id == 10, "a real difference in the notes still wins"
 
 
@@ -316,15 +356,15 @@ def test_the_context_can_reach_a_piece_that_is_not_second():
         example(2, 20, *ONE_NOTE_OFF),
         example(3, 30, *PRIMARY),
     ]
-    ranked = rank(segment, examples, neighbours=6, context_piece_id=30)
+    ranked = rank(segment, examples, context_piece_id=30)
     assert [c.piece_id for c in ranked] == [30, 10, 20], "promoted from third, not re-scored"
 
 
 def test_no_context_leaves_the_ranking_alone():
     segment = profile(*PRIMARY)
     examples = two_distinct_pieces()
-    assert rank(segment, examples, neighbours=6) == rank(
-        segment, examples, neighbours=6, context_piece_id=None
+    assert rank(segment, examples) == rank(
+        segment, examples, context_piece_id=None
     )
 
 
@@ -345,7 +385,7 @@ def test_a_right_hand_drill_prefers_the_right_hand_example():
     ]
     # Drilled slowly, so the tempo term is actively unhelpful — which is the point.
     drilled = fingerprint(notes(right_hand, spacing_ms=600), attack_window_ms=WINDOW)
-    ranked = rank(drilled, examples, neighbours=6)
+    ranked = rank(drilled, examples)
     assert ranked[0].piece_id == 10
     assert ranked[0].register > ranked[1].register
 

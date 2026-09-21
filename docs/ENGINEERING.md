@@ -190,15 +190,21 @@ Every environment variable is optional.
 | `SRT_EXERCISE_BARS` | `4` | Bars per exercise |
 | `SRT_WORKOUT_LENGTH` | `8` | Exercises in a workout |
 | `SRT_SITTING_GAP_S` | `300` | Silence that closes a sitting |
-| `SRT_SEGMENT_GAP_S` | `8` | Silence that splits a sitting into segments — measured against a real session; see [FEATURES.md](FEATURES.md) §6 |
+| `SRT_SEGMENT_GAP_S` | `8` | Silence after which a *take* being recorded is cut. Superseded for segmenting a stored sitting by Phase 22a's adaptive rule below; measured against a real session; see [FEATURES.md](FEATURES.md) §6 |
+| `SRT_SEGMENT_FLOOR_MS` | `2000` | Phase 22a: the shortest pause that can be a segment boundary |
+| `SRT_SEGMENT_PULSE_MULTIPLIER` | `2.5` | Phase 22a: how many times the passage's own pulse a pause must be to cut |
+| `SRT_SEGMENT_CEILING_MS` | `30000` | Phase 22a: past this, a pause is a break whatever the pulse says |
+| `SRT_SEGMENT_MIN_NOTES` | `8` | Phase 22a: below this, a group is absorbed into its neighbour |
+| `SRT_SEGMENT_MAX_MS` | `120000` | Phase 22a: above this, a group is split at its largest internal pauses |
 | `SRT_RESTART_GAP_MS` | `3000` | Mid-segment silence counted as a restart |
 | `SRT_ATTACK_WINDOW_MS` | `50` | Notes closer than this are one attack, for tempo |
 | `SRT_AUTOTAG_SCORE_AUTO` | `0.85` | Score at or above which a match is written without asking |
 | `SRT_AUTOTAG_MIN_MARGIN` | `0.10` | Required lead over the runner-up. `0.05` roughly doubles the labels written, at about a 3% measured error rate |
 | `SRT_AUTOTAG_SCORE_PROMPT` | `0.55` | Score at or above which a match is offered |
 | `SRT_AUTOTAG_MIN_NOTES` | `8` | Below this many notes a segment is not recognised at all |
-| `SRT_AUTOTAG_NEIGHBOURS` | `6` | How many of the closest tagged segments count as evidence |
-| `SRT_AUTOTAG_TRAINING_LIMIT` | `600` | How many recent tagged segments the matcher compares against |
+| `SRT_AUTOTAG_CONTAINMENT_WEIGHT` | `0.25` | Phase 22b: how much of a match's score comes from local content rather than from the whole-segment average. Chosen by the sweep in `tools/measure_autotag.py` |
+| `SRT_AUTOTAG_NEIGHBOURS` | `6` | **Retired by Phase 22b, read by nothing.** Evidence is pooled per piece, so a window over segments has no meaning. Kept intact pending a deployment decision |
+| `SRT_AUTOTAG_TRAINING_LIMIT` | `600` | **Retired by Phase 22b, read by nothing.** A piece learned a year ago is exactly as strong as yesterday's. Kept intact pending a deployment decision |
 | `SRT_MAX_UPLOAD_MB` | `512` | Largest recording accepted by the upload endpoint |
 | `SRT_PIANO_DIR` | `<data dir>/piano` | Where the one-time sampled piano is kept and served from |
 | `SRT_BACKUP_DIR` | `<data dir>/backups` | Where the nightly JSON exports are written |
