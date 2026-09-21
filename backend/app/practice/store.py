@@ -22,7 +22,7 @@ from __future__ import annotations
 import sqlite3
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable, Literal, Sequence
 
@@ -1410,32 +1410,70 @@ def kinds_breakdown(conn: sqlite3.Connection, days: int) -> list[PracticeKindSpl
     ]
 
 
-def streak_days(conn: sqlite3.Connection) -> int:
-    """Consecutive days ending today with at least one sitting.
+@dataclass(frozen=True)
+class Streak:
+    """A run of days at the piano, with at most one rest day forgiven per rolling week."""
 
-    Today not yet having practice does not break the streak: the day is not over,
-    and a streak that resets every midnight until you play is a nag, not a
-    measurement.
+    days: int
+    grace_used: int
+
+
+#: How many calendar days a forgiven rest day stays forgiven for. One rest day per week is the
+#: rule a pianist can actually keep; two inside a week is a break.
+GRACE_WINDOW_DAYS = 7
+
+#: How far back to look. A streak longer than ten years is not a thing this app needs to prove.
+STREAK_LOOKBACK_DAYS = 3_660
+
+
+def streak(conn: sqlite3.Connection) -> Streak:
+    """The run of days ending today or yesterday, forgiving one rest day per rolling week.
+
+    Three rules, each of which exists because the obvious version got it wrong:
+
+    * **Today not yet played does not break it.** The day is not over, and a streak that resets
+      every midnight until you play is a nag, not a measurement.
+    * **One missed day in seven is forgiven**, and the run continues from the day before it. A
+      second miss within the same seven days ends the run, which is why the check is against the
+      previous forgiven day rather than a count.
+    * **A run never opens on a rest day.** Otherwise coming back after a fortnight would report a
+      one-day streak, which is worse than reporting nothing.
+
+    ``days`` is the length of the run in calendar days, so it includes a forgiven rest day; the
+    caller reports ``grace_used`` beside it so the number is never read as days played.
     """
     rows = [
         row["local_date"]
-        for row in conn.execute(
-            "SELECT DISTINCT local_date FROM sittings ORDER BY local_date DESC"
-        )
+        for row in conn.execute("SELECT DISTINCT local_date FROM sittings")
     ]
-    if not rows:
-        return 0
     dates = {datetime.fromisoformat(value).date() for value in rows}
     today = _today()
-    start = today if today in dates else today - timedelta(days=1)
-    if start not in dates:
-        return 0
-    streak = 0
-    cursor = start
-    while cursor in dates:
-        streak += 1
+
+    cursor = today if today in dates else today - timedelta(days=1)
+    if cursor not in dates:
+        return Streak(days=0, grace_used=0)
+
+    days = 0
+    grace_used = 0
+    last_forgiven: date | None = None
+    while (today - cursor).days <= STREAK_LOOKBACK_DAYS:
+        if cursor in dates:
+            days += 1
+        else:
+            # A rest day is only forgiven when it is joining two stretches of practice. A
+            # gap at the *end* of a run is simply the end of the run — without this check
+            # every streak would be one longer than the days it is made of, which is
+            # exactly what `test_an_unbroken_week_is_unchanged_by_the_grace_rule` pins.
+            ahead = range(1, GRACE_WINDOW_DAYS + 1)
+            if not any((cursor - timedelta(days=step)) in dates for step in ahead):
+                break
+            if last_forgiven is not None and (last_forgiven - cursor).days < GRACE_WINDOW_DAYS:
+                break
+            last_forgiven = cursor
+            grace_used += 1
+            days += 1
         cursor -= timedelta(days=1)
-    return streak
+    return Streak(days=days, grace_used=grace_used)
 
 
 def summary(conn: sqlite3.Connection, days: int = 30, recent: int = 10) -> AnalyticsSummary:
@@ -1452,6 +1490,7 @@ def summary(conn: sqlite3.Connection, days: int = 30, recent: int = 10) -> Analy
         " MAX(ended_ms) AS last_ms,"
         " (SELECT COUNT(*) FROM note_events) AS notes FROM sittings"
     ).fetchone()
+    run = streak(conn)
     return AnalyticsSummary(
         days=days,
         total_minutes=round(float(totals["minutes"] or 0.0), 1),
@@ -1459,7 +1498,8 @@ def summary(conn: sqlite3.Connection, days: int = 30, recent: int = 10) -> Analy
         today_minutes=next(
             (day.minutes for day in calendar_days if day.date == today), 0.0
         ),
-        streak_days=streak_days(conn),
+        streak_days=run.days,
+        streak_grace_used=run.grace_used,
         calendar=calendar_days,
         by_piece=by_piece(conn, days),
         neglected=neglected(conn),

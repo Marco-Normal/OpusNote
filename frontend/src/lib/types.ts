@@ -712,6 +712,8 @@ export interface AnalyticsSummary {
   total_notes: number;
   today_minutes: number;
   streak_days: number;
+  /** How many of the streak's days were tolerated rest days, 0 or 1 under the current rule. */
+  streak_grace_used: number;
   calendar: CalendarDay[];
   by_piece: PiecePractice[];
   neglected: NeglectedPiece[];

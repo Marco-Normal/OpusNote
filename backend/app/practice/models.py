@@ -430,6 +430,9 @@ class AnalyticsSummary(BaseModel):
     total_notes: int
     today_minutes: float
     streak_days: int
+    #: How many of the streak's days were tolerated rest days, 0 or 1 under the current rule.
+    #: Reported so the UI can say the run includes a rest day rather than implying it was played.
+    streak_grace_used: int = 0
     calendar: list[CalendarDay]
     by_piece: list[PiecePractice]
     neglected: list[NeglectedPiece]

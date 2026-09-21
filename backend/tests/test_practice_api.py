@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from app.config import settings
 from app.db import connect
 from app.practice import store
@@ -979,3 +981,83 @@ def test_the_piece_practice_read_agrees_with_the_dashboard(client, conn) -> None
 
     assert listed == from_dashboard, "the two reads agree, field for field"
     assert listed and listed[0]["title"] == "Sorted Etude"
+
+
+def _record_on(client, day: str, offsets: list[int]) -> None:
+    """A closed sitting filed on one calendar day."""
+    import time
+
+    stamp = f"{day}T12:00:00+00:00"
+    base = int(datetime.fromisoformat(stamp).timestamp() * 1000)
+    body = client.post(
+        "/api/practice/events",
+        json={
+            "tz_offset_minutes": 0,
+            "events": [
+                {
+                    "epoch_ms": base + offset,
+                    "pitch": 60 + index,
+                    "velocity": 70,
+                    "duration_ms": 300,
+                    "channel": 0,
+                }
+                for index, offset in enumerate(offsets)
+            ],
+        },
+    ).json()
+    assert body["sitting_id"] is not None
+    client.post("/api/practice/sittings/close")
+
+
+def _days_ago(count: int) -> str:
+    from datetime import date, timedelta
+
+    return (date.today() - timedelta(days=count)).isoformat()
+
+
+def test_an_unbroken_week_is_unchanged_by_the_grace_rule(client) -> None:
+    """The rule must not move the number for anybody who never missed a day."""
+    for offset in (2, 1, 0):
+        _record_on(client, _days_ago(offset), [0, 500])
+    body = client.get("/api/practice/analytics/summary?days=30").json()
+    assert body["streak_days"] == 3
+    assert body["streak_grace_used"] == 0
+
+
+def test_one_missed_day_keeps_the_streak_and_is_reported(client) -> None:
+    for offset in (3, 1, 0):
+        _record_on(client, _days_ago(offset), [0, 500])
+    body = client.get("/api/practice/analytics/summary?days=30").json()
+    assert body["streak_days"] == 4, "the run covers four calendar days"
+    assert body["streak_grace_used"] == 1, "and one of them was a rest day"
+
+
+def test_two_missed_days_in_a_row_end_the_run(client) -> None:
+    """One rest day is forgiven; the second ends the run rather than extending it.
+
+    The run is "today plus one forgiven rest day", not "everything back to the practice four
+    days ago": the second consecutive miss is where the run stops, which is the whole point
+    of allowing only one rest day per rolling week.
+    """
+    for offset in (4, 0):
+        _record_on(client, _days_ago(offset), [0, 500])
+    body = client.get("/api/practice/analytics/summary?days=30").json()
+    assert body["streak_days"] == 2, "today plus the one forgiven rest day"
+    assert body["streak_grace_used"] == 1
+    assert body["streak_days"] < 4, "and the practice before the gap is not in this run"
+
+
+def test_a_streak_never_opens_on_a_rest_day(client) -> None:
+    """A week away must not report a one-day streak on return."""
+    _record_on(client, _days_ago(10), [0, 500])
+    body = client.get("/api/practice/analytics/summary?days=30").json()
+    assert body["streak_days"] == 0
+    assert body["streak_grace_used"] == 0
+
+
+def test_today_not_yet_played_does_not_count_against_you(client) -> None:
+    for offset in (2, 1):
+        _record_on(client, _days_ago(offset), [0, 500])
+    body = client.get("/api/practice/analytics/summary?days=30").json()
+    assert body["streak_days"] == 2
+    assert body["streak_grace_used"] == 0, "an empty today is not a rest day, it is not over"

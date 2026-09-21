@@ -364,10 +364,14 @@
       <strong>{formatMinutes(summary.today_minutes)}</strong>
       <span class="muted small">{summary.calendar.at(-1)?.notes ?? 0} notes</span>
     </div>
-    <div class="stat">
+    <div class="stat" data-streak={summary.streak_days}>
       <span class="muted small">Streak</span>
       <strong>{summary.streak_days} {summary.streak_days === 1 ? 'day' : 'days'}</strong>
-      <span class="muted small">consecutive days played</span>
+      <span class="muted small">
+        {summary.streak_grace_used > 0
+          ? 'counting 1 rest day'
+          : 'consecutive days played'}
+      </span>
     </div>
     <div class="stat">
       <span class="muted small">Workouts</span>
@@ -519,7 +523,9 @@
       <div>
         <span class="muted small">Sight-reading</span>
         <strong>{summary.workouts_this_week} workouts</strong>
-        <span class="muted small">{summary.streak_days}-day streak</span>
+        <span class="muted small">
+          {summary.streak_days}-day streak{summary.streak_grace_used > 0 ? ' · 1 rest day' : ''}
+        </span>
       </div>
       <div>
         <span class="muted small">Most improved</span>
