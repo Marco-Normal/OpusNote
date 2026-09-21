@@ -8,6 +8,7 @@ from app.config import settings
 from app.db import connect
 from app.practice import store
 from app.practice.models import EventBatch, WireNote
+from tests.conftest import phrase_offsets
 
 BASE_MS = 1_700_011_800_000
 LATER_MS = BASE_MS + 10_000_000
@@ -310,10 +311,11 @@ def test_the_calendar_covers_every_day_in_the_window(client) -> None:
 
 
 def test_time_per_piece_counts_only_labelled_segments(client) -> None:
-    # Two phrases half a minute apart: one sitting, two segments. Six minutes ago
-    # so the sitting is closed, and long enough that the first segment's duration
-    # survives rounding to a tenth of a minute.
-    sitting_id = record_now([-400_000, -399_500, -395_000, -365_000]).sitting_id
+    # Two phrases a long pause apart: one sitting, two segments. Six minutes ago
+    # so the sitting is closed, and each phrase is over the rule's minimum size so
+    # neither is absorbed as a stray touch.
+    offsets = phrase_offsets(-400_000, 8) + phrase_offsets(-371_000, 8)
+    sitting_id = record_now(offsets).sitting_id
     segments = client.get(f"/api/practice/sittings/{sitting_id}").json()["segments"]
     assert len(segments) == 2
     piece_id = client.post(
@@ -821,7 +823,7 @@ def test_the_kind_split_accounts_for_every_segment_minute(client) -> None:
     split that dropped either would not reconcile with the log, and a number nobody can
     reconcile is a number nobody can trust.
     """
-    sitting = recent_sitting(client, [0, 7_000, 14_000, 21_000, 40_000, 47_000, 54_000])
+    sitting = recent_sitting(client, phrase_offsets(0, 8) + phrase_offsets(40_000, 8))
     detail = client.get(f"/api/practice/sittings/{sitting['sitting_id']}").json()
     segments = detail["segments"]
     assert len(segments) == 2, "the fixture must produce two segments to be worth asserting on"

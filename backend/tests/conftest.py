@@ -144,6 +144,19 @@ CREATE TABLE media (
 """
 
 
+def phrase_offsets(start_ms: int, count: int, *, every_ms: int = 800) -> list[int]:
+    """``count`` note onsets at a steady pulse — one phrase, as ``segment.cut`` sees it.
+
+    Phase 22a replaced the one fixed segment gap with an adaptive rule plus a minimum and a
+    maximum size, so a fixture that wants *n* segments can no longer just space *n* notes
+    far apart: a lone note is absorbed as a stray touch, and a slow passage raises its own
+    threshold. Eight is the minimum size the rule keeps, and a steady 800 ms pulse holds the
+    adaptive limit down at its 2 s floor, so one call is exactly one segment whatever the
+    tunables are set to.
+    """
+    return [start_ms + step * every_ms for step in range(count)]
+
+
 def build_legacy_db(path: Path, *, media_files: int = 2) -> Path:
     """A minimal database shaped like the Rust app's, for import tests."""
     import sqlite3

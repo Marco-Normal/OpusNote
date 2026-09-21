@@ -13,6 +13,7 @@ from app import db
 from app.practice import store as practice_store
 from app.practice.models import EventBatch, WireNote
 from app.workout import store
+from tests.conftest import phrase_offsets
 
 BASE_MS = 1_700_011_800_000
 LATER_MS = BASE_MS + 10_000_000
@@ -125,9 +126,10 @@ def test_the_segment_a_workout_overlapped_is_tagged_sight_reading(fresh_db) -> N
 
 def test_a_segment_outside_the_workout_is_left_alone(fresh_db) -> None:
     """Two pieces in one sitting, only the second played during a workout."""
-    sitting_id = notes_at(BASE_MS, [0, 500, 30_000, 30_500], source="web_midi").sitting_id
-    workout = store.start(tz_offset_minutes=0, now_ms=BASE_MS + 30_000)
-    store.finish(workout.id, now_ms=BASE_MS + 31_000)
+    phrases = phrase_offsets(0, 8) + phrase_offsets(20_000, 8)
+    sitting_id = notes_at(BASE_MS, phrases, source="web_midi").sitting_id
+    workout = store.start(tz_offset_minutes=0, now_ms=BASE_MS + 20_000)
+    store.finish(workout.id, now_ms=BASE_MS + 21_000)
 
     segments = practice_store.ensure_segments(sitting_id, now_ms=LATER_MS)
     assert [segment.source for segment in segments] == [None, "sight_reading"]

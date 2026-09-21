@@ -50,6 +50,27 @@ from app.practice.similarity import (  # noqa: E402
     identify,
 )
 
+#: Keys cycled to synthesise a larger library than the eight hand-written pieces. Two
+#: pieces sharing a key is the matcher's documented failure mode, so repetition is the
+#: point rather than a compromise.
+KEYS = ("C", "G", "D", "A", "E", "B", "F#", "Db", "Ab", "Eb", "Bb", "F",
+        "a", "e", "b", "f#", "d", "g", "c", "bb")
+
+
+def pieces_for(count: int) -> tuple[tuple[str, str, dict[str, int]], ...]:
+    """``count`` distinct pieces, cycling keys and varying the character."""
+    return tuple(
+        (f"piece-{index:02d}", KEYS[index % len(KEYS)], {
+            "hand_position": 3 + (index % 6),
+            "intervals": 3 + ((index * 2) % 6),
+            "rhythm": 3 + ((index * 3) % 6),
+            "texture": 3 + ((index * 5) % 6),
+            "key_signature": 1 + (index % 5),
+        })
+        for index in range(count)
+    )
+
+
 #: Each "piece" is a key and a character.
 PIECES: tuple[tuple[str, str, dict[str, int]], ...] = (
     ("Bach", "C", {"hand_position": 3, "intervals": 3, "rhythm": 4, "texture": 3, "key_signature": 1}),
@@ -133,8 +154,11 @@ def _with_slips(notes: list[Note], rng: random.Random) -> list[Note]:
     return out
 
 
-def build_corpus(seed: int = 20260913) -> list[Drill]:
+def build_corpus(seed: int = 20260913, pieces=None) -> list[Drill]:
     """Nine drills per piece, covering the transformations that actually happen."""
+    global PIECES
+    if pieces is not None:
+        PIECES = tuple(pieces)
     rng = random.Random(seed)
     drills: list[Drill] = []
     base_ms = 1_700_011_800_000
@@ -258,6 +282,21 @@ def first_notes(drill: Drill, keep: int) -> Drill:
     be recognised from, and it is why a very fine segmentation is not free.
     """
     return Drill(drill.piece_id, drill.label, drill.notes[:keep], drill.transform)
+
+
+def middle_notes(drill: Drill, fraction: float, rng: random.Random) -> Drill:
+    """A contiguous middle chunk — a legitimate sub-snippet.
+
+    This is the axis the existing truncation table does not cover: ``first_notes`` asks
+    what a *shorter* drill would need, and this asks what a drill looks like when the
+    boundary fell somewhere else. Acceptance 1 is about the second question.
+    """
+    if fraction >= 1.0:
+        return drill
+    count = len(drill.notes)
+    keep = max(1, int(count * fraction))
+    start = rng.randrange(0, max(1, count - keep + 1))
+    return Drill(drill.piece_id, drill.label, drill.notes[start:start + keep], drill.transform)
 
 
 def evaluate(

@@ -15,9 +15,14 @@ import pytest
 from app import backup, db
 from app.practice import store as practice_store
 from app.practice.models import EventBatch, WireNote, WirePedal
+from tests.conftest import phrase_offsets
 
 BASE_MS = 1_700_011_800_000
 LATER_MS = BASE_MS + 10_000_000
+
+#: Two phrases a long pause apart. Each is the minimum size `segment.cut` keeps, so the
+#: sitting holds exactly two segments and a backup that dropped either is visible.
+_OFFSETS = phrase_offsets(0, 8) + phrase_offsets(40_000, 8)
 
 
 def _populate(client) -> int:
@@ -48,7 +53,7 @@ def _populate(client) -> int:
                     duration_ms=300,
                     channel=0,
                 )
-                for index, offset in enumerate((0, 500, 20_000, 60_000))
+                for index, offset in enumerate(_OFFSETS)
             ],
             # Pedalling is data like any other, and a backup that dropped it would
             # still restore a database that looks complete.
@@ -99,11 +104,12 @@ def test_a_backup_round_trips_through_a_wipe(client) -> None:
     document = client.get("/api/backup/export").json()
     before = document["counts"]
     assert before["pieces"] == 1
-    assert before["note_events"] == 4
-    # Three, not two: the fixture's notes are 19.5 s and 39.7 s apart, and the
-    # segment gap is 8 s. The count is asserted because a backup that round-trips
-    # the wrong *number* of rows is the failure this test exists for.
-    assert before["segments"] == 3
+    assert before["note_events"] == 16
+    # Two, not one: Phase 22a cuts on a pause that is long for the passage, so the fixture
+    # is two phrases of the minimum size rather than four isolated notes. The count is
+    # asserted because a backup that round-trips the wrong *number* of rows is the failure
+    # this test exists for.
+    assert before["segments"] == 2
     assert before["workouts"] == 1
 
     # Wipe it, the way a broken machine would: everything, not just one table.

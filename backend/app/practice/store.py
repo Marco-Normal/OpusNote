@@ -31,6 +31,7 @@ from ..config import settings
 from . import capture_status
 from . import kinds
 from . import schema as practice_schema
+from . import segment
 from .metrics import SegmentMetrics, segment_metrics
 from .pedal import (
     BASIS_OBSERVED,
@@ -73,7 +74,7 @@ from .models import (
     TempoPoint,
     TempoSeries,
 )
-from .sessionize import Note, sessionize
+from .sessionize import Note
 
 
 #: How long the piano must have been silent before a disconnect closes the sitting.
@@ -339,10 +340,10 @@ def _sitting_notes(conn: sqlite3.Connection, sitting_id: int, started_ms: int) -
 def _segment_rows(conn: sqlite3.Connection, sitting_id: int) -> list[SegmentSummary]:
     """Segments of a sitting, with piece, composer, note count and metrics.
 
-    Note counts use ``onset_ms <= end_ms``. That cannot double-count: two segments
-    of one sitting are separated by at least ``segment_gap_s`` of silence, so no
-    note of the next segment can sit at or before this segment's end. Using ``<``
-    would drop a zero-duration note from its own segment.
+    Note counts use ``onset_ms <= end_ms``. That cannot double-count: ``segment.cut``
+    only ever puts a boundary on a strictly positive gap, so no note of the next segment
+    can sit at or before this segment's end. Using ``<`` would drop a zero-duration note
+    from its own segment.
     """
     rows = conn.execute(
         """
@@ -706,6 +707,17 @@ def _backfill_blur_positions(conn: sqlite3.Connection, sitting_id: int) -> bool:
     return True
 
 
+def _segment_config() -> segment.Config:
+    """The tunables, from settings, so the measurement tool and the app share one shape."""
+    return segment.Config(
+        floor_ms=settings.segment_floor_ms,
+        multiplier=settings.segment_pulse_multiplier,
+        ceiling_ms=settings.segment_ceiling_ms,
+        min_notes=settings.segment_min_notes,
+        max_ms=settings.segment_max_ms,
+    )
+
+
 def ensure_segments(
     sitting_id: int, now_ms: int | None = None, db_path: Path | None = None
 ) -> list[SegmentSummary]:
@@ -747,7 +759,7 @@ def ensure_segments(
 
         started_ms = int(sitting["started_ms"])
         notes = _sitting_notes(conn, sitting_id, started_ms)
-        for window in sessionize(notes, settings.segment_gap_s * 1000):
+        for window in segment.cut(notes, config=_segment_config()):
             conn.execute(
                 "INSERT INTO segments (sitting_id, start_ms, end_ms, source)"
                 " VALUES (?1, ?2, ?3, ?4)",

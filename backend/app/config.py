@@ -118,7 +118,13 @@ class Settings:
     #: Silence that closes a sitting. Long on purpose: walking to the piano,
     #: thinking, and playing again is one sitting.
     sitting_gap_s: int = _env_int("SRT_SITTING_GAP_S", 300)
-    #: Silence that splits a sitting into segments — one per piece attempted.
+    #: Silence after which a *take* being recorded is cut, in seconds.
+    #:
+    #: **Superseded for segmenting a stored sitting by Phase 22a** — see ``segment_floor_ms``
+    #: and its neighbours below. Until then this one number was the whole segmenter; it no
+    #: longer decides where a sitting's attempts begin and end, and it must not be read as if
+    #: it did. It survives because the browser's take-cutter still follows it, and
+    #: ``PracticeStatus.segment_gap_s`` is still the only copy of *that* rule.
     #:
     #: Measured from a real 42-minute sitting of the owner's (18,688 notes): the
     #: 99th-percentile gap *within* playing was 1.4 s, and only ten gaps in the
@@ -131,6 +137,14 @@ class Settings:
     #: one means typing a position. Erring towards more segments is therefore the
     #: cheaper error, and the setting is here for the day that judgement changes.
     segment_gap_s: int = _env_int("SRT_SEGMENT_GAP_S", 8)
+    #: Phase 22a: the shortest pause that can be a segment boundary, and how many times the
+    #: passage's own pulse a pause must be. These five are what ``segment.cut`` reads; they
+    #: are chosen by ``backend/tools/measure_real.py`` rather than by taste.
+    segment_floor_ms: int = _env_int("SRT_SEGMENT_FLOOR_MS", 2_000)
+    segment_pulse_multiplier: float = _env_float("SRT_SEGMENT_PULSE_MULTIPLIER", 2.5)
+    segment_ceiling_ms: int = _env_int("SRT_SEGMENT_CEILING_MS", 30_000)
+    segment_min_notes: int = _env_int("SRT_SEGMENT_MIN_NOTES", 8)
+    segment_max_ms: int = _env_int("SRT_SEGMENT_MAX_MS", 120_000)
     #: Mid-segment silence counted as a restart rather than as phrasing.
     restart_gap_ms: int = _env_int("SRT_RESTART_GAP_MS", 3000)
     #: Notes closer together than this are one attack, so a chord does not read

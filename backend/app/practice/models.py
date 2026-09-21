@@ -475,9 +475,14 @@ class PracticeStatus(BaseModel):
     last_note_ms: int | None = None
     #: The last capture heartbeat, or None when nothing has reported recently.
     capture: CaptureReport | None = None
-    #: Silence the server treats as a segment boundary, in seconds. Reported so the client can
-    #: cut recorded audio on the same rule rather than keeping a second copy of it: audio cut
+    #: Silence the *take-cutter* treats as a boundary, in seconds. Reported so the client can cut
+    #: recorded audio on the same rule rather than keeping a second copy of it: audio cut
     #: somewhere else would disagree with the notes about where a passage ended.
+    #:
+    #: Phase 22a took this number out of the *log*'s segmentation — a stored sitting is cut by
+    #: the adaptive gap in ``segment.cut``, which is not one number — so this is now the
+    #: take-cutter's rule and nothing else. A take is still linked to a segment by the instant
+    #: it started (``repertoire.store.segment_at``), not by sharing a boundary.
     segment_gap_s: int = 0
 
 

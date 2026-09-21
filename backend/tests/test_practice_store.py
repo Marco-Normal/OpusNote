@@ -12,6 +12,7 @@ from app.config import settings
 from app.db import connect
 from app.practice import store
 from app.practice.models import EventBatch, WireNote, WirePedal
+from tests.conftest import phrase_offsets
 
 # 2023-11-15 01:30:00 UTC: safely in the past, so sittings read as "closed".
 BASE_MS = 1_700_011_800_000
@@ -250,10 +251,10 @@ def test_an_open_sitting_is_not_segmented(fresh_db) -> None:
 
 
 def test_two_phrases_become_two_segments(fresh_db) -> None:
-    sitting_id = store.ingest(batch([0, 500, 30_000, 30_500])).sitting_id
+    sitting_id = store.ingest(batch(phrase_offsets(0, 8) + phrase_offsets(30_000, 8))).sitting_id
     segments = store.ensure_segments(sitting_id, now_ms=LATER_MS)
     assert len(segments) == 2
-    assert [segment.note_count for segment in segments] == [2, 2]
+    assert [segment.note_count for segment in segments] == [8, 8]
 
 
 def test_existing_segments_are_never_recomputed(fresh_db) -> None:
@@ -417,7 +418,8 @@ def test_merge_rejoins_a_split_and_keeps_the_label(fresh_db, client) -> None:
 
 
 def test_merging_non_adjacent_segments_is_rejected(fresh_db) -> None:
-    sitting_id = store.ingest(batch([0, 500, 30_000, 30_500, 60_000])).sitting_id
+    phrases = phrase_offsets(0, 8) + phrase_offsets(30_000, 8) + phrase_offsets(60_000, 8)
+    sitting_id = store.ingest(batch(phrases)).sitting_id
     segments = store.ensure_segments(sitting_id, now_ms=LATER_MS)
     assert len(segments) == 3
     with pytest.raises(store.InvalidRequest):
@@ -448,18 +450,20 @@ def test_resegment_refuses_to_discard_labels_without_confirmation(fresh_db, clie
 
 def test_resegment_absorbs_notes_that_arrived_after_segmentation(fresh_db) -> None:
     """The stale-boundary case that makes the endpoint necessary."""
-    sitting_id = _prepared()
+    sitting_id = store.ingest(batch(phrase_offsets(0, 8))).sitting_id
     store.ensure_segments(sitting_id, now_ms=LATER_MS)
-    store.ingest(batch([40_000]))  # a late note, after the 20 s segment gap
+    # A phrase that arrived after the sitting was segmented, past any pause the rule
+    # could have read as part of the first.
+    store.ingest(batch(phrase_offsets(40_000, 8)))
 
     detail = store.sitting_detail(sitting_id, now_ms=LATER_MS)
     covered = sum(segment.note_count for segment in detail.segments)
-    assert covered == 3
-    assert detail.note_count == 4
+    assert covered == 8
+    assert detail.note_count == 16
 
     refreshed = store.resegment_sitting(sitting_id, confirm=True, now_ms=LATER_MS)
     assert len(refreshed) == 2
-    assert sum(segment.note_count for segment in refreshed) == 4
+    assert sum(segment.note_count for segment in refreshed) == 16
 
 
 def test_resegment_missing_sitting_is_not_found(fresh_db) -> None:

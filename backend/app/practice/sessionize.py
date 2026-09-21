@@ -69,9 +69,11 @@ class SessionBuilder:
 def sessionize(notes: Iterable[Note], gap_ms: int) -> list[Window]:
     """Batch rule, defined as the incremental rule applied to sorted notes.
 
-    The same function is called twice with different gaps: ``sitting_gap_s`` for
-    sittings and ``segment_gap_s`` for segments. One implementation, so the two
-    cannot drift apart.
+    One implementation, so the batch and incremental readings of the same stream cannot
+    drift apart. It no longer cuts a stored sitting's segments: Phase 22a replaced that
+    with the adaptive rule in ``segment.cut``, and sittings themselves are opened by the
+    absolute-time query in ``store._find_sitting``. This is kept as the ported reference
+    and is still what ``SessionBuilder`` is defined against.
     """
     builder = SessionBuilder(gap_ms)
     for note in sorted(notes, key=lambda item: (item.epoch_ms, item.pitch)):
