@@ -576,13 +576,22 @@ def test_the_calendar_keeps_written_time_apart_from_measured_time(fresh_db) -> N
 
     # A sitting spanning a minute, today, so the measured series is non-zero on the
     # same day the entry is written about.
+    #
+    # The declared offset is the *runner's*, and the expected day is derived with the same
+    # offset rather than read off the wall clock independently. Sittings are bucketed by the
+    # client's timezone (`local_date`) while `today()` is server-local, and the design assumes
+    # one host in one timezone — so a test that declares UTC on a machine at UTC-3 is asking
+    # about two different days. That made this fail for three hours every evening west of
+    # Greenwich, which is exactly when someone is likely to be practising.
     now = int(time.time() * 1000)
+    offset = datetime.datetime.now().astimezone().utcoffset() or datetime.timedelta()
+    tz_minutes = int(offset.total_seconds() // 60)
     events = [
         WireNote(epoch_ms=now - 120_000, pitch=60, velocity=70, duration_ms=300, channel=0),
         WireNote(epoch_ms=now - 60_000, pitch=62, velocity=70, duration_ms=300, channel=0),
     ]
-    store.ingest(EventBatch(tz_offset_minutes=0, events=events))
-    today = datetime.datetime.now().date().isoformat()
+    store.ingest(EventBatch(tz_offset_minutes=tz_minutes, events=events))
+    today = store.local_date(now, tz_minutes)
 
     conn = connect()
     try:

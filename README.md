@@ -1,5 +1,8 @@
 # Opus Note
 
+[![CI](https://github.com/Marco-Normal/OpusNote/actions/workflows/ci.yml/badge.svg)](https://github.com/Marco-Normal/OpusNote/actions/workflows/ci.yml)
+[![Licence: MIT](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
+
 **Notes you play. Notes you keep.**
 
 An adaptive sight-reading coach and practice journal for a real acoustic piano. Opus Note
@@ -21,6 +24,7 @@ browser.
 ## Contents
 
 - [Overview](#overview)
+- [How this was built](#how-this-was-built)
 - [Screenshots](#screenshots)
 - [Architecture](#architecture)
 - [Quick start](#quick-start)
@@ -65,6 +69,35 @@ Selected capabilities:
   piano-roll view and speed-reduced take comparison.
 - **Offline-first operation.** The sampler is fetched once and served locally; nothing at play
   time touches the network.
+
+## How this was built
+
+This project was developed **with AI assistance, under my direction**. I set the goals and made
+the product and architectural decisions; much of the code was written by AI agents working from
+written plans, and I reviewed and verified the result. The unedited record is in this
+repository: [`AGENT-LOG.md`](AGENT-LOG.md) is the session log, and `docs/PLAN-*.md` are the plans
+the work was carried out from.
+
+That is stated plainly here for two reasons. It is true, and it is visible — anyone reading this
+repository will find the log anyway, and finding it unmentioned would be worse than finding it
+explained. And it is the genuinely interesting part of the project. Generating code was never the
+constraint; **deciding what to build and refusing to trust a green tick** was. An AI will
+cheerfully produce code and tests that agree with each other and are both wrong.
+
+So the discipline that made this work is verification, and it is the part worth looking at:
+
+- **[37 falsification scripts](backend/tools/falsifications)** each break the production code
+  deliberately, to prove that an assertion can actually fail. A test that cannot fail is not a
+  test, and a suite of them is a green light over nothing.
+- **[docs/TEST-STRATEGY.md](docs/TEST-STRATEGY.md)** records the suite being graded rather than
+  assumed, including the assertions that were found to be incapable of failing and the ones that
+  passed while the feature was broken.
+- **[docs/PLAN-OPUS-NOTE-IDENTITY.md](docs/PLAN-OPUS-NOTE-IDENTITY.md)** §6 records four places
+  where the written plan was wrong and the code was right, and one verification tier
+  deliberately not run — the kind of thing that is easy to quietly drop.
+
+The interesting claim is not that an AI wrote a piano app. It is that a plan can be held to
+evidence, and that "it passes" can be made to mean something.
 
 ## Screenshots
 
