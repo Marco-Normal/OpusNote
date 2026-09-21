@@ -38,6 +38,16 @@ frontend/.vite/
 piano-progress/
 practice-logger/
 
+# A real backup, kept so tests can run against real data rather than data we invented.
+# It lives *outside* this repo — as a sibling of the repo root — so these patterns are a
+# guard for the accident of one being copied in, and for the workspace root ever being
+# made a repository, which it is not today. All three are anchored to the repo root on
+# purpose: an unanchored `media/` would swallow any directory of that name at any depth.
+# The data is real personal practice history, including a users table. See docs/TEST-DATA.md.
+/piano-ecosystem-backup*.json
+/media/
+/*.bundle
+
 # Editors / OS
 .DS_Store
 *.swp
