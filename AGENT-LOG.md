@@ -2198,4 +2198,80 @@ notice. Verified by building again and finding the notice at the head of both em
 Verified: `./check.sh --fast` green after the config change; every relative link in `README.md` and
 `THIRD-PARTY.md` resolved by script rather than by eye.
 
+## 2026-09-21 — sight-reading agent — Phase 20c landed: reversible log edits, and a streak that forgives one rest day
+
+Scope: `frontend/src/lib/segmentUndo.ts` and its test; `frontend/src/components/PracticeLogView.svelte`,
+`SegmentTimeline.svelte`; `frontend/src/lib/state.svelte.ts`, `types.ts`;
+`backend/app/practice/store.py`, `models.py`; `backend/tests/test_practice_api.py`;
+`backend/tools/falsifications/drop_undo_split_inverse.sh`, `break_streak_on_one_miss.sh`;
+`backend/tools/e2e_browser.py`; `README.md`; `docs/ECOSYSTEM.md`.
+
+Did: the last planned slice of Phase 20. `inverseOf` derives the inverse of a timeline edit by
+**diffing the segment list before and after** rather than by remembering which button was pressed,
+so the offer cannot disagree with what actually happened; it lives in `segmentUndo.ts` because a
+decision inside a component is a decision `node --test` cannot reach. `edit()` — already the single
+funnel every edit goes through — now computes the offer, and the card shows one control labelled
+`Undo split` / `Undo merge` / `Undo label`. `resegment` and `identify` deliberately offer nothing.
+
+**No table and no persisted undo record (20-D3).** The stack is one field in a component, so it dies
+with the page, and the card says "this offer lasts until the page is reloaded" rather than implying
+otherwise. Nothing to migrate and nothing to retire.
+
+**`streak_days` keeps its meaning for a week with no missed day.** `streak()` replaces it and adds
+one tolerated rest day per rolling seven; `streak_grace_used` is the additive field that says when a
+rest day is being counted, so the run length is never read as days played. The three pre-existing
+`streak_days` assertions are untouched and green.
+
+**The one thing undo cannot restore.** A merge nulls the absorbed segment's
+`identification_outcomes.segment_id` (`ON DELETE SET NULL`) and nothing writes it again, so undoing
+a merge restores the segments and their labels but not the matcher's record of one of them. The
+control says "Undo merge" and claims nothing more; `docs/TEST-STRATEGY.md`'s accuracy figure is the
+thing that would otherwise be over-claimed.
+
+Falsifications, both reported `falsified: the check caught the break`:
+`drop_undo_split_inverse.sh` (frontend tier — stops recognising a split, caught by
+`a split is undone by merging the two halves back`) and `break_streak_on_one_miss.sh` (backend tier —
+goes back to breaking on the first miss, caught by
+`test_one_missed_day_keeps_the_streak_and_is_reported` and `test_two_missed_days_in_a_row_end_the_run`).
+The browser tier gained four assertions including that a re-segment offers **no** undo.
+
+**Two temporary breaks, not committed, because the plan's obligation is for the wiring and for
+re-segment rather than for a route.** The undo wiring was broken (`undo = null` always) and the
+browser scenario was watched to fail at `waiting for locator("[data-undo]")`; then `inverseOf`'s
+final `return null` was replaced with an `assign`, and the scenario was watched to fail with
+`FAILED: and a re-segment offers no undo, because the boundaries it replaced are gone`. Both files
+were restored with `git checkout` and the bundle rebuilt, because `frontend/dist` is gitignored and
+a broken build would otherwise outlive the break.
+
+**One gap named rather than implied.** The re-segment *copy* — the sentence added to the button's
+`title` — has no assertion anywhere: `grep -rn "cannot be undone" frontend/src backend/tools backend/tests`
+matches only the component that writes it. So that sentence is verified by reading it back and by
+nothing else, and a future edit that drops it will not turn anything red. Recording it here is the
+point; inventing a check that greps our own source text would be theatre that cannot fail for a real
+reason.
+
+Four deviations from `PLAN-PHASE20C.md`, each recorded because reality had moved past the plan:
+1. Phase 21 rewrote `edit()` after the plan was written (it now applies the server's own answer
+   instead of re-reading), so the pre/post lists are taken around the response rather than around a
+   `load()`. The plan's re-read gate predicted exactly this.
+2. The plan says `inverseOf` returning null for `identify` is what keeps the Undo control off the
+   screen, but it cannot tell `identify` from an assignment — the plan's own unit test pins that it
+   reports the row change as an assign, and `_settle_label` really does move `piece_id`. The
+   suppression therefore lives at the `onidentify` call site via the `{ undoable: false }` option
+   the plan introduced for the undo itself.
+3. There is no confirm *dialog* to add the re-segment warning to — the ask is a button whose label
+   says "(discards labels)" and whose `title` explains it — so the sentence went into that title.
+4. The plan's browser block waits for a `/merge` response when clicking "Undo merge"; undoing a
+   merge is a **split**, so that wait would have hung. The assertion waits on the timeline's
+   `data-segments` instead, which is what the rest of the scenario does. The plan's proposed
+   ECOSYSTEM text (`20a–20c landed; 20d–20e planned`) would also have un-landed 20d and 20e, so the
+   row now reads `20a–20e landed`.
+
+Impact on the other side: none. No route, table, column or wire format changed; `AnalyticsSummary`
+gains one additive field and `streak_days` is unchanged for any week without a missed day.
+`services.py`'s `_streak_days` is deliberately untouched — it is the second owner of this value that
+`docs/TEST-STRATEGY.md`'s appendix already inventories, and retiring it is its own decision rather
+than a passenger on this slice.
+
+
 

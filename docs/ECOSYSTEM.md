@@ -200,7 +200,7 @@ sessionizer and segmentation move across as-is with their tests.
 | 9 | **LAN server** | A planted notebook serving the whole app on the local network: `deploy/`, kiosk autostart, capture heartbeat, upload cap, concurrent-write hardening. | medium |
 | 18 | **The data the logger already has** | 18a: the journal joins the measurement — a sitting link, a real editor, a calendar series. 18b: the pedal, touch and register numbers that are recorded and unused. **Landed.** | medium |
 | 19 | **Playing back what was actually played** | A stale same-pitch note-off silences re-struck notes at the pedal-up — 1,747 notes in the owner's own sessions. Plus one owner for the pedal threshold. **Landed.** | S–M |
-| 20 | **Deliberate practice, the piano-side toolkit, and audio takes** | *How* a segment was practised (20a); hands-free control from the unused sostenuto pedal, count-in choice, real URLs and a command palette (20b); undo and a humane streak (20c); journal and library depth (20d); low-bitrate audio takes captured in-app (20e). Five slices, independently shippable. **20a landed; 20b–20e planned.** | medium–high |
+| 20 | **Deliberate practice, the piano-side toolkit, and audio takes** | *How* a segment was practised (20a); hands-free control from the unused sostenuto pedal, count-in choice, real URLs and a command palette (20b); undo and a humane streak (20c); journal and library depth (20d); low-bitrate audio takes captured in-app (20e). Five slices, independently shippable. **20a–20e landed.** | medium–high |
 
 | 21 | **The log at speed, and the blur you can find** | Blur positions cached beside the count and marked on the sitting strip; and an edit path that applies the server's own answer instead of refetching the matcher's accuracy, the machine's health and the week's ratings after every click. **Landed.** | S |
 
@@ -1378,10 +1378,10 @@ load-bearing: the hands-free gesture is what arms audio capture from the piano b
 without reaching for the computer. The order was not followed: **20e landed first**, then
 **20b**, then **20d**, so the three now meet where they always had to — `runHandsfree`
 dispatches the workout toggle and the capture toggle, and 20b's gesture therefore arms and
-stops takes. `SCHEMA_VERSION` is 5 (20e took it 3 → 4, 20d took it 4 → 5). **20c is the
-only slice still planned.**
+stops takes. `SCHEMA_VERSION` is 5 (20e took it 3 → 4, 20d took it 4 → 5). **20c landed
+last, so all five slices are in.**
 
-**Landed: 20a, 20b, 20d, 20e. Planned: 20c.**
+**Landed: 20a–20e. Nothing in this phase remains planned.**
 
 #### 20a — practice kinds (A1, A3) — landed
 
@@ -1487,7 +1487,7 @@ choice, no URL for anything, and no keyboard path through the app.
 - The palette finds a piece by title, a journal entry by a word that appears only in its
   content, and a sitting by date.
 
-#### 20c — log trust and habit (F1, B3) — planned
+#### 20c — log trust and habit (F1, B3) — landed
 
 **Implementation plan:** [`PLAN-PHASE20C.md`](./PLAN-PHASE20C.md). It derives the inverse of a
 timeline edit by **diffing the segment rows** rather than remembering which button was pressed, and

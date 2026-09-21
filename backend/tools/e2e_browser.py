@@ -2681,6 +2681,34 @@ def scenario_practice_log(browser) -> None:
     page.wait_for_selector('section.timeline[data-segments="2"]', timeout=20_000)
     check(True, "and merged back with its neighbour")
 
+    # --- an edit can be taken back ---
+    #
+    # Wait on the timeline rather than on a URL. Undoing a merge is a *split*: the inverse is
+    # derived from the rows, so the control is named for the edit that was made ("Undo merge")
+    # while the route it calls is the one that puts the boundary back. A wait for a "/merge"
+    # response here would wait for ever, and an assertion that is never reached is the kind that
+    # passes by accident.
+    page.wait_for_selector("[data-undo]", timeout=10_000)
+    before = page.locator(".segment").count()
+    click_button(page, "Undo merge")
+    page.wait_for_selector(f'section.timeline[data-segments="{before + 1}"]', timeout=20_000)
+    check(
+        page.locator(".segment").count() == before + 1,
+        "Undo merge puts the boundary back",
+    )
+    check(
+        page.locator("[data-undo]").count() == 0,
+        "and the offer is gone, because there is nothing further to reverse",
+    )
+    check(
+        page.locator("[data-streak]").count() == 1,
+        "the dashboard reports the streak and whether a rest day is counted",
+    )
+    check(
+        page.locator("[data-week-target]").count() == 1,
+        "and the week review names the target",
+    )
+
     # Re-segment discards the hand-edited boundaries *and* the tag, which is why
     # it is the only destructive path and asks for confirmation when labelled.
     with page.expect_response(lambda r: r.url.endswith("/resegment")):
@@ -2694,6 +2722,10 @@ def scenario_practice_log(browser) -> None:
             ".every((select) => select.value === '')"
         ),
         "re-segmenting discarded the labels it warned about",
+    )
+    check(
+        page.locator("[data-undo]").count() == 0,
+        "and a re-segment offers no undo, because the boundaries it replaced are gone",
     )
 
     # --- installation health ---

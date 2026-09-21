@@ -63,6 +63,14 @@ Selected capabilities:
   segments; no button press is required.
 - **Piece recognition.** Hand-tagged segments become training data, and the matcher offers the
   piece it believes was played, with a way to disagree.
+- **An edit can be taken back.** Splitting, merging and re-tagging a segment are reversible: after
+  any of them the timeline offers *Undo split*, *Undo merge* or *Undo label*, and it works by
+  reversing that one change exactly. The offer lasts until the page is reloaded, and re-segmenting
+  is the exception — it throws every boundary away and rebuilds them, so it says so before it runs.
+- **The streak forgives one rest day a week.** A single missed day does not end it, the dashboard
+  says when a rest day is being counted, and two missed days inside the same week do. Today not
+  being played yet never counts against you. The week review also names your target —
+  *"on 3 of 4 target days"* — which is a preference rather than a score.
 - **Repertoire management** with a journal, tagged and rated, alongside scores (PDF and
   MusicXML) and recordings with waveform A/B loops.
 - **Playback** through the piano itself, a sampled Yamaha C5, or a synthesiser, with a
