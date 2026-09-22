@@ -43,8 +43,12 @@
 #    reported loudly, because every later run would silently inherit it.
 #
 # 4. **An interrupted run leaves the break applied.** Restoring happens on every exit path — success,
-#    failure, error, SIGINT, SIGTERM — through a trap, so a run that is killed at the terminal or by
-#    a timeout cannot leave the tree broken.
+#    failure, error, SIGINT, SIGTERM — through a trap. Two details make that actually true rather than
+#    nominally true: the check runs in the background and is `wait`ed for, because bash defers a trap
+#    until the foreground command returns (an interrupt during a sleeping check would otherwise leave
+#    the break applied until the check finished); and cleanup kills the check and everything it
+#    started *before* restoring, because a check still running is free to write to the files being
+#    restored. Both were found by testing this tool against itself, not by reading it.
 #
 # 5. **A check that hangs certifies nothing** and blocks the operator, so it is bounded by
 #    `SRT_FALSIFY_TIMEOUT` (seconds, default 1800) and a timeout is its own outcome, never a catch.
@@ -129,10 +133,33 @@ bundle_manifest() {
 
 BREAK_APPLIED=0
 OUT=""
+CHECK_PID=""
+CHECK_IS_GROUP_LEADER=0
 cleanup() {
   local status=$?
   # Clear the traps first: without this, a failing command inside cleanup re-enters it.
   trap - EXIT INT TERM
+
+  # Stop the check before touching the tree. A check that is still running would otherwise be free
+  # to write to the files we are about to restore, and the tree would be broken again a moment after
+  # it looked clean. `timeout` runs the check in its own process group and is that group's leader,
+  # so the group can be signalled as a unit; a plain signal to the leader is sent as well, in case
+  # a `timeout` that could not create a group is what started it.
+  if [ -n "$CHECK_PID" ] && kill -0 "$CHECK_PID" 2>/dev/null; then
+    if [ "$CHECK_IS_GROUP_LEADER" = "1" ]; then
+      kill -TERM -"$CHECK_PID" 2>/dev/null || true
+    fi
+    kill -TERM "$CHECK_PID" 2>/dev/null || true
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+      kill -0 "$CHECK_PID" 2>/dev/null || break
+      sleep 0.2
+    done
+    if [ "$CHECK_IS_GROUP_LEADER" = "1" ]; then
+      kill -KILL -"$CHECK_PID" 2>/dev/null || true
+    fi
+    kill -KILL "$CHECK_PID" 2>/dev/null || true
+  fi
+  CHECK_PID=""
 
   if [ "$BREAK_APPLIED" = "1" ]; then
     git checkout -- . >/dev/null 2>&1 || true
@@ -188,13 +215,31 @@ fi
 
 OUT="$(mktemp "${TMPDIR:-/tmp}/falsify.XXXXXX")"
 
-# Run the check, bounded and with its output in a fresh file. Not `eval`: `bash -c` takes a command
-# *line*, which is what a check is, without eval's quoting traps. `bash -o pipefail` because a check
-# written as a pipeline must report the failure of any stage.
+# Run the check in the *background* and `wait` for it, rather than in the foreground. Bash defers a
+# trap until the foreground command returns, so an interrupt during a check that is sleeping, hung
+# or simply slow would not run the restore until that check finished — which is precisely the case
+# the trap exists for. `wait` is interruptible, so the trap runs the moment the signal arrives.
+# Measured, not theorised: the first version of this ran the check in the foreground and an
+# interrupted run left the break applied with the tree dirty.
+#
+# Not `eval`: `bash -c` takes a command *line*, which is what a check is, without eval's quoting
+# traps. `bash -o pipefail` because a check written as a pipeline must report the failure of any
+# stage. Stdin is /dev/null so a check that reads it cannot consume the operator's input.
 run_check() {
   local runner=()
-  if command -v timeout >/dev/null 2>&1; then runner=(timeout "$TIMEOUT_S"); fi
-  ${runner[@]+"${runner[@]}"} bash -o pipefail -c "$CHECK" >"$OUT" 2>&1
+  CHECK_IS_GROUP_LEADER=0
+  if command -v timeout >/dev/null 2>&1; then
+    runner=(timeout "$TIMEOUT_S")
+    # coreutils `timeout` puts the managed command in a fresh process group and leads it, so `$!`
+    # addresses that whole group and cleanup can take down the check and everything it started.
+    CHECK_IS_GROUP_LEADER=1
+  fi
+  ${runner[@]+"${runner[@]}"} bash -o pipefail -c "$CHECK" >"$OUT" 2>&1 </dev/null &
+  CHECK_PID=$!
+  local status=0
+  wait "$CHECK_PID" || status=$?
+  CHECK_PID=""
+  return "$status"
 }
 
 echo "== control: $CHECK on the unbroken tree (it must pass) =="
