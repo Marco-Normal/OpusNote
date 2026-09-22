@@ -2664,3 +2664,72 @@ parameters and two additive response fields (`pinned_level`, `pinned_hand` on an
 score result), mirrored in `frontend/src/lib/types.ts`. Nothing existing changes meaning: an unpinned
 request behaves exactly as before, and `texture` keeps its current levels and descriptions, which is
 recorded as still open in `docs/ECOSYSTEM.md`.
+
+## 2026-09-22 — sight-reading agent — the notes the page was holding, and three more silent failures
+
+Scope: `frontend/src/lib/{api,capture,state.svelte}.ts`,
+`frontend/src/components/{PracticeView,CalibrationView}.svelte`, `frontend/src/app.css`,
+`backend/tools/e2e_browser.py`,
+`backend/tools/falsifications/never_flush_when_the_page_is_hidden.sh` (new),
+`docs/FEATURES.md`. Commit `f48b2ab`.
+
+Did: the first four items of the plan's Step 3, each verified against the source before being
+touched rather than taken from the review that found them.
+
+**The one silent data-loss path.** `flush()` is asynchronous, and a request started in `pagehide` is
+cancelled with the document — so everything played since the last 2 s tick went with the page on every
+reload, kiosk restart or power cut. The docstring even said *"e.g. when the page is being hidden"* and
+nothing was wired to it. `api.practice.ingestOnHide` now hands the batch to `navigator.sendBeacon`,
+which outlives the document, and `capture.flushOnHide` is synchronous by necessity. Held notes are
+included with the duration they have reached rather than dropped, because `flush()` waits
+`MAX_HOLD_MS` and waiting is exactly what is unavailable here — the onset, pitch and velocity are the
+valuable part, and a lower-bound duration beats losing the note. `stop()` still drops them: stopping is
+deliberate, hiding is an accident mid-phrase. If the browser declines to queue the request the batch
+stays buffered, so a `pagehide` from a bfcache entry loses nothing.
+
+The wire shape gained one owner on the way: `practiceBatchBody` builds the body for both the ordinary
+flush and the beacon, because a beacon whose shape had drifted from the ingest body would fail
+silently and only during unload — the one moment nobody is watching.
+
+**The renderer was never disposed before being replaced** in `PracticeView` and `CalibrationView`. Its
+`ResizeObserver` keeps watching the same container and its render chain stays live, so an orphan
+re-renders on the next width change and re-engraves the *previous* exercise over the new one.
+`ScoreViewer.svelte` already had the right shape, which is why the fix is three lines rather than a
+redesign.
+
+**The 450 ms pause before finishing was never held**, unlike `endTimer` beside it. Navigating away
+unmounted the view, and the timer then POSTed the attempt from a dead component, coloured a disposed
+renderer, and assigned to state nothing was rendering.
+
+**Four shared utility classes were dead, and the change list is bounded.** Svelte scopes a component's
+styles to its own elements, so a class defined in one file is a no-op in every other file that asks
+for it. Measured before promoting them, so the blast radius is known rather than hoped: `.tiny` was
+defined once and used in eleven files, so **ten** components were rendering those buttons at full
+size; `.danger` reaches `PassageList.svelte` and `BackupPanel.svelte`, which is the safety affordance —
+`class="danger tiny"` on a Confirm delete button in a component defining neither made the confirmation
+look identical to the Delete that armed it; `.notice` reaches `PracticeLogView.svelte`, whose matcher
+note had no background or border; `.small` reaches five components. A component that declares its own
+version still wins on specificity, so only the places that were silently getting nothing change.
+
+Verified: 968 backend tests; 110 frontend tests; `npm run check` clean; `./check.sh --fast` green in
+77 s; the **whole** browser suite green. The new `scenario_capture_on_hide` sends held note-ons —
+which the periodic flush deliberately does not send, so the assertion cannot race a 2 s timer and pass
+either way — dispatches `pagehide`, and requires the beacon to carry exactly those three pitches to
+`/api/practice/events` with the calendar offset and a duration each. The falsifier removes the
+registration and the scenario reports `0 beacons`.
+
+**A harness bug worth recording, because it is the same class as the code bugs.** The beacon tap was
+first written as a bare arrow function, while the audio tap beside it is an IIFE — `add_init_script`
+evaluates a script, so mine defined a function and never ran, and the failure read as
+`window.__beacons is not iterable`. The lesson is that a tap which silently does nothing looks exactly
+like the bug it is meant to catch, which is why the assertion is "at least one beacon" and not "the
+beacon has the right pitches" alone.
+
+Not done from Step 3, and stated rather than left implied: the CSS promotion carries no falsifier. It
+needs a scenario that renders the confirm flow, and inventing one that asserts a class name is present
+would be the self-referential check this project's §8 warns about. It belongs with Step 5's frontend
+falsification work, where the harness can observe a computed style.
+
+Impact on the other side: no schema, route or setting change. Two additive frontend behaviours (a
+beacon on hide, a disposal before replacement) and four CSS rules promoted from component scope to the
+global sheet.

@@ -180,7 +180,9 @@ that step when the copy would be large.
 ## 6. Practice log
 
 Everything played is logged without any action, once a MIDI device is connected: capture is a
-standing switch rather than a per-sitting button. The server groups notes into **sittings** by
+standing switch rather than a per-sitting button. Notes are sent every two seconds, and whatever the
+page is still holding when it goes away is handed to the browser to deliver after the document is
+gone, so a reload, a kiosk restart or a power cut does not take the tail of the sitting with it. The server groups notes into **sittings** by
 silence and into **segments** by shorter silence, which is normally one piece per segment.
 Nothing is recomputed behind the user's back: a boundary moved by hand stays moved.
 
