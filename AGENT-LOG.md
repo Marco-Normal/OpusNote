@@ -2506,7 +2506,8 @@ Impact on the other side: none. No schema change, no route change, no setting, n
 
 Scope: `backend/tools/falsify.sh`, `backend/tools/falsifications/{read_hand_from_the_staff_position,
 ignore_the_part_when_naming_the_hand}.sh`, `docs/TEST-STRATEGY.md` §8. Commits `6bd8a11` and
-`7acfebd` (the latter amended — see the incident below).
+`a7d8317`, the latter amended so its pre-amend object `7acfebd` is no longer in the history — see the
+incident below.
 
 Did: hardened the tool that certifies every other check, after the `frontend/dist` trap it left in
 its own frontend falsifier was demonstrated during the hand fix. The owner's instruction was that it
@@ -2557,9 +2558,11 @@ running `drop_adaptive_gap.sh` unchanged.
 
 **An incident, recorded because it is the exact hazard this work is about.** A failed interrupt test
 left `frontend/src/lib/route.ts` carrying the test's `// INTERRUPT TEST BREAK` marker, and the next
-`git add -A && git commit` swept it into commit `7acfebd`. It was caught immediately, restored from
-`902904b`, and the commit amended so that it touches only `falsify.sh`; `git diff 902904b --
-frontend/src/lib/route.ts` is empty and the tree is clean. The lesson is that a test harness which
+`git add -A && git commit` swept it into the commit now identified as `a7d8317`. It was caught
+immediately, restored from `902904b`, and the commit amended so that it touches only `falsify.sh`;
+`git diff 902904b -- frontend/src/lib/route.ts` is empty and the tree is clean. The pre-amend object
+`7acfebd` still exists in the object store and still carries the marker, which is why the citation
+above names the reachable commit rather than that one. The lesson is that a test harness which
 mutates tracked files needs its own restore, independent of whether the tool under test restored —
 which is precisely the failure mode `falsify.sh`'s trap exists to prevent, reproduced on the operator
 side.
