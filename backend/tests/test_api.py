@@ -676,11 +676,15 @@ def test_reuse_never_crosses_a_pinned_hand(client):
     right = client.get(
         "/api/exercise/next", params={"skill": "texture", "hands": "RH"}
     ).json()
-    assert {note["hand"] for note in left["expected_notes"]} == {"LH"}
-    assert {note["hand"] for note in right["expected_notes"]} == {"RH"}
+    # The identity claim is asserted first because it is the one that names the defect.
+    # Asserting the hands before it fails on `{'LH'} == {'RH'}` — true, but it reports the
+    # symptom rather than the cause, and a falsifier cannot attribute the failure to this
+    # assertion, so the check would be refused as unattributed evidence.
     assert left["exercise_id"] != right["exercise_id"], (
         "the left-hand exercise was served for a request for the right hand"
     )
+    assert {note["hand"] for note in left["expected_notes"]} == {"LH"}
+    assert {note["hand"] for note in right["expected_notes"]} == {"RH"}
 
 
 def test_reuse_never_crosses_a_pinned_level(client):
