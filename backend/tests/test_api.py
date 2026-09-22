@@ -768,10 +768,13 @@ def test_a_pinned_exercise_is_scored_and_logged_but_moves_no_rating(client):
 
     assert result["score"] == pytest.approx(100.0), "a pinned attempt is still scored"
     assert result["performance_id"] > 0, "and still logged, so the practice is recorded"
-    assert result["rated"] is False
-    assert result["rating_change"] is None, "nothing moved, so there is no change to report"
+    # The invariant first, because it is the one that names the defect. Asserting `rated`
+    # before it fails on `True is False` — true, but a falsifier cannot attribute that to the
+    # claim the break is meant to test, so the run would be refused as unattributed.
     assert _ratings(client) == before, "deliberate practice must not move the ratings"
     assert _rating_events() == events_before, "and must not add a point to the curve"
+    assert result["rated"] is False
+    assert result["rating_change"] is None, "nothing moved, so there is no change to report"
 
 
 def test_the_same_performance_unpinned_still_moves_the_rating(client):
