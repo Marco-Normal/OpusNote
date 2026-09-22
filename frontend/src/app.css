@@ -320,6 +320,47 @@ input[type='radio'] {
   color: var(--accent);
 }
 
+/*
+ * Shared utilities.
+ *
+ * These live here rather than in the component that happened to need them first, because
+ * Svelte scopes a component's <style> to that component's own elements: a `.tiny` defined in
+ * one file is a no-op in the other ten that ask for it, and nothing warns. Three of these had
+ * drifted that way — `.tiny` was defined once and used in eleven files, so ten of them were
+ * rendering buttons at full size; `.danger` and `.notice` were each defined twice and used in
+ * four and three. The worst of them was a safety affordance: `class="danger tiny"` on a
+ * Confirm delete button in a component that defines neither made the confirmation look
+ * identical to the Delete that armed it.
+ *
+ * A component that declares its own version still wins — its scoped rule carries an extra
+ * class-level selector — so promoting these changes only the places that were silently
+ * getting nothing.
+ */
+.tiny {
+  padding: 0 0.35rem;
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.small {
+  font-size: 0.82rem;
+}
+
+.danger {
+  background: var(--bad);
+  border-color: var(--bad);
+  color: #fff;
+}
+
+.notice {
+  font-size: 0.84rem;
+  padding: 0.5rem 0.6rem;
+  border-radius: 8px;
+  background: var(--warn-soft);
+  border: 1px solid var(--warn-line);
+  color: var(--warn);
+}
+
 h1,
 h2,
 h3,

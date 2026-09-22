@@ -55,6 +55,39 @@ import type {
 
 const BASE = '/api';
 
+/**
+ * One batch of played notes.
+ *
+ * Declared once because two paths send it — the ordinary flush and the unload beacon — and a
+ * shape that drifted between them would fail only during unload, which is the one moment
+ * nobody is watching.
+ */
+interface PracticeBatch {
+  source: PracticeSource;
+  events: {
+    epoch_ms: number;
+    pitch: number;
+    velocity: number;
+    duration_ms: number;
+    channel: number | null;
+  }[];
+  /**
+   * Sustain-pedal moves. Optional on the wire: a batch with none is the
+   * ordinary case, and a server that predates the field ignores it.
+   */
+  pedals?: { epoch_ms: number; value: number; channel: number | null }[];
+}
+
+/** The wire body for a batch: the same fields, plus the player's calendar offset. */
+function practiceBatchBody(body: PracticeBatch) {
+  return {
+    // Minutes east of UTC, which is what the server needs to file the
+    // sitting under the player's calendar day.
+    tz_offset_minutes: -new Date().getTimezoneOffset(),
+    ...body,
+  };
+}
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -356,33 +389,34 @@ export const api = {
      * Send a batch of played notes. Absolute epoch ms; the server decides which
      * sitting they belong to.
      */
-    ingest: (body: {
-      source: PracticeSource;
-      events: {
-        epoch_ms: number;
-        pitch: number;
-        velocity: number;
-        duration_ms: number;
-        channel: number | null;
-      }[];
-      /**
-       * Sustain-pedal moves. Optional on the wire: a batch with none is the
-       * ordinary case, and a server that predates the field ignores it.
-       */
-      pedals?: { epoch_ms: number; value: number; channel: number | null }[];
-    }) =>
+    ingest: (body: PracticeBatch) =>
       request<{ sitting_id: number | null; accepted: number; duplicates: number }>(
         '/practice/events',
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            // Minutes east of UTC, which is what the server needs to file the
-            // sitting under the player's calendar day.
-            tz_offset_minutes: -new Date().getTimezoneOffset(),
-            ...body,
-          }),
-        },
+        { method: 'POST', body: JSON.stringify(practiceBatchBody(body)) },
       ),
+
+    /**
+     * Hand a batch to the browser to deliver while the page goes away.
+     *
+     * `sendBeacon` is the only way out of a document that is being unloaded: a `fetch`
+     * started in `pagehide` is cancelled with the page, which is how the tail of a sitting
+     * was lost on every reload, kiosk restart or power cut. It is synchronous on purpose —
+     * there is no second chance — and it reports whether the browser agreed to queue the
+     * request, so the caller can keep the batch rather than believe it was sent.
+     *
+     * The body is built by the same function as `ingest`, because a beacon whose shape had
+     * drifted from the ordinary flush would fail silently and only during unload, which is
+     * the one moment nobody is watching.
+     */
+    ingestOnHide: (body: PracticeBatch): boolean => {
+      if (typeof navigator === 'undefined' || typeof navigator.sendBeacon !== 'function') {
+        return false;
+      }
+      const blob = new Blob([JSON.stringify(practiceBatchBody(body))], {
+        type: 'application/json',
+      });
+      return navigator.sendBeacon(`${BASE}/practice/events`, blob);
+    },
 
     sittings: (limit = 20) => request<SittingSummary[]>(`/practice/sittings?limit=${limit}`),
 

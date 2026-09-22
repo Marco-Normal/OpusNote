@@ -130,7 +130,13 @@ export class CaptureClient {
     this.publish();
   }
 
-  /** Send whatever is ready right now, e.g. when the page is being hidden. */
+  /**
+   * Send whatever is ready right now.
+   *
+   * Asynchronous, so it is the right call for the deliberate exits — finishing a sitting,
+   * finishing a workout — where the page is alive to see it through. For a page that is going
+   * away, use `flushOnHide`: a request started here is cancelled with the document.
+   */
   async flush(): Promise<void> {
     if (this.flushing) return;
     const now = Date.now();
@@ -190,6 +196,54 @@ export class CaptureClient {
       this.flushing = false;
       this.publish();
     }
+  }
+
+  /**
+   * Deliver what is ready as the page goes away.
+   *
+   * Everything between the last 2 s flush and the moment the page is hidden used to be lost —
+   * a reload, a kiosk restart or a power cut took the tail of the sitting with it, in a module
+   * that otherwise guarantees a failed POST is never a lost note. This is the one path that
+   * cannot be asynchronous, so it hands the batch to the browser through `sendBeacon`, which
+   * outlives the document.
+   *
+   * Notes still *held* are included, with the duration they have so far rather than being
+   * dropped. `flush()` waits `MAX_HOLD_MS` before doing that, and waiting is exactly what is
+   * not available here; the onset, pitch and velocity are the valuable part and a duration
+   * that is a lower bound beats losing the note. `stop()` still drops them, because stopping
+   * is a deliberate act and hiding is an accident mid-phrase.
+   */
+  flushOnHide(): void {
+    if (!this.enabled) return;
+    const now = Date.now();
+    for (const notes of this.open.values()) {
+      for (const note of notes) {
+        note.duration_ms = now - note.epoch_ms;
+        this.buffer.push(note);
+      }
+    }
+    this.open.clear();
+
+    if (this.buffer.length === 0 && this.pedals.length === 0) return;
+
+    this.buffer.sort((a, b) => a.epoch_ms - b.epoch_ms || a.pitch - b.pitch);
+    if (this.buffer.length > MAX_BUFFERED) this.buffer = this.buffer.slice(-MAX_BUFFERED);
+    this.pedals.sort((a, b) => a.epoch_ms - b.epoch_ms);
+    if (this.pedals.length > MAX_BUFFERED) this.pedals = this.pedals.slice(-MAX_BUFFERED);
+
+    const batch = this.buffer.slice();
+    const pedals = this.pedals.slice();
+    // Synchronous by necessity: the answer decides whether these are still ours to keep. If
+    // the browser refuses to queue them the batch stays in the buffer, so a page that turns
+    // out not to be going away — `pagehide` also fires for a bfcache entry — loses nothing.
+    if (!api.practice.ingestOnHide({ source: this.source(), events: batch, pedals })) return;
+
+    this.buffer = this.buffer.slice(batch.length);
+    this.pedals = this.pedals.slice(pedals.length);
+    this.sent += batch.length;
+    this.lastSentAt = batch[batch.length - 1]?.epoch_ms ?? this.lastSentAt;
+    this.lastError = null;
+    this.publish();
   }
 
   private receiveOn(note: MonitorNote): void {

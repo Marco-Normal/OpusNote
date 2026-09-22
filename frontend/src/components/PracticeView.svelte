@@ -40,6 +40,14 @@
   let attempt = $state<PlayedNote[]>([]);
   let matcher: LiveMatcher | null = null;
   let endTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * The 450 ms pause that lets the last note's feedback be seen before the result replaces it.
+   *
+   * Held and cleared like `endTimer`, because it is the same kind of hazard: navigating to
+   * another tab unmounts this view, and an unheld timer would then POST the attempt from a dead
+   * component, colour a disposed renderer, and assign to state nothing is rendering.
+   */
+  let completeTimer: ReturnType<typeof setTimeout> | null = null;
   let offBeat: (() => void) | null = null;
   let finishing = false;
   let durations = new Map<number, number>();
@@ -95,7 +103,8 @@
         renderer?.colorByExpectedIndex(liveStatuses);
       }
       if (match.index !== null && matcher.isComplete && !finishing) {
-        setTimeout(() => void finish(), 450);
+        if (completeTimer) clearTimeout(completeTimer);
+        completeTimer = setTimeout(() => void finish(), 450);
       }
     });
 
@@ -134,6 +143,7 @@
   onDestroy(() => {
     delete document.documentElement.dataset.playing;
     if (endTimer) clearTimeout(endTimer);
+    if (completeTimer) clearTimeout(completeTimer);
     offBeat?.();
     metronome.stop();
     app.midi.stopRecording();
@@ -179,6 +189,10 @@
         hands: app.pinnedHand ?? undefined,
       });
       await tick();
+      // Disposed before it is replaced. Its ResizeObserver is still watching the same
+      // container and its render chain is still live, so an orphan re-renders on the next
+      // width change and re-engraves the *previous* exercise over the new one.
+      renderer?.dispose();
       renderer = new ScoreRenderer(scoreContainer);
       // The renderer reports back after every render, including its own
       // resize-driven ones, so these never go stale.

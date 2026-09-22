@@ -369,6 +369,23 @@ NOTE_FILL = """
 }
 """
 
+#: Records what the app hands to `navigator.sendBeacon`, and still delivers it.
+#:
+#: This is the one request in the app that cannot be awaited — the document is gone before a
+#: response could arrive — so it is the one place a failure is completely invisible: nothing
+#: to catch, no status to check, and no page left to report it. Tapping the call is therefore
+#: the only way to assert the wiring at all.
+BEACON_TAP = """
+(() => {
+  window.__beacons = [];
+  const real = navigator.sendBeacon.bind(navigator);
+  navigator.sendBeacon = (url, data) => {
+    window.__beacons.push({ url: String(url), data });
+    return real(url, data);
+  };
+})()
+"""
+
 #: Histogram of painted notehead fills.
 NOTE_FILL_COUNTS = """
 () => {
@@ -467,6 +484,7 @@ def new_page(browser, *, allow_statuses: set[int] | None = None) -> tuple[Page, 
     page = browser.new_page(viewport={"width": 1280, "height": 1000})
     page.add_init_script(FAKE_MIDI)
     page.add_init_script(AUDIO_TAP)
+    page.add_init_script(BEACON_TAP)
     errors: list[str] = []
     page.on(
         "console",
@@ -1304,6 +1322,80 @@ def scenario_pinned_practice(browser) -> None:
     page.screenshot(path=str(SHOTS / "26-pinned-practice.png"), full_page=True)
     check(not errors, f"no console errors ({errors})")
     page.close()
+
+
+def scenario_capture_on_hide(browser) -> None:
+    """The notes the page is holding when it goes away.
+
+    `flush()` is asynchronous, so a reload, a kiosk restart or a power cut took everything
+    buffered since the last 2 s tick — in a module that otherwise guarantees a failed POST is
+    never a lost note, which made this the one silent-loss path left. The fix hands the batch
+    to `sendBeacon`, which outlives the document.
+
+    The notes are sent as *held* note-ons with no release: an unreleased note under
+    `MAX_HOLD_MS` is deliberately not sent by the periodic flush, so what the beacon carries is
+    unambiguously this path's doing and not the timer's. Without that the assertion would race
+    a 2 s interval and pass either way.
+    """
+    print("\n[9] Hiding the page does not take the last notes with it")
+    page, errors = new_page(browser)
+    page.goto(BASE_URL, wait_until="domcontentloaded")
+    wait_for_app(page)
+    ensure_midi(page)
+
+    # The indicator lives in the Log view, and capture is a standing switch that survives the
+    # navigation — which is the property being relied on here, so it is worth confirming.
+    open_log(page)
+    page.wait_for_selector('[data-capture="on"]', timeout=20_000)
+    check(True, "the note log is capturing")
+
+    # Held, never released: still open when the page hides, and still inside MAX_HOLD_MS.
+    pitches = [60, 64, 67]
+    page.evaluate(
+        "(pitches) => pitches.forEach((pitch) => window.__fakeMidi.send([0x90, pitch, 72]))",
+        pitches,
+    )
+    page.wait_for_timeout(300)
+
+    page.evaluate("() => window.dispatchEvent(new PageTransitionEvent('pagehide'))")
+    page.wait_for_timeout(400)
+
+    beacons = page.evaluate(
+        """async () => {
+             const out = [];
+             for (const entry of window.__beacons) {
+               let body = null;
+               try { body = JSON.parse(await entry.data.text()); } catch (error) { body = null; }
+               out.push({ url: entry.url, body });
+             }
+             return out;
+           }"""
+    )
+    print(f"      beacons: {[(b['url'], len((b['body'] or {}).get('events') or [])) for b in beacons]}")
+    check(len(beacons) >= 1, f"hiding the page hands its notes to the browser ({len(beacons)} beacons)")
+
+    sent = beacons[-1]
+    check(
+        sent["url"].endswith("/api/practice/events"),
+        f"and to the ingest route ({sent['url']})",
+    )
+    body = sent["body"] or {}
+    check(
+        sorted(event["pitch"] for event in body.get("events") or []) == pitches,
+        f"with the notes it was holding ({[e['pitch'] for e in body.get('events') or []]})",
+    )
+    check(
+        isinstance(body.get("tz_offset_minutes"), int),
+        "and the same wire shape the ordinary flush sends, offset included",
+    )
+    check(
+        all(event["duration_ms"] >= 0 for event in body.get("events") or []),
+        "every held note carries the duration it had reached, rather than being dropped",
+    )
+
+    check(not errors, f"no console errors ({errors})")
+    page.close()
+
 
 
 
@@ -3972,6 +4064,7 @@ def main() -> int:
                 scenario_two_hands,
                 scenario_left_hand_alone,
                 scenario_pinned_practice,
+                scenario_capture_on_hide,
                 scenario_repertoire,
                 scenario_takes,
                 scenario_practice_log,

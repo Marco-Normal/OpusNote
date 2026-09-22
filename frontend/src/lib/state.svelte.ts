@@ -708,6 +708,10 @@ class AppState {
   }
 
   async bootstrap(): Promise<void> {
+    // The last notes of a sitting are the ones a reload would take. `pagehide` is the only
+    // reliable moment: `beforeunload` is skipped for a bfcache entry, and by `unload` the
+    // document is already gone. Registered once, and it does nothing unless capture is on.
+    window.addEventListener('pagehide', () => this.capture.flushOnHide());
     try {
       await api.health();
       this.apiOnline = true;

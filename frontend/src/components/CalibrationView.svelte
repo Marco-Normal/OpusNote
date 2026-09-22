@@ -32,6 +32,8 @@
   let attempt = $state<PlayedNote[]>([]);
   let matcher: LiveMatcher | null = null;
   let endTimer: ReturnType<typeof setTimeout> | null = null;
+  /** As in PracticeView: held, so leaving the view cannot leave a finish pending behind it. */
+  let completeTimer: ReturnType<typeof setTimeout> | null = null;
   let offBeat: (() => void) | null = null;
   let finishing = false;
   let durations = new Map<number, number>();
@@ -49,7 +51,10 @@
       matcher.register(event.pitch, event.onset);
       liveStatuses = matcher.snapshot;
       renderer?.colorByExpectedIndex(liveStatuses);
-      if (matcher.isComplete && !finishing) setTimeout(() => void finish(), 450);
+      if (matcher.isComplete && !finishing) {
+        if (completeTimer) clearTimeout(completeTimer);
+        completeTimer = setTimeout(() => void finish(), 450);
+      }
     });
     const offRelease = app.midi.onNoteRelease((pitch, durationS) => {
       const index = durations.get(pitch);
@@ -65,6 +70,7 @@
 
   onDestroy(() => {
     if (endTimer) clearTimeout(endTimer);
+    if (completeTimer) clearTimeout(completeTimer);
     offBeat?.();
     metronome.stop();
     app.midi.stopRecording();
@@ -109,6 +115,9 @@
       step = next.step ?? step;
       total = next.total ?? total;
       await tick();
+      // As in PracticeView: an undisposed renderer keeps observing the container and
+      // re-engraves stale music over the new exercise on the next width change.
+      renderer?.dispose();
       renderer = new ScoreRenderer(scoreContainer);
       await renderer.render(exercise.musicxml, exercise.expected_notes, {
         dark: theme.scoreIsDark,
