@@ -8,6 +8,7 @@
 # id rather than duplicate a sitting.
 #
 #   ./falsify.sh backend/tools/falsifications/drop_sittings_legacy_index.sh "./check.sh --fast"
+# CHECK: ./check.sh --fast
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

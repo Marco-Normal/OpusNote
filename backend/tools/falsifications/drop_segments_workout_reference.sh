@@ -8,6 +8,7 @@
 # foreign-key half of the parity test must catch it.
 #
 #   ./falsify.sh backend/tools/falsifications/drop_segments_workout_reference.sh "./check.sh --fast"
+# CHECK: ./check.sh --fast
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

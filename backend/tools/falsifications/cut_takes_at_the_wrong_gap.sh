@@ -5,6 +5,7 @@
 # The test that must catch it is the boundary case in audioCut.test.ts.
 #
 #   ./falsify.sh backend/tools/falsifications/cut_takes_at_the_wrong_gap.sh "cd frontend && npm test"
+# CHECK: cd frontend && npm test
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

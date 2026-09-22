@@ -8,6 +8,7 @@
 # test asserts the outcome row survived with its `segment_id` and score.
 #
 #   ./falsify.sh backend/tools/falsifications/drop_outcome_rebuild_insert.sh "./check.sh --fast"
+# CHECK: ./check.sh --fast
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

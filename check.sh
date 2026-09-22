@@ -4,17 +4,24 @@
 #
 #   ./check.sh --fast    everything that must pass after every edit (budget: 180 s)
 #   ./check.sh --full    the above plus the browser, mutation and scale tiers
+#   ./check.sh --falsify [filter]   every break script, run against the check it declares
 #
 # The tiers exist because a suite nobody runs is decorative. `--fast` is a hard ceiling:
 # if something cannot fit, it moves to `--full` by naming the risk it covers, rather than
 # raising the number.
+#
+# `--falsify` is its own tier rather than part of `--full`, and for the same reason: it runs the
+# check twice per break script — once on the unbroken tree as a positive control, once with the
+# break applied — so a full pass is about an hour. It is the tier that keeps the other tiers
+# honest, not one that can run after every edit.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TIER="${1:---fast}"
+FALSIFY_FILTER="${2:-}"
 
-if [ "$TIER" != "--fast" ] && [ "$TIER" != "--full" ]; then
-  echo "usage: $0 [--fast|--full]" >&2
+if [ "$TIER" != "--fast" ] && [ "$TIER" != "--full" ] && [ "$TIER" != "--falsify" ]; then
+  echo "usage: $0 [--fast|--full|--falsify [filter]]" >&2
   exit 2
 fi
 
@@ -32,6 +39,58 @@ step() {
   echo "== $1 =="
   step_start=$now
 }
+
+# --------------------------------------------------------------------------------------------
+# --falsify: every break script, against the check it declares
+#
+# docs/TEST-STRATEGY.md §8 says no assertion is trusted until it has been seen to fail. Until
+# now that was executed by hand, one script at a time, with the pairing between a break and its
+# check living only in the script's prose — so a break could rot into a no-op and nothing would
+# notice. Each script now carries `# CHECK:` (and `# EXPECT:` where the failure must name the
+# assertion), which is the same example its header already gave, made readable.
+#
+# The outcome that matters is `failed`: the check passed with the break applied, so the assertion
+# it guards cannot fail. `refused` is the tool declining to answer — a check that is already red,
+# a break that stops the build, a timeout — which is a gap to investigate rather than a defect.
+# --------------------------------------------------------------------------------------------
+if [ "$TIER" = "--falsify" ]; then
+  falsified=0; failed=0; refused=0; skipped=0
+  failures=(); refusals=()
+  for script in "$ROOT"/backend/tools/falsifications/*.sh; do
+    name="$(basename "$script")"
+    if [ -n "$FALSIFY_FILTER" ] && [[ "$name" != *"$FALSIFY_FILTER"* ]]; then
+      continue
+    fi
+    if ! grep -q '^# CHECK:' "$script"; then
+      echo "  no check declared   $name"
+      skipped=$((skipped + 1))
+      continue
+    fi
+    printf '  running             %s\n' "$name"
+    out="$("$ROOT/backend/tools/falsify.sh" "$script" 2>&1)"
+    status=$?
+    case "$status" in
+      0) echo "  falsified           $name"; falsified=$((falsified + 1)) ;;
+      1) echo "  FAILED              $name"; failed=$((failed + 1)); failures+=("$name") ;;
+      *) echo "  refused             $name"; refused=$((refused + 1)); refusals+=("$name") ;;
+    esac
+    printf '%s\n' "$out" > "/tmp/falsify-$name.log" 2>/dev/null || true
+  done
+  echo
+  echo "falsify: $falsified falsified, $failed failed, $refused refused, $skipped undeclared"
+  if [ "${#failures[@]}" -gt 0 ]; then
+    echo "these assertions could not fail when their break was applied:" >&2
+    printf '  %s\n' "${failures[@]}" >&2
+  fi
+  if [ "${#refusals[@]}" -gt 0 ]; then
+    echo "these runs were refused, so they prove nothing either way:" >&2
+    printf '  %s\n' "${refusals[@]}" >&2
+  fi
+  [ "$failed" -eq 0 ] || exit 1
+  echo
+  echo "check.sh $TIER passed in $(( $(date +%s) - start ))s"
+  exit 0
+fi
 
 step "backend tests"
 backend pytest -q -m "not slow"

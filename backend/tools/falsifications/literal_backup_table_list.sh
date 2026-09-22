@@ -8,6 +8,7 @@
 # copy of it.
 #
 #   ./falsify.sh backend/tools/falsifications/literal_backup_table_list.sh "./check.sh --fast"
+# CHECK: ./check.sh --fast
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

@@ -6,6 +6,7 @@
 # frontend/src/lib/segmentUndo.test.ts.
 #
 #   ./falsify.sh backend/tools/falsifications/drop_undo_split_inverse.sh "cd frontend && npm test"
+# CHECK: cd frontend && npm test
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

@@ -9,6 +9,7 @@
 # test_segmenting_a_second_sitting_does_not_erase_the_first_s_metrics.
 #
 #   ./falsify.sh backend/tools/falsifications/wipe_other_sittings_metrics.sh "./check.sh --fast"
+# CHECK: ./check.sh --fast
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

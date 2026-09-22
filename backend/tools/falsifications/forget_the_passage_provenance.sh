@@ -6,6 +6,7 @@
 #
 #   ./falsify.sh backend/tools/falsifications/forget_the_passage_provenance.sh \
 #     "cd backend && .venv/bin/python -m pytest -q tests/test_repertoire.py"
+# CHECK: cd backend && .venv/bin/python -m pytest -q tests/test_repertoire.py
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

@@ -6,6 +6,7 @@
 #
 #   ./falsify.sh backend/tools/falsifications/drop_media_source_column.sh \
 #     "cd backend && .venv/bin/python -m pytest -q tests/test_migration_upgrade.py"
+# CHECK: cd backend && .venv/bin/python -m pytest -q tests/test_migration_upgrade.py
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

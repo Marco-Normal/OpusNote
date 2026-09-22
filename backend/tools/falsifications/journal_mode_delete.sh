@@ -6,6 +6,7 @@
 # file copy safe. `test_the_database_is_in_wal_mode_and_can_checkpoint` is the check.
 #
 #   ./falsify.sh backend/tools/falsifications/journal_mode_delete.sh "./check.sh --fast"
+# CHECK: ./check.sh --fast
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

@@ -9,6 +9,7 @@
 # comparison alone would still notice on an upgraded database.
 #
 #   ./falsify.sh backend/tools/falsifications/drop_workout_added_column.sh "./check.sh --fast"
+# CHECK: ./check.sh --fast
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

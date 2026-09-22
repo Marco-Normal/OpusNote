@@ -7,6 +7,7 @@
 #
 #   ./falsify.sh backend/tools/falsifications/drop_capture_segment_link.sh \
 #     "cd backend && .venv/bin/python -m pytest -q tests/test_repertoire.py"
+# CHECK: cd backend && .venv/bin/python -m pytest -q tests/test_repertoire.py
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

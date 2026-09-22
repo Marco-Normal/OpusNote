@@ -6,6 +6,7 @@
 #
 #   ./falsify.sh backend/tools/falsifications/break_streak_on_one_miss.sh \
 #     "cd backend && .venv/bin/python -m pytest -q tests/test_practice_api.py"
+# CHECK: cd backend && .venv/bin/python -m pytest -q tests/test_practice_api.py
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

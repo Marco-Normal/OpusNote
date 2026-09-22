@@ -8,6 +8,7 @@
 #
 #   ./falsify.sh backend/tools/falsifications/drop_blur_positions.sh \
 #     "cd backend && .venv/bin/python -m pytest -q tests/test_pedal.py tests/test_practice_store.py"
+# CHECK: cd backend && .venv/bin/python -m pytest -q tests/test_pedal.py tests/test_practice_store.py
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

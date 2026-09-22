@@ -14,6 +14,7 @@
 #
 #   backend/tools/falsify.sh backend/tools/falsifications/invent_a_microphone_policy_name.sh \
 #     "bash deploy/browser.test.sh"
+# CHECK: bash deploy/browser.test.sh
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

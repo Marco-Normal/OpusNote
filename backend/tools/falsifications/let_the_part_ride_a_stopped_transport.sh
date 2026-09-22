@@ -14,6 +14,7 @@
 #
 #   backend/tools/falsify.sh backend/tools/falsifications/let_the_part_ride_a_stopped_transport.sh \
 #     "(cd frontend && npm run build >/dev/null) && backend/tools/run_e2e.sh playback"
+# CHECK: (cd frontend && npm run build >/dev/null) && backend/tools/run_e2e.sh playback
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

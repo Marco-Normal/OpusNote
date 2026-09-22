@@ -8,6 +8,7 @@
 # test_an_offer_is_a_question_until_it_is_answered.
 #
 #   ./falsify.sh backend/tools/falsifications/drop_kind_basis_guard.sh "./check.sh --fast"
+# CHECK: ./check.sh --fast
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

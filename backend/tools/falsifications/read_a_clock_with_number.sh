@@ -8,6 +8,8 @@
 #
 #   backend/tools/falsify.sh backend/tools/falsifications/read_a_clock_with_number.sh \
 #     "cd frontend && npm test" --expect "exponent and hex notation are not times"
+# CHECK: cd frontend && npm test
+# EXPECT: exponent and hex notation are not times
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

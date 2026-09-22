@@ -8,6 +8,7 @@
 # derived from ADDED_COLUMNS itself could not, because the deleted entry leaves the loop.
 #
 #   ./falsify.sh backend/tools/falsifications/drop_practice_added_column.sh "./check.sh --fast"
+# CHECK: ./check.sh --fast
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

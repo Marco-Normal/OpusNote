@@ -11,6 +11,8 @@
 #
 #   backend/tools/falsify.sh backend/tools/falsifications/carry_the_minute_into_the_hour.sh \
 #     "cd frontend && npm test" --expect "minutes round into the hour"
+# CHECK: cd frontend && npm test
+# EXPECT: minutes round into the hour
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

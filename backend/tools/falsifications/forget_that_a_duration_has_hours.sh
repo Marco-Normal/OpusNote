@@ -8,6 +8,8 @@
 #
 #   backend/tools/falsify.sh backend/tools/falsifications/forget_that_a_duration_has_hours.sh \
 #     "cd frontend && npm test" --expect "a duration past an hour reads as hours"
+# CHECK: cd frontend && npm test
+# EXPECT: a duration past an hour reads as hours
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

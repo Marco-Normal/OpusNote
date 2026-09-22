@@ -7,6 +7,7 @@
 #
 #   ./falsify.sh backend/tools/falsifications/ignore_count_in_preference.sh \
 #     "cd frontend && npm run build >/dev/null && cd .. && backend/tools/run_e2e.sh bench"
+# CHECK: cd frontend && npm run build >/dev/null && cd .. && backend/tools/run_e2e.sh bench
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

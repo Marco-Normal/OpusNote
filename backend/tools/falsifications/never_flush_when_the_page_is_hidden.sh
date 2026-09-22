@@ -19,6 +19,8 @@
 #     backend/tools/falsifications/never_flush_when_the_page_is_hidden.sh \
 #     "backend/tools/run_e2e.sh capture_on_hide" \
 #     --expect "hiding the page hands its notes to the browser"
+# CHECK: backend/tools/run_e2e.sh capture_on_hide
+# EXPECT: hiding the page hands its notes to the browser
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

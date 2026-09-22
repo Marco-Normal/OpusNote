@@ -8,6 +8,7 @@
 # is the check that must notice.
 #
 #   ./falsify.sh backend/tools/falsifications/unwrap_backup_transaction.sh "./check.sh --fast"
+# CHECK: ./check.sh --fast
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

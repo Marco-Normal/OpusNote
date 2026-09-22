@@ -8,6 +8,7 @@
 # `EXPECTED_COLUMNS` check against a fresh database must catch it.
 #
 #   ./falsify.sh backend/tools/falsifications/migrate_workouts_before_schema.sh "./check.sh --fast"
+# CHECK: ./check.sh --fast
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

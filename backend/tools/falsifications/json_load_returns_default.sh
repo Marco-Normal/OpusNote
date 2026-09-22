@@ -8,6 +8,7 @@
 # `test_a_non_text_value_counts_as_damage` must fail.
 #
 #   ./falsify.sh backend/tools/falsifications/json_load_returns_default.sh "./check.sh --fast"
+# CHECK: ./check.sh --fast
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

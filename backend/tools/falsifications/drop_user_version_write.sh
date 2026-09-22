@@ -7,6 +7,7 @@
 # reports the current version" a check rather than a comment.
 #
 #   ./falsify.sh backend/tools/falsifications/drop_user_version_write.sh "./check.sh --fast"
+# CHECK: ./check.sh --fast
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

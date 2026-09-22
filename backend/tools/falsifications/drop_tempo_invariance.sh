@@ -15,6 +15,7 @@
 #
 #   ./falsify.sh backend/tools/falsifications/drop_tempo_invariance.sh \
 #     "cd backend && .venv/bin/python -m pytest -q tests/test_shingles.py"
+# CHECK: cd backend && .venv/bin/python -m pytest -q tests/test_shingles.py
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

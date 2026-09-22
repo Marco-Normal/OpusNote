@@ -8,6 +8,7 @@
 # test_a_kind_a_person_set_survives_a_split_on_both_halves.
 #
 #   ./falsify.sh backend/tools/falsifications/drop_split_kind_inheritance.sh "./check.sh --fast"
+# CHECK: ./check.sh --fast
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

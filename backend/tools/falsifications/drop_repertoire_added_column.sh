@@ -8,6 +8,7 @@
 # both name the missing column.
 #
 #   ./falsify.sh backend/tools/falsifications/drop_repertoire_added_column.sh "./check.sh --fast"
+# CHECK: ./check.sh --fast
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

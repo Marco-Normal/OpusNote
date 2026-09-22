@@ -12,6 +12,7 @@
 # The browser half of the same break, which needs its own build because `frontend/dist` is
 # gitignored and `falsify.sh` cannot restore it:
 #
+# CHECK: cd frontend && npm test
 #   ./falsify.sh backend/tools/falsifications/let_the_soft_pedal_stop_the_take.sh \
 #     "(cd frontend && npm run build) && backend/tools/run_e2e.sh bench"
 set -euo pipefail

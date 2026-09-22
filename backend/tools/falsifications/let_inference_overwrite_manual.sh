@@ -7,6 +7,7 @@
 # which is built on the slow segment precisely so an offer is produced when the guard goes.
 #
 #   ./falsify.sh backend/tools/falsifications/let_inference_overwrite_manual.sh "./check.sh --fast"
+# CHECK: ./check.sh --fast
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

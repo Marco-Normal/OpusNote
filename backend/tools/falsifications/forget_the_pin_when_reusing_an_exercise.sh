@@ -20,6 +20,8 @@
 #
 # The checks that must catch it are "reuse never crosses a pinned hand" and "reuse never
 # crosses a pinned level" in `backend/tests/test_api.py`.
+# CHECK: reuse never crosses a pinned hand
+# EXPECT: reuse never crosses a pinned level
 #
 #   backend/tools/falsify.sh \
 #     backend/tools/falsifications/forget_the_pin_when_reusing_an_exercise.sh \

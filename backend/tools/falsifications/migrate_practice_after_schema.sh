@@ -8,6 +8,7 @@
 # The upgrade test must fail rather than silently produce a database without the index.
 #
 #   ./falsify.sh backend/tools/falsifications/migrate_practice_after_schema.sh "./check.sh --fast"
+# CHECK: ./check.sh --fast
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

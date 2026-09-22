@@ -96,7 +96,6 @@ while [ $# -gt 0 ]; do
       shift ;;
   esac
 done
-[ -n "$CHECK" ] || CHECK="./check.sh --fast"
 
 if [ -z "$BREAK" ]; then usage; exit 2; fi
 
@@ -111,6 +110,23 @@ if [ ! -x "$BREAK" ]; then
   echo "the break script is not executable: $BREAK" >&2
   echo "(chmod +x it and commit the mode, or the next run of this tool is not reproducible)" >&2
   exit 2
+fi
+
+# The pairing lives in the break script, not in a second list that would have to be kept in step
+# with it. `# CHECK:` and `# EXPECT:` are the machine-readable form of the usage example every
+# script already carries in its header, so `falsify.sh <script>` with no command is enough, and
+# the whole set can be run without anybody retyping a command line.
+if [ -z "$CHECK" ]; then
+  CHECK="$(sed -n 's/^# CHECK: //p' "$BREAK" | head -1)"
+  if [ -n "$CHECK" ]; then
+    echo "check (declared by the break script): $CHECK"
+  else
+    CHECK="./check.sh --fast"
+    echo "no check declared in the break script; falling back to $CHECK" >&2
+  fi
+fi
+if [ -z "$EXPECT" ]; then
+  EXPECT="$(sed -n 's/^# EXPECT: //p' "$BREAK" | head -1)"
 fi
 
 # Does this repository have a frontend bundle that a check might be measuring instead of the source?

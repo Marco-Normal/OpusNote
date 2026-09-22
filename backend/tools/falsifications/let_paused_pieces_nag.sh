@@ -6,6 +6,7 @@
 #
 #   ./falsify.sh backend/tools/falsifications/let_paused_pieces_nag.sh \
 #     "cd backend && .venv/bin/python -m pytest -q tests/test_practice_api.py"
+# CHECK: cd backend && .venv/bin/python -m pytest -q tests/test_practice_api.py
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

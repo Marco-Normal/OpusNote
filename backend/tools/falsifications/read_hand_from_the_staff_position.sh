@@ -21,6 +21,8 @@
 #     backend/tools/falsifications/read_hand_from_the_staff_position.sh \
 #     "backend/tools/run_e2e.sh left_hand" \
 #     --expect "every notehead is coloured as correct"
+# CHECK: backend/tools/run_e2e.sh left_hand
+# EXPECT: every notehead is coloured as correct
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

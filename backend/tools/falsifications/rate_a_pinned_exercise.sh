@@ -15,6 +15,8 @@
 #     backend/tools/falsifications/rate_a_pinned_exercise.sh \
 #     "cd backend && .venv/bin/python -m pytest -q tests/test_api.py" \
 #     --expect "deliberate practice must not move the ratings"
+# CHECK: cd backend && .venv/bin/python -m pytest -q tests/test_api.py
+# EXPECT: deliberate practice must not move the ratings
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

@@ -12,6 +12,8 @@
 #     backend/tools/falsifications/ignore_the_part_when_naming_the_hand.sh \
 #     "cd frontend && npm test" \
 #     --expect "expected: 'LH'"
+# CHECK: cd frontend && npm test
+# EXPECT: expected: 'LH'
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

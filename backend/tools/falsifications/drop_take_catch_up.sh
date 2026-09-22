@@ -11,6 +11,7 @@
 #
 #   ./falsify.sh backend/tools/falsifications/drop_take_catch_up.sh \
 #     "cd backend && .venv/bin/python -m pytest -q tests/test_repertoire.py -k 'open_is_attached or labelled_later'"
+# CHECK: cd backend && .venv/bin/python -m pytest -q tests/test_repertoire.py -k 'open_is_attached or labelled_later'
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

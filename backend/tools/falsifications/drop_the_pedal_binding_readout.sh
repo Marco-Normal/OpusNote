@@ -12,6 +12,7 @@
 #
 # `frontend/dist` is gitignored, so the check builds first and the tree afterwards holds a
 # broken bundle until it is rebuilt.
+# CHECK: (cd frontend && npm run build) && backend/tools/run_e2e.sh bench
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

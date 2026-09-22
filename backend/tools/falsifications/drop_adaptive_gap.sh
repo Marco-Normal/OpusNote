@@ -11,6 +11,7 @@
 #
 #   ./falsify.sh backend/tools/falsifications/drop_adaptive_gap.sh \
 #     "cd backend && .venv/bin/python -m pytest -q tests/test_segment.py"
+# CHECK: cd backend && .venv/bin/python -m pytest -q tests/test_segment.py
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

@@ -9,6 +9,7 @@
 # Run with the fast tier, which includes `npm test`:
 #
 #   ./falsify.sh backend/tools/falsifications/drop_pedal_sustain.sh "./check.sh --fast"
+# CHECK: ./check.sh --fast
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

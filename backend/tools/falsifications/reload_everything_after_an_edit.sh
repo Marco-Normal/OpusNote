@@ -13,6 +13,7 @@
 #
 #   ./falsify.sh backend/tools/falsifications/reload_everything_after_an_edit.sh \
 #     "cd frontend && npm run build >/dev/null && cd .. && backend/tools/run_e2e.sh practice_log"
+# CHECK: cd frontend && npm run build >/dev/null && cd .. && backend/tools/run_e2e.sh practice_log
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
