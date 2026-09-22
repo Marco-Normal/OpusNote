@@ -13,14 +13,14 @@
 # score" and the one-notehead-per-note check in `scenario_left_hand_alone` — the only
 # scenario that runs texture level 2.
 #
-# `frontend/dist` is gitignored and is what the browser is actually served, so the
-# check has to build first, and `dist` must be rebuilt again afterwards or the broken
-# bundle outlives the experiment:
+# This break edits `frontend/src`, and the browser is served the built bundle rather than the
+# source, so `falsify.sh` builds with the break applied and rebuilds on the way out. The check
+# command no longer has to do that itself:
 #
 #   backend/tools/falsify.sh \
 #     backend/tools/falsifications/read_hand_from_the_staff_position.sh \
-#     "(cd frontend && npm run build >/dev/null) && backend/tools/run_e2e.sh left_hand"
-#   (cd frontend && npm run build >/dev/null)   # leave a good bundle behind
+#     "backend/tools/run_e2e.sh left_hand" \
+#     --expect "every notehead is coloured as correct"
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"

@@ -6,11 +6,12 @@
 # version of it: `handForPart` stops reading the id and the name and returns the
 # positional guess. Every unit case except the two-hand configuration must fail.
 #
-# The check is the unit suite, which needs no browser and no build:
+# The check is the unit suite, which needs no browser:
 #
 #   backend/tools/falsify.sh \
 #     backend/tools/falsifications/ignore_the_part_when_naming_the_hand.sh \
-#     "cd frontend && npm test"
+#     "cd frontend && npm test" \
+#     --expect "expected: 'LH'"
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
