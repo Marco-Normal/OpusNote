@@ -148,9 +148,13 @@ export function durationOf(notes: readonly SynthNote[]): number {
 
 /** The first onset, or 0 when there is nothing. */
 export function firstOnset(notes: readonly SynthNote[]): number {
-  return notes.reduce((first, note) => Math.min(first, note.onset), Infinity) === Infinity
-    ? 0
-    : notes.reduce((first, note) => Math.min(first, note.onset), Infinity);
+  // The same reduce was written out twice, once to test and once to answer. `Infinity` is the
+  // identity for a minimum, so one pass over the list and a fallback is the whole of it.
+  let first = Infinity;
+  for (const note of notes) {
+    if (note.onset < first) first = note.onset;
+  }
+  return first === Infinity ? 0 : first;
 }
 
 /**

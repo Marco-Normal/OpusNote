@@ -14,7 +14,8 @@
     Recording,
     SegmentSummary,
   } from '../lib/types';
-  import { formatDuration, formatMinutes, formatSize } from '../lib/types';
+  import { formatDuration } from '../lib/clock';
+  import { formatMinutes, formatSize } from '../lib/types';
   import type { PiecePracticeDetail } from '../lib/types';
   import LineChart from './LineChart.svelte';
   import ScoreViewer from './ScoreViewer.svelte';

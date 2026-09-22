@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   PEDAL_DOWN,
   durationOf,
+  firstOnset,
   forHands,
   loggedEvents,
   playedEvents,
@@ -295,4 +296,31 @@ test('a pedal-held note no longer silences the key struck again under it', () =>
   const scheduled = resolveOverlaps(sounding);
   assert.equal(scheduled[0].duration, 1.5, 'and it stops where the key was struck again');
   assert.equal(scheduled[1].duration, 7, 'the held note keeps every millisecond it was held');
+});
+
+// --- the first onset of nothing ---
+//
+// A regression guard rather than a new claim: `firstOnset` ran the same reduce twice, once to
+// test it against `Infinity` and once to answer with it, and the cleanup is behaviour-free. The
+// test exists so the rewrite is pinned, and it is falsified by breaking the loop's comparison.
+
+test('the first onset is the lowest one, or zero when there are none', () => {
+  assert.equal(firstOnset([]), 0);
+  assert.equal(
+    firstOnset(
+      loggedEvents([{ onset_ms: 400, duration_ms: 100, pitch: 60, velocity: 64, channel: 0 }]),
+    ),
+    0.4,
+  );
+  assert.equal(
+    firstOnset(
+      loggedEvents([
+        { onset_ms: 900, duration_ms: 100, pitch: 60, velocity: 64, channel: 0 },
+        { onset_ms: 200, duration_ms: 100, pitch: 62, velocity: 64, channel: 0 },
+        { onset_ms: 500, duration_ms: 100, pitch: 64, velocity: 64, channel: 0 },
+      ]),
+    ),
+    0.2,
+    'the lowest onset wins, not the first in the list',
+  );
 });

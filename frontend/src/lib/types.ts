@@ -820,15 +820,6 @@ export interface WorkoutHome {
   window_days: number;
 }
 
-/** Human-readable duration for a recording length in seconds. */
-export function formatDuration(seconds: number | null): string {
-  if (seconds === null || !Number.isFinite(seconds)) return '—';
-  const total = Math.round(seconds);
-  const minutes = Math.floor(total / 60);
-  const remainder = total % 60;
-  return `${minutes}:${String(remainder).padStart(2, '0')}`;
-}
-
 export function formatSize(bytes: number | null): string {
   if (bytes === null || !Number.isFinite(bytes)) return '—';
   if (bytes < 1024) return `${bytes} B`;
@@ -866,12 +857,19 @@ export interface DeleteResult {
   cascaded: Record<string, number>;
 }
 
-/** Minutes as a human would say them: 0.4 -> "0.4 min", 90 -> "1 h 30". */
+/**
+ * Minutes as a human would say them: 0.4 -> "0.4 min", 90 -> "1 h 30 min".
+ *
+ * The rounding happens on the *total* before the split. Rounding the remainder instead — which
+ * this did — let it reach sixty, so 119.7 printed "1 h 60 min" and 59.6 printed "60 min".
+ */
 export function formatMinutes(minutes: number): string {
   if (!Number.isFinite(minutes) || minutes <= 0) return '0 min';
-  if (minutes < 60) return `${minutes < 10 ? minutes.toFixed(1) : Math.round(minutes)} min`;
-  const hours = Math.floor(minutes / 60);
-  const rest = Math.round(minutes % 60);
+  if (minutes < 10) return `${minutes.toFixed(1)} min`;
+  const total = Math.round(minutes);
+  if (total < 60) return `${total} min`;
+  const hours = Math.floor(total / 60);
+  const rest = total % 60;
   return rest === 0 ? `${hours} h` : `${hours} h ${rest} min`;
 }
 
