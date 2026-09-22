@@ -2784,3 +2784,18 @@ all three report `falsified` with the failure attributed.
 
 Impact on the other side: none. No API, schema, route or setting change. `formatDuration` is exported
 from `clock.ts` now instead of `types.ts`, and it was imported in exactly one place.
+
+## 2026-09-22 — sight-reading agent — correction to the Step 4 entry above
+
+Scope: `AGENT-LOG.md` only. No code, docs or tests.
+
+Did: the entry above says "121 frontend tests (was 110)", and so does the commit message for
+`49ab1ed`. That number was measured before the `firstOnset` guard was added, and never re-measured.
+At the tip, `npm test` in `frontend/` reports **122 passed**. The backend figure (968) and the
+`./check.sh --fast` result are correct.
+
+This is the same mistake, in the same file, as the Phase 22 entry corrected on 2026-09-21 — a test
+count written down once and not re-read after the last test was added. Appending rather than editing,
+per this file's rule.
+
+Impact on the other side: none. The count was the only wrong thing.
