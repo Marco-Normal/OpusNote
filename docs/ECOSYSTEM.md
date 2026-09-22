@@ -1834,14 +1834,32 @@ in the whole selector is `forced_key` for `key_signature` (`adaptive/selector.py
 passes** — the level-override plumbing was started and abandoned. The frontend's `forcedSkill`
 select chooses which skill is the *focus*, not its level.
 
-**The shape of the fix, before it is built.** An override orthogonal to level — the hand and the
-clef — mirroring `forced_key`'s precedent, so a right-hand or bass-clef exercise is available at
-any level. It must join the reuse key: `practice/store.find_reusable_exercise` pins
-`levels_key + target_skill + bars + key_name`, and its own docstring records why (*"matching on the
-target skill alone served exercises built for a different level profile"*). A hand or clef override
-absent from that key would serve material that does not match what was asked for — the same bug,
-for the fourth time. Whether `texture`'s levels 1–2 are retired outright or kept as a legacy
-reading is an open question for that work, not for this record.
+**Landed (2026-09-22).** An override orthogonal to level:
+`GET /api/exercise/next?level=N&hands=RH|LH|both`, two Setup controls, and a pinned chip with an ×
+for each. `level` sets every dimension, because "practise level 2" means level-2 material rather than
+level-2 melody over level-5 rhythm — and unlike the `max_level` parameter that sat unused at
+`adaptive/selector.py:55`, a pin can raise a level as well as lower it. `hands` overrides what the
+level would have chosen and nothing else, with `both` honoured at levels 1 and 2 where the level
+alone would never emit two hands.
+
+**A pinned exercise is not rated.** It is scored and logged like any other, and only the rating is
+held still: a perfect run at pinned level 1 against a rating of 900 is still worth about +2.6 under
+Elo, so twenty runs of easy bass-clef drilling would move the rating ~50 points while the player did
+easier work than usual. The result carries `rated: false` and the panel says *not rated · you pinned
+it*, rather than leaving an absent change that reads like a scoring failure.
+
+Both pins joined `practice/store.find_reusable_exercise`'s key — the fifth time that key has had to
+learn a field, after the target skill, the level profile, the bar count and the pinned key.
+`pinned_hand` is the one that matters most, because two requests differing only in hand produce an
+*identical* level profile; and `pinned_level` matters even though the levels already differ, because
+a profile the rating happens to derive as uniform would otherwise be served a pinned exercise, which
+is unrated. Both live in `params_json` beside `pinned_key`, so there is no schema change and no
+`SCHEMA_VERSION` bump.
+
+**Still open from this decision:** whether `texture`'s levels 1–2 should be retired outright now that
+handedness is choosable independently. They still read "Right hand alone" and "Left hand alone" while
+levels 3–10 read as voicing, so the taxonomy mixes two axes at its bottom end.
+
 
 ### Risks, stated plainly
 

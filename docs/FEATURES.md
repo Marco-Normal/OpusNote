@@ -98,6 +98,21 @@ rather than presenting a score that scrolls.
 volume beside it. Both are remembered, and the transport reports how many beats the count-in
 actually used. The count-in length follows the first bar's meter rather than assuming 4/4.
 
+**Deliberate practice: pinning the difficulty and the hand.** Left alone, the difficulty comes from
+the ratings, and it also decides which hand you read — level 1 is the right hand, level 2 the left,
+and 3 upward both. That coupling was the defect: reading the bass clef was possible only by being
+rated at level 2, and the only way out of it was to be rated higher. Setup therefore offers
+**Difficulty** (from my ratings, or level 1–10) and **Hands** (from the difficulty, right, left or
+both), independently, so easy material in the bass clef and hard material in the right hand are both
+available. Either can be let go from the × beside it in Practice, and both are remembered.
+
+A pinned exercise **is scored and logged, and does not change the ratings** — you chose the
+material, so it is not an assessment of you. The results panel says *not rated · you pinned it*
+rather than leaving an unexplained absent change. The reason is arithmetic: a perfect run at pinned
+level 1 against a rating of 900 is still worth about +2.6 under Elo, so twenty runs of easy
+bass-clef drilling would move the rating about 50 points while you did easier work than usual —
+and the rating is what chooses the automatic material.
+
 ## 5. The library
 
 The **Library** section owns composers, pieces, the journal written about them, and the

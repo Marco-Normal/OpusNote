@@ -2583,3 +2583,84 @@ removed.
 
 Impact on the other side: none. No application code, schema, route or setting changes. The tool's
 interface is a superset of what it was.
+
+## 2026-09-22 — sight-reading agent — pinned practice: choose the difficulty, choose the hand
+
+Scope: `backend/app/{skills_data,models,main,services,store}.py`,
+`backend/app/adaptive/selector.py`, `backend/app/music/generator.py`,
+`backend/tests/{test_adaptive,test_generator,test_api}.py`, `backend/tools/e2e_browser.py`,
+`backend/tools/falsifications/{forget_the_pin_when_reusing_an_exercise,rate_a_pinned_exercise}.sh`
+(new), `frontend/src/lib/{types,api,state.svelte}.ts`,
+`frontend/src/components/{SetupPanel,PracticeView,ResultsPanel}.svelte`,
+`docs/{ECOSYSTEM,ENGINEERING,FEATURES}.md`. Commits `3b503ee`, `4c2a9af`, `0dbe538`, `b2059fc`.
+
+Did: the owner's decision recorded earlier today was that handedness is a property of the *material*,
+and the reason they gave is sharper than the question was — the real axis is **which staff you are
+reading**, so a bass-clef exercise at level 1 should be selectable because clef familiarity is the
+thing being trained. This is that, built.
+
+**The defect it removes.** The hand was a *consequence* of the difficulty: `TEXTURE_LEVELS` gives
+`("RH",)` at level 1, `("LH",)` at 2 and `("RH", "LH")` at 3–10. So the only way to read the bass clef
+was to be rated at texture 2, and the only way out of it was to be rated higher — the ladder was
+one-way, single-hand material became unreachable at level 3, and level 2 is also where the score
+feedback silently did nothing until `f9c6d58`. The one route to left-hand material was the least
+finished corner of the app.
+
+**Two pins, both deliberate choices.** `level=N` sets every dimension, because "practise level 2"
+means level-2 material rather than level-2 melody over level-5 rhythm; it is not derived from a rating
+so it is neither capped nor fenced, and unlike `selector.py:55`'s `max_level` — accepted, applied, and
+passed by nothing — it can raise a level as well as lower it. `hands=RH|LH|both` overrides what the
+level would have chosen and nothing else, with `both` honoured at levels 1 and 2, where
+`select_pattern` finds no candidate above the level's floor and falls through to `sustained_root`,
+which is what a melody over held roots should be.
+
+**A pinned exercise is not rated** (the owner's decision). It is scored and logged like any other and
+only the rating is held still. The arithmetic that decided it: a perfect run at pinned level 1 against
+a rating of 900 is still worth about +2.6 under Elo, so twenty runs of easy bass-clef drilling would
+move the rating ~50 points while the player did easier work than usual — and the rating is what
+chooses the automatic material. `record_performance` holds `updated` at the current ratings and writes
+no `rating_events` row, so the curve gains no fake point; the result carries `rated: false` and the
+panel says *not rated · you pinned it* rather than leaving an absent change that reads like a scoring
+failure.
+
+**The reuse key has now learned a fifth field.** After the target skill, the level profile, the bar
+count and the pinned key, it gains the pin itself. `pinned_hand` is the one that matters most, because
+two requests differing only in hand produce an *identical* level profile — so without it a request for
+the right hand is served the left-hand exercise. And `pinned_level` matters even though the levels
+already differ, because a profile the rating happens to derive as uniform would otherwise be served a
+pinned exercise, which is unrated, so an ordinary attempt would silently stop counting. Both live in
+`params_json` beside `pinned_key`: no schema change, no `SCHEMA_VERSION` bump, and rows written before
+this read back as unpinned, which is what they were.
+
+**What the falsification tool caught, twice, and both were my fault rather than the code's.** The
+hardened `falsify.sh` refused to certify two falsifiers because the failure it saw was not the one the
+break was meant to test, and it was right both times:
+
+1. **The break was wrong.** `forget_the_pin_when_reusing_an_exercise.sh` first removed only the two
+   *arguments*, leaving the `WHERE` clause filtering on their defaults — so a pinned row could never
+   match and pinned exercises became unreusable, which is the opposite defect. It was caught by "reuse
+   still serves the same pinned request twice", not by the reuse-crossing assertion. The script now
+   removes the conditions and the parameters together, which is what "the pin is not part of the
+   exercise's identity" actually means, and the failed attempt is recorded in its comment.
+2. **The tests were in the wrong order.** With the breaks applied, `test_reuse_never_crosses_a_pinned_hand`
+   failed on `{'LH'} == {'RH'}` and the rating test on `assert True is False` — both true, and both the
+   symptom rather than the cause, before reaching the assertion that names the defect. Reordered so the
+   identity claim and the ratings invariant report first, with the reason at the call site. The
+   assertions are unchanged.
+
+Where `--expect` was omitted the tool says so; these two runs are the argument for always passing it,
+since neither would have been noticed as a mis-attributed pass.
+
+Verified: 968 backend tests (was 935); 110 frontend tests; `npm run check` clean; `./check.sh --fast`
+green in 77 s; the **whole** browser suite green. The new `scenario_pinned_practice` drives both Setup
+controls at a rating of 1400 — comfortably two-handed — and asserts the exercise comes back
+all-level-1 and left-hand-only, that the interface says both are pinned, that the attempt is scored
+99/100, that the result says *not rated*, that all nine ratings are unmoved, and that clearing the pins
+returns level 8 material. Both falsifiers report `falsified` with the failure attributed: the reuse one
+fails **only** `test_reuse_never_crosses_a_pinned_hand`, and the rating one fails both rating tests.
+
+Impact on the other side: no schema change, no new table, no route change — two new optional query
+parameters and two additive response fields (`pinned_level`, `pinned_hand` on an exercise, `rated` on a
+score result), mirrored in `frontend/src/lib/types.ts`. Nothing existing changes meaning: an unpinned
+request behaves exactly as before, and `texture` keeps its current levels and descriptions, which is
+recorded as still open in `docs/ECOSYSTEM.md`.

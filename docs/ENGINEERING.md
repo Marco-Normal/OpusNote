@@ -39,6 +39,23 @@ Two endpoints carry the whole interaction:
 - `GET /api/exercise/next` → MusicXML plus the expected-note timeline
 - `POST /api/score` → played notes in, per-note feedback and sub-scores out
 
+`/api/exercise/next` takes three optional overrides, all of them a deliberate choice by the player
+rather than something derived from a rating: `key` (used by the repertoire bridge, so an exercise can
+be written in the key of the piece being studied), `level=N` (every dimension at N — a pin, so it can
+raise a level as well as lower it, unlike the `max_level` parameter `plan_exercise` accepts and
+nothing passes) and `hands=RH|LH|both`.
+
+`hands` exists because the hand is otherwise a *consequence* of the difficulty: `TEXTURE_LEVELS` gives
+`("RH",)` at level 1, `("LH",)` at 2 and `("RH", "LH")` at 3–10, so the bass clef was readable only at
+one difficulty. `both` is honoured even at levels 1 and 2, where `select_pattern` finds no candidate
+above the level's floor and falls through to `sustained_root`.
+
+Both pins are recorded in the exercise's `params_json`, and both are part of
+`find_reusable_exercise`'s key: two requests differing only in hand produce an identical level
+profile, and a pinned exercise **is not rated** (`record_performance` holds the ratings and writes no
+`rating_events` row), so a pinned row served for an ordinary request would silently stop the attempt
+counting.
+
 Everything else — `/api/calibration/next`, `/api/stats`, `/api/profile` — is convenience on top.
 
 ## 3. Difficulty model
