@@ -2733,3 +2733,54 @@ falsification work, where the harness can observe a computed style.
 Impact on the other side: no schema, route or setting change. Two additive frontend behaviours (a
 beacon on hide, a disposal before replacement) and four CSS rules promoted from component scope to the
 global sheet.
+
+## 2026-09-22 — sight-reading agent — the formatters, the clock parser, and one defect not fixed
+
+Scope: `frontend/src/lib/{types,clock,playback}.ts`, `frontend/src/lib/{types,clock,playback}.test.ts`,
+`frontend/src/components/RepertoireView.svelte`,
+`backend/tools/falsifications/{carry_the_minute_into_the_hour,forget_that_a_duration_has_hours,
+read_a_clock_with_number}.sh` (new), `docs/ECOSYSTEM.md`. Commit `49ab1ed`.
+
+Did: Step 4 of the plan — the four cheap correctness fixes, the first real tests for two modules that
+had none, and one reported defect deliberately left alone.
+
+**Three arithmetic defects, all in text a person reads.** `formatMinutes` rounded the *remainder* and
+never carried it, so 119.7 printed "1 h 60 min" and 59.6 printed "60 min". `formatDuration` had no
+hour branch at all, so an hour-long recording read "60:00" while the playhead and the markers read
+"1:00:00" for the same length — takes are about 14 MB an hour, so an hour is ordinary. `parseClock`
+took anything `Number()` takes: `1e3` was a seek to 16:40 from a typo, `0x10` was a hex literal,
+`1.5` was a fraction of a second the field does not offer, and `1:99` was read as 159 seconds rather
+than refused — the plausible-but-wrong outcome the existing dangling-colon rule exists to prevent.
+Parts must now be digits, and a part after the first must be under sixty.
+
+**The fourth was a duplicate owner, not an arithmetic slip.** `formatDuration` did the same job as
+`clock.formatClock`, one of them with the hour branch and one without. Adding the missing branch would
+have left two owners; the function moved to `clock.ts` beside the formatter it delegates to, and its
+single call site imports it from there. This project's test-strategy appendix names two-owners-for-one-
+value as its recurring defect, and this is the third instance found in a week.
+
+**A fifth discrepancy, found while writing the tests rather than reported.** The docstring of
+`formatMinutes` promised `90 -> "1 h 30"` and the code has always printed `"1 h 30 min"`. The code is
+what every screen already shows, so the *docstring* was corrected; changing the output would have been
+an unrequested cosmetic change across the app.
+
+**One reported defect deliberately not fixed, which is the part of this entry worth reading.**
+`within()` was reported as a bug for including a note exactly on a segment's end, so that it belongs to
+both adjacent segments. `playback.test.ts:149-153` asserts that behaviour by name — *"a note exactly on
+the boundary belongs to the segment that ends there"* — so it is a documented tie-break. Standing Rule 3
+forbids silently changing an existing assertion, and the fix needs a half-open range from the caller,
+which is an API change for at most one duplicated note at one millisecond. Recorded in
+`docs/ECOSYSTEM.md` § Still open instead, with the neighbouring `Math.min(...spread)` in
+`SegmentTimeline.svelte` that `playback.ts` already avoids. This is the second time this review's
+claims needed checking before acting — the first was `flush()`, which was wired to the deliberate exits
+and only missing the unload path.
+
+Also fixed: `firstOnset` ran the same reduce twice, once to test it against `Infinity` and once to
+answer with it.
+
+Verified: 121 frontend tests (was 110); 968 backend tests unchanged; `npm run check` clean;
+`./check.sh --fast` green. Three falsifiers, one per claim, each naming the assertion it must trip —
+all three report `falsified` with the failure attributed.
+
+Impact on the other side: none. No API, schema, route or setting change. `formatDuration` is exported
+from `clock.ts` now instead of `types.ts`, and it was imported in exactly one place.

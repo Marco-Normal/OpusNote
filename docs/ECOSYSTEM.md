@@ -1802,6 +1802,17 @@ Also open: **retiring `practice-logger/`** — its code and history are ported a
 importable, so deleting the directory is the user's call — and the **courtesy time
 signature** at system breaks, which OSMD cannot be talked into.
 
+**Two playback boundaries, recorded rather than changed (2026-09-22).** `within()` in
+`frontend/src/lib/playback.ts` includes a note whose onset falls exactly on a segment's end, so such
+a note belongs to both adjacent segments and plays twice. That is asserted by name in
+`playback.test.ts` — *"a note exactly on the boundary belongs to the segment that ends there"* — so it
+is a documented tie-break rather than an oversight; making it half-open needs the caller to pass an
+exclusive end, which is an API change for at most one duplicated note at one millisecond. Separately,
+`SegmentTimeline.svelte` takes the first onset of a slice with `Math.min(...notes.map(...))`; a
+spread of a whole sitting's notes is well inside the argument limit at the scale the log reaches
+today, but `playback.ts` uses an explicit loop for exactly this reason and the two should agree
+before the log is large enough for it to matter.
+
 **Narrowed by Phase 22 (still open).** Phase 22 does not generate or loop a section, so the
 feature above is unchanged. What it does remove is the excuse that the log cannot see section
 work: once attempts are grouped into passages, "six attempts at one passage" is a fact the app
