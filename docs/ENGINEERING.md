@@ -168,6 +168,20 @@ rediscovered.
   use `Ds4`, because a `#` in a URL begins a fragment and `D#4.mp3` would fetch `D`. Tone.js
   requires `D#4`. Using the wrong one leaves the sampled piano silent and falls back to the
   synthesiser, so the Setup panel reports a sample failure rather than leaving it to be guessed.
+- **A part's identity is not its staff position.** The renderer has to know which hand a staff
+  belongs to, and the answer is on the part, not on the index: `GraphicalMeasure.ParentStaff` →
+  `Staff.ParentInstrument` carries the MusicXML part id (`IdString`) and name (`Name`). Reading
+  `staffIndex` instead is right for a two-hand exercise and for a right-hand-alone one, and wrong
+  for a left-hand-alone one — a single part named "Left Hand" on staff index 0 — which cost every
+  note its colour at texture level 2 for as long as the level has existed. The authority is
+  `music/expected.py`; the browser mirrors its rule rather than re-deciding it.
+- **A notehead is a group, and painted colours are not one path per note.** VexFlow puts
+  `vf-notehead` on a `<g>` and paints the glyph on the `<path>` inside it, so the group's own
+  computed `fill` is black whatever colour the note is — measuring it reports a working score as
+  uncoloured. Counting every filled `path` fails the other way: `setColor` is called with
+  `applyToLedgerLines` and `applyToTies`, so ledger lines and ties are painted too, and a bass-clef
+  part has far more painted paths than notes (27 for 14). Assert on the `<path>` inside each
+  `.vf-notehead`; the harness's `NOTEHEAD_FILL_COUNTS` is that measurement.
 
 ## 8. Configuration
 

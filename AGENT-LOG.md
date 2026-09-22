@@ -2400,3 +2400,104 @@ points in the entry are correct: 923 after 22b (measured), and 104 frontend test
 `./check.sh --full` is green either way — the count was the only wrong thing.
 
 Impact on the other side: none. Appending rather than editing the entry above, per this file's rule.
+
+## 2026-09-22 — sight-reading agent — the hand comes from the part, not from the staff it sits on
+
+Scope: `frontend/src/lib/score.ts`, `frontend/src/lib/score.test.ts` (new),
+`backend/tools/e2e_browser.py`, `backend/tools/falsifications/read_hand_from_the_staff_position.sh`
+(new), `backend/tools/falsifications/ignore_the_part_when_naming_the_hand.sh` (new),
+`docs/ENGINEERING.md`, `docs/ECOSYSTEM.md`. Commit `f9c6d58`; this entry's own commit follows it.
+
+Did: fixed a defect that made an entire skill level's score feedback invisible, and closed the gap in
+the suite that let it survive. Reported by the owner, who could see it at the keyboard — "the color on
+the left-hand I did notice" — which no tier of this project's verification could.
+
+**The defect.** `ScoreRenderer.correlate()` decided which hand a rendered note belonged to from the
+*position* of the staff: `staffIndex === 0 ? 'RH' : 'LH'`. The API labels every expected note from the
+part's own id and name (`music/expected.py:75-83`). The two rules agree in two of the three
+configurations the generator emits and disagree in the third:
+
+| texture | parts | staff 0 | positional rule | truth |
+| --- | --- | --- | --- | --- |
+| 1 | 1 | "Right Hand" | RH | RH ✓ |
+| **2** | **1** | **"Left Hand"** | **RH** | **LH ✗** |
+| 3–10 | 2 | "Right Hand"; "Left Hand" on staff 1 | RH / LH | ✓ |
+
+Texture level 2 is `{"hands": ("LH",)}` (`skills_data.py:289`) and `generator.py:325` turns that into a
+single melody part named "Left Hand" on staff index 0. So `queues.get(keyFor(measure, 'RH', pitch))`
+never matched, every `expectedIndex` was `null`, and `applyColors()` skipped every note. The only
+symptom was a `console.warn`. Nothing failed anywhere.
+
+**Why no tier caught it, which is the more useful finding.** `scenario_perfect` has asserted exactly
+the right thing since Phase B: *"a broken correlation leaves every note uncoloured… asserting on the
+rendered fill is what makes this real."* It was correct all along and it still is. It simply ran at the
+default rating — 700, which `elo.selection_level` maps to texture 1, the right hand alone — and
+`scenario_two_hands` forces 1300, texture 7. Both are configurations where the positional guess
+coincides with the part name. **The 750–845 band, the only one that emits a single left-hand part, was
+never played by anything.** `scenario_left_hand_alone` is that band: one `set_all_ratings(800)` and the
+existing assertion, on the configuration that disagrees.
+
+**The fix.** `handForPart(id, partName, index)` mirrors `expected.py`'s rule exactly — explicit id
+first, then the name, with positional order kept only as the fallback for MusicXML that names nothing —
+and `correlate()` resolves it once per staff from `GraphicalMeasure.ParentStaff.ParentInstrument`, which
+is where OSMD carries the MusicXML part id (`IdString`) and name (`Name`). Measured:
+
+* RED, before: exercise #119, 19 expected notes, scored **99/100**, `notehead colours:
+  {'rgb(0, 0, 0)': 41}` — **0 of 19 noteheads painted.**
+* GREEN, after: `{'rgb(21, 128, 61)': 18}` — **18 of 18 painted.**
+
+**The assertion needed a third measurement, and this is worth not rediscovering.** Neither existing
+helper answers "is every note coloured". Counting every filled path is the wrong denominator:
+`setColor` is called with `applyToLedgerLines` and `applyToTies`, so ledger lines and ties are paths
+too and a bass-clef part has both — 27 paths for 14 notes, no exact comparison possible. Measuring the
+`.vf-notehead` element itself is the other error: VexFlow puts that class on a `<g>` **group** and
+paints the glyph on the `<path>` inside it, so the group's own computed fill is black whatever colour
+the note is, which reports a working score as uncoloured. The new `NOTEHEAD_FILL_COUNTS` walks the
+group and measures the glyph, which is exactly one per expected note. Both facts are now in
+`docs/ENGINEERING.md` §7.
+
+**A blocker removed on the way.** `ScoreRenderer`'s constructor used a TypeScript parameter property,
+which Node's strip-only type handling refuses (`ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`). That is what kept
+`score.ts` — the client module with the most recorded defect history — unloadable by `node --test`. As
+a plain field it imports, and `score.test.ts` pins the seam against the four (id, name, index) tuples
+the generator actually emits, plus the fallback and case handling. 104 frontend tests became 110.
+
+Deviations and findings worth recording:
+
+1. **The unit test was written after the function, and that is a deviation from the strict route.**
+   The genuine RED was the browser scenario, written first and watched fail, and it is the stronger
+   test because it reproduces the user-visible defect. The seam test came second; it has since been
+   seen to fail, by
+   `falsifications/ignore_the_part_when_naming_the_hand.sh` (4 of 6 cases fail with the rule removed,
+   106/110), so the assertion is not trusted merely because it is new.
+2. **My first assertion was wrong twice, and the browser caught both.** `counts == len(expected)` over
+   *all* filled paths passed for a treble-clef exercise and failed for a bass-clef one, because of
+   ledger lines — that is how the path-counting error was found. And I asserted the result shows an
+   "LH 100%" pill; `ResultsPanel.svelte:92` deliberately draws the per-hand breakdown only when there
+   is more than one hand, so the correct expectation is that a single-hand result does *not* sprout a
+   redundant breakdown beside its own total. The scenario now asserts that instead.
+3. **`frontend/dist` is gitignored and `falsify.sh` cannot restore it — demonstrated, not assumed.**
+   The browser falsification builds the broken bundle, then `git checkout -- .` restores the source and
+   leaves the broken `dist` in place. Verified afterwards: git reported a **clean tree**, the source
+   held the fix, `dist/assets/index-qwB6_ez8.js` was the broken bundle, and `run_e2e.sh left_hand` still
+   failed at `0/15 noteheads coloured`. Rebuilding restored it and the scenario went green. The
+   project's existing frontend falsifier comment names the build-first half of this; the restore half
+   is not handled anywhere, so **a browser falsification leaves the app broken while git reports
+   clean** until the next `npm run build`. `check.sh --fast` does build, so the trap is bounded to
+   running `run_e2e.sh` directly afterwards — which is exactly what verifying a fix does.
+4. **One `max_level` hook is dead and the hand is not selectable at all.** Found while tracing how the
+   owner could reach the right hand: `selector.py:55` accepts `max_level` and `:65` applies it, and
+   nothing ever passes it. There is no control anywhere — API or UI — that chooses the hand or pins a
+   level; the only lever is the rating, which moves one way. So levels 3–10 reprint both hands forever
+   and single-hand material becomes unreachable once texture 3 is reached. The owner's decision on this
+   is recorded in `docs/ECOSYSTEM.md` § *Still open* and is the next piece of work.
+
+Verified: 935 backend tests (unchanged); 110 frontend tests (was 104); `npm run check` clean;
+`./check.sh --fast` green in 74 s; the **whole** browser suite green, including `scenario_perfect`'s and
+`scenario_two_hands`' existing fill assertions, which the changed correlation path could have broken.
+The browser falsification reports `falsified: the check caught the break (exit 1)` at
+`0/13 noteheads coloured`; the unit falsification fails 4 of the 6 cases. Both were run against the
+committed tree, per §8.
+
+Impact on the other side: none. No schema change, no route change, no setting, no type change. The
+`hand` string on `ExpectedNote` is untouched; the renderer now agrees with it instead of guessing.

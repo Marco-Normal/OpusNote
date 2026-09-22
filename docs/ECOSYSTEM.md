@@ -1808,6 +1808,41 @@ work: once attempts are grouped into passages, "six attempts at one passage" is 
 knows, and section practice would be building on a record that is finally accurate rather than
 on a pile of unrelated rows.
 
+#### Decision taken — handedness is a property of the material (2026-09-22)
+
+Asked whether the hand should be a property of the material or of the difficulty, the owner's
+answer is **the material**, and it is sharper than the question was: *"I should be able to get
+harder exercises, level 2, for right hand and easier ones, level one, for left. Furthermore, it is
+useful, because it is different clefs, so maybe I want to have more familiarity with bass clef, and
+therefore I should be able to select it for level 1."*
+
+The real axis is **which staff you are reading**, not which hand is playing — a bass-clef exercise is
+bass-clef reading whether it is a left-hand solo or a left-hand accompaniment. That reframes what
+wants to be selectable: hand and clef, independently of level.
+
+**Why this is a defect and not a preference.** `texture` levels 1–2 encode handedness
+(`{"hands": ("RH",)}`, then `("LH",)`) and levels 3–10 encode voicing; every level from 3 up is
+`("RH", "LH")`. So handedness is a difficulty rung, and the ladder is one-way: once a learner's
+texture rating crosses into level 3, single-hand material is unreachable for the rest of the
+app's life. This is the same class of defect §D of `ROADMAP.md` claimed to fix for `hand_position`
+— *"the taxonomy lies… no skill description claims to control something it does not"* — left in
+place one skill over.
+
+**There is no control today.** `plan_exercise` derives the level from the rating; the only override
+in the whole selector is `forced_key` for `key_signature` (`adaptive/selector.py:84-92`).
+`selector.py:55` accepts a `max_level` parameter that `:65` applies and that **nothing ever
+passes** — the level-override plumbing was started and abandoned. The frontend's `forcedSkill`
+select chooses which skill is the *focus*, not its level.
+
+**The shape of the fix, before it is built.** An override orthogonal to level — the hand and the
+clef — mirroring `forced_key`'s precedent, so a right-hand or bass-clef exercise is available at
+any level. It must join the reuse key: `practice/store.find_reusable_exercise` pins
+`levels_key + target_skill + bars + key_name`, and its own docstring records why (*"matching on the
+target skill alone served exercises built for a different level profile"*). A hand or clef override
+absent from that key would serve material that does not match what was asked for — the same bug,
+for the fourth time. Whether `texture`'s levels 1–2 are retired outright or kept as a legacy
+reading is an open question for that work, not for this record.
+
 ### Risks, stated plainly
 
 | Risk | Treatment |
