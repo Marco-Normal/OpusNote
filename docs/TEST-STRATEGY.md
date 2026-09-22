@@ -584,6 +584,36 @@ The second half is the part that matters. It is the Phase 19 lesson written down
 re-strike assertion was correct by luck until the fix was removed and the failure observed.
 Every check added from here is falsified before it is kept.
 
+### How the rule is executed, and what the tool promises
+
+`backend/tools/falsify.sh <break-script> "<check command>" [--expect "<text>"]` applies a break
+from `backend/tools/falsifications/`, runs the check, and requires it to fail. It only prints
+`falsified` when it has earned that word:
+
+- **The check must pass on the unbroken tree first.** Without that control, a check that was
+  already red — a flaky test, a mistyped command line, a genuinely broken tree — reads exactly
+  like a successful falsification. This is why a falsification costs two runs of the check. It is
+  not optional and there is no flag to skip it.
+- **It owns the built bundle.** `frontend/dist` is gitignored, so `git checkout` cannot restore
+  it, and a check that drives the browser measures the bundle rather than the source. The tool
+  builds before the control, builds again with the break applied, and rebuilds on the way out.
+  A break that stops the project building is refused rather than reported as a catch, because a
+  build failure is not an assertion catching anything.
+- **It restores on every exit path** — success, failure, error, `SIGINT`, `SIGTERM` — and it stops
+  the check before restoring, so a check still running cannot write to the tree after it was
+  cleaned. The restoration is verified, not assumed: a tree that is not clean afterwards is
+  reported loudly.
+- **A non-zero exit is not the same as the right failure.** `--expect TEXT` requires the failing
+  output to contain `TEXT`. Without it the tool says on the way past that any non-zero exit was
+  accepted, because that is weaker evidence and the operator is entitled to know which they have.
+- A timeout (`SRT_FALSIFY_TIMEOUT`, default 1800 s), a check that did not run (126/127), a break
+  that changed nothing, and a dirty tree are each their own refusal, never a pass.
+
+The tool is itself verified by breaking it: the interrupt path was found to leave the break
+applied — bash defers a trap until the foreground command returns, and a surviving check process
+could write after restoration — and both were fixed and re-tested. A tool that certifies checks
+has to be harder to fool than the checks it certifies.
+
 ---
 
 ## 9. What this replaces

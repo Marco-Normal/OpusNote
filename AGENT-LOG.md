@@ -2501,3 +2501,82 @@ committed tree, per §8.
 
 Impact on the other side: none. No schema change, no route change, no setting, no type change. The
 `hand` string on `ExpectedNote` is untouched; the renderer now agrees with it instead of guessing.
+
+## 2026-09-22 — sight-reading agent — the falsification tool now refuses to be wrong
+
+Scope: `backend/tools/falsify.sh`, `backend/tools/falsifications/{read_hand_from_the_staff_position,
+ignore_the_part_when_naming_the_hand}.sh`, `docs/TEST-STRATEGY.md` §8. Commits `6bd8a11` and
+`7acfebd` (the latter amended — see the incident below).
+
+Did: hardened the tool that certifies every other check, after the `frontend/dist` trap it left in
+its own frontend falsifier was demonstrated during the hand fix. The owner's instruction was that it
+be bulletproof, "the tests cannot give wrong results and lead to errors", so the work was to
+enumerate every way it could report something it had not earned and close each one.
+
+**Four ways it could be wrong, all now refused.**
+
+1. **A check that was already red.** `exit 1` from a mistyped command line is not 126 or 127, so it
+   landed in the "falsified" branch: apply a break to an already-failing suite and the tool certifies
+   an assertion it never tested. There is now a **mandatory positive control** — the check runs on
+   the unbroken tree first and must pass — which is why a falsification costs two runs. It is not a
+   flag. Measured: `falsify.sh noop.sh "false"` now exits 2 with "the check is already failing on the
+   unbroken tree", where before it would have printed `falsified`.
+2. **A stale bundle.** `frontend/dist` is gitignored, so `git checkout` cannot restore it. The tool
+   now owns the bundle: it builds before the control, **builds again with the break applied** so the
+   check cannot measure stale code whatever the check command says, and rebuilds on the way out,
+   verifying the content-hashed manifest matches what it was. A break that stops the project building
+   is refused rather than counted as a catch — measured with a break that appends invalid TypeScript,
+   which would otherwise have been reported as a successful falsification.
+3. **Restoration that did not restore.** `git checkout -- .` leaves untracked files behind, so the
+   tree is also cleaned of untracked-but-not-ignored paths (no `-x`, so `frontend/dist`,
+   `backend/data`, `.scratch` and `mutants/` are untouched) and the result is verified: a tree that is
+   not clean afterwards is reported loudly.
+4. **An interrupted run.** Restoring happens on every exit path through a trap. Two details make that
+   true rather than nominal, and both were found by testing the tool against itself:
+   - bash **defers a trap until the foreground command returns**, so with the check in the foreground
+     an interrupt during a sleeping check left the break applied. Proven with a probe: foreground 0
+     traps fired within 2 s, background-plus-`wait` 1. The check now runs in the background and is
+     `wait`ed for, and `wait` is interruptible.
+   - a **check still running can write to the tree after it is restored**, so cleanup stops the check
+     first. coreutils `timeout` puts the managed command in its own process group and leads it, so the
+     group is signalled as a unit; the test's own process listing showed the split (script in group 5,
+     `timeout`/`bash`/`sleep` in group 136), which is why signalling the script alone left `sleep`
+     alive.
+
+Two smaller ones: the check is bounded by `SRT_FALSIFY_TIMEOUT` (default 1800 s) with a timeout as
+its own outcome, because a check that hangs certifies nothing; and the output file was a fixed path,
+so `tail -5` could print a *previous* run's output as this run's evidence — it is a fresh `mktemp`
+per invocation now, kept when the run failed.
+
+`--expect TEXT` is new and optional: it requires the failing output to contain `TEXT`, turning
+"something failed" into "the assertion we meant failed". Without it any non-zero exit counts and the
+tool says so. Reading the command moved from `eval` to `bash -o pipefail -c`, which takes a command
+line without eval's quoting traps. The first two positional arguments are unchanged, so every
+existing falsifier invocation and the ones written into `docs/PLAN-*.md` still work — verified by
+running `drop_adaptive_gap.sh` unchanged.
+
+**An incident, recorded because it is the exact hazard this work is about.** A failed interrupt test
+left `frontend/src/lib/route.ts` carrying the test's `// INTERRUPT TEST BREAK` marker, and the next
+`git add -A && git commit` swept it into commit `7acfebd`. It was caught immediately, restored from
+`902904b`, and the commit amended so that it touches only `falsify.sh`; `git diff 902904b --
+frontend/src/lib/route.ts` is empty and the tree is clean. The lesson is that a test harness which
+mutates tracked files needs its own restore, independent of whether the tool under test restored —
+which is precisely the failure mode `falsify.sh`'s trap exists to prevent, reproduced on the operator
+side.
+
+**A methodology note worth keeping.** The first interrupt test appeared to prove the trap did not
+fire, and it was wrong: a background job in a non-interactive shell **inherits `SIGINT` as ignored**,
+and bash cannot trap a signal ignored on entry, so the test never delivered a signal at all. The
+second version reset the disposition with `signal.signal(SIGINT, SIG_DFL)` before `execvp`, which is
+what a terminal's Ctrl-C actually delivers. Two tests that "failed" were measuring the harness.
+
+Verified: `./check.sh --fast` green (935 backend, 110 frontend, 74 s); both hand falsifiers falsified
+under the new tool with `--expect` matching; an existing backend falsifier unchanged; and the refusal
+paths exercised directly — already-red check, 127, break-that-changes-nothing, build-breaking break,
+`--expect` mismatch (exit 1, not certified) and `--expect` match (certified). `SIGINT` and `SIGTERM`
+both restore `route.ts`, leave the tree clean, kill the check with no process surviving, and leave
+the good bundle in `dist`. The fixtures used lived in the gitignored `.scratch/` and have been
+removed.
+
+Impact on the other side: none. No application code, schema, route or setting changes. The tool's
+interface is a superset of what it was.
