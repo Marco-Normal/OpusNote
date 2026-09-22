@@ -84,6 +84,35 @@ function keyFor(measure: number, hand: string, pitch: number): string {
 }
 
 /**
+ * Which hand a rendered part belongs to.
+ *
+ * The authority is the API, not the staff's position: `music/expected.py` labels
+ * every expected note from the part's own id and name, falling back to order only
+ * when neither says anything. This mirrors that rule exactly, so the two sides
+ * cannot disagree about a note.
+ *
+ * Reading position instead happens to be right in two of the three configurations
+ * the generator emits — a two-hand exercise puts "Right Hand" on staff 0 and
+ * "Left Hand" on staff 1, and a right-hand-alone exercise is a single part that
+ * really is the right hand — and wrong in the third: texture level 2 is one part
+ * named "Left Hand" on staff 0, which a positional rule calls "RH". Every lookup
+ * then missed, every note stayed black, and because the browser suite played
+ * two-hand material the score could be silently uncoloured at exactly that level
+ * with nothing failing. Measured: 0 of 19 noteheads painted, score 99/100.
+ */
+export function handForPart(
+  id: string | null | undefined,
+  partName: string | null | undefined,
+  index: number,
+): 'RH' | 'LH' {
+  const identifier = String(id ?? '').toUpperCase();
+  const name = String(partName ?? '').toLowerCase();
+  if (identifier.startsWith('RH') || name.includes('right')) return 'RH';
+  if (identifier.startsWith('LH') || name.includes('left')) return 'LH';
+  return index === 0 ? 'RH' : 'LH';
+}
+
+/**
  * OSMD's `Pitch.getHalfTone()` is **not** a MIDI number.
  *
  * It returns `12 * (MusicXML octave) + fundamental`, while MIDI is
@@ -154,7 +183,18 @@ export class ScoreRenderer {
     return this.fitsInBudget;
   }
 
-  constructor(private readonly container: HTMLElement) {}
+  /**
+   * A plain field rather than a constructor parameter property: `node --test`
+   * strips types without transforming them, and a parameter property is a
+   * transform Node refuses (`ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`). It is what kept
+   * this module — the one with the most recorded bug history in the client —
+   * unloadable by the test runner.
+   */
+  private readonly container: HTMLElement;
+
+  constructor(container: HTMLElement) {
+    this.container = container;
+  }
 
   async render(
     musicxml: string,
@@ -280,7 +320,12 @@ export class ScoreRenderer {
           if (!measure) continue;
           const measureNumber = measure.MeasureNumber;
           if (!measureNumber || measureNumber < 1) continue;
-          const hand = staffIndex === 0 ? 'RH' : 'LH';
+          // The part's own identity, once per staff rather than once per note.
+          // `ParentStaff` and `ParentInstrument` are the OSMD chain that carries
+          // the MusicXML part id and name; `staffIndex` is only the fallback for
+          // MusicXML that names its parts nothing at all.
+          const instrument = measure.ParentStaff?.ParentInstrument;
+          const hand = handForPart(instrument?.IdString, instrument?.Name, staffIndex);
 
           for (const staffEntry of measure.staffEntries ?? []) {
             for (const voiceEntry of staffEntry.graphicalVoiceEntries ?? []) {

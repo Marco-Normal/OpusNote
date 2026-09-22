@@ -381,6 +381,34 @@ NOTE_FILL_COUNTS = """
 }
 """
 
+#: One entry per notehead glyph, which is one per expected note.
+#:
+#: Neither other measurement answers "is every note coloured". Counting every
+#: filled path is the wrong denominator: `setColor` also paints ledger lines and
+#: ties, and a bass-clef part has both, so the total runs well past the note count
+#: and no exact comparison is possible. Measuring the `vf-notehead` element itself
+#: is the other error: VexFlow puts the class on a `<g>` group and paints the
+#: glyph on the `<path>` inside it, so the group's own computed fill is black no
+#: matter what colour the note is — which reports a working score as uncoloured.
+#: This walks the group and measures the glyph.
+NOTEHEAD_FILL_COUNTS = """
+() => {
+  const counts = {};
+  for (const head of document.querySelectorAll('.score-surface .vf-notehead')) {
+    const glyph = head.tagName.toLowerCase() === 'path' ? head : head.querySelector('path');
+    if (!glyph) continue;
+    const fill = getComputedStyle(glyph).fill;
+    if (fill && fill !== 'none') counts[fill] = (counts[fill] || 0) + 1;
+  }
+  return counts;
+}
+"""
+
+#: How many notehead glyphs the score contains; one per expected note.
+NOTEHEAD_COUNT = """
+() => document.querySelectorAll('.score-surface .vf-notehead').length
+"""
+
 #: hex -> the rgb() form getComputedStyle reports, for exact comparisons.
 HEX_TO_RGB = """
 (hex) => {
@@ -1185,6 +1213,78 @@ def scenario_two_hands(browser) -> None:
     check(not errors, f"no console errors ({errors})")
     page.close()
 
+
+def scenario_left_hand_alone(browser) -> None:
+    """The left hand alone: the one configuration the hand correlation got wrong.
+
+    The renderer inferred the hand from the *position* of the staff — index 0 is the
+    right hand, index 1 the left — while the expected timeline is labelled from the
+    part's own name. The two agree everywhere the suite already looked: a two-hand
+    exercise puts "Right Hand" on staff 0 and "Left Hand" on staff 1, and a
+    right-hand-alone exercise is a single part that really is the right hand. A
+    left-hand-alone exercise is a single part named "Left Hand" on staff index 0,
+    which the positional rule calls "RH"; every lookup missed, every note stayed
+    black, and the only symptom was a console warning.
+
+    So this scenario is the configuration that disagrees, and it makes exactly the
+    painted-fill assertion scenario 1 makes — the assertion that was written to stop
+    the score going silently uncoloured, pointed at the one rating band where it
+    would have caught it.
+    """
+    print("\n[7] Left hand alone: the level the positional hand guess got wrong")
+    # 800 lands on texture 2. The bands are 700-745 = 1 (right hand alone) and
+    # 850 upward = 3+ (both hands), so 750-845 is the only band that emits a single
+    # left-hand part. Measured with elo.selection_level, not assumed.
+    set_all_ratings(800)
+    page, errors = new_page(browser)
+    exercise = load_first_exercise(page)
+    expected = exercise["expected_notes"]
+    hands = {note["hand"] for note in expected}
+
+    check(
+        exercise["levels"]["texture"] == 2,
+        f"the precondition holds: texture 2 is the left hand alone "
+        f"(got texture {exercise['levels']['texture']})",
+    )
+    check(hands == {"LH"}, f"and the exercise is left hand only ({hands})")
+    check(len(expected) > 0, f"exercise #{exercise['exercise_id']} has {len(expected)} expected notes")
+
+    start_run(page)
+    page.evaluate(PLAY_NOTES, [expected, 80, 220])
+    wait_for_phase(page, "result", timeout=90_000)
+
+    score = page.inner_text(".score-ring .value")
+    print(f"      score = {score}")
+    check(int(score) >= 95, f"perfect MIDI input scored {score}/100")
+
+    # The regression this scenario exists for. A broken correlation leaves every
+    # note black while the note strip below still looks perfect.
+    correct = page.evaluate(HEX_TO_RGB, "#15803d")
+    noteheads = page.evaluate(NOTEHEAD_COUNT)
+    counts = page.evaluate(NOTEHEAD_FILL_COUNTS)
+    print(f"      notehead colours: {counts}")
+    check(
+        noteheads == len(expected),
+        f"the score engraves one notehead per expected note ({noteheads}/{len(expected)})",
+    )
+    check(
+        counts.get(correct, 0) == noteheads,
+        f"every notehead is coloured as correct on the score "
+        f"({counts.get(correct, 0)}/{noteheads} at {correct})",
+    )
+    # The hand breakdown is drawn only when there is more than one hand to tell
+    # apart (`ResultsPanel.svelte`), so a single-hand exercise must not sprout a
+    # redundant "LH 100%" beside its own total.
+    by_hand = page.evaluate(
+        """() => [...document.querySelectorAll('.pill')]
+             .map((pill) => pill.innerText.trim())
+             .filter((text) => /^(RH|LH) \\d+%$/.test(text))"""
+    )
+    check(by_hand == [], f"one hand is not split into a per-hand breakdown ({by_hand})")
+
+    page.screenshot(path=str(SHOTS / "10-left-hand-alone.png"), full_page=True)
+    check(not errors, f"no console errors ({errors})")
+    page.close()
 
 
 #: A small database shaped like the Rust `piano-progress` schema, so the import
@@ -3777,6 +3877,7 @@ def main() -> int:
                 scenario_theming,
                 scenario_long_exercises,
                 scenario_two_hands,
+                scenario_left_hand_alone,
                 scenario_repertoire,
                 scenario_takes,
                 scenario_practice_log,
