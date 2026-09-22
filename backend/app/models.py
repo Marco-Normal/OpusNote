@@ -134,6 +134,10 @@ class ExerciseOut(BaseModel):
     #: Left-hand figure used, when the exercise has two hands.
     bass_pattern: str | None = None
     bass_pattern_description: str | None = None
+    #: What the player asked for, when they asked for it. A pinned exercise is deliberate
+    #: practice: scored and logged like any other, and it does not move the ratings.
+    pinned_level: int | None = None
+    pinned_hand: str | None = None
     rationale: str | None = None
     complete: bool | None = None
     step: int | None = None

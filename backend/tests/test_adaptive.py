@@ -237,3 +237,68 @@ def test_served_difficulty_rises_as_the_learner_improves():
     ratings["rhythm"] = 1300.0
     end_level = plan_exercise(ratings, target_skill="rhythm").levels["rhythm"]
     assert end_level > start_level
+
+
+# ---------------------------------------------------------------------------
+# Deliberate practice: pinning the level and the hand
+#
+# The owner's decision (docs/ECOSYSTEM.md § Still open) is that handedness is a
+# property of the *material*, not of the difficulty. A pin is a deliberate choice
+# by the player, so unlike `max_level` it is not a ceiling the rating can sit
+# under — it is the level, and it is the same for every dimension, because
+# "practise level 2" means level-2 material in every respect rather than level-2
+# melody over level-5 rhythm.
+# ---------------------------------------------------------------------------
+
+
+def test_a_pinned_level_sets_every_dimension():
+    ratings = {slug: 1400.0 for slug in SKILL_SLUGS}
+    plan = plan_exercise(ratings, pin_level=2)
+    assert set(plan.levels.values()) == {2}, plan.levels
+
+
+def test_a_pinned_level_raises_as_well_as_lowers():
+    """A pin is not a cap: `max_level` could only ever pull a level down."""
+    low = {slug: 700.0 for slug in SKILL_SLUGS}
+    assert set(plan_exercise(low, pin_level=8).levels.values()) == {8}
+    high = {slug: 1600.0 for slug in SKILL_SLUGS}
+    assert set(plan_exercise(high, pin_level=1).levels.values()) == {1}
+
+
+def test_a_pinned_level_is_refused_outside_the_ladder():
+    ratings = {slug: 1000.0 for slug in SKILL_SLUGS}
+    for bad in (0, -1, 11, 99):
+        with pytest.raises(ValueError):
+            plan_exercise(ratings, pin_level=bad)
+
+
+def test_a_pinned_hand_reaches_the_plan_without_moving_the_levels():
+    ratings = {slug: 900.0 for slug in SKILL_SLUGS}
+    plain = plan_exercise(ratings)
+    pinned = plan_exercise(ratings, forced_hand="LH")
+    assert pinned.forced_hand == "LH"
+    assert pinned.levels == plain.levels, "a hand is material, not difficulty"
+
+
+def test_a_pinned_hand_is_refused_when_it_is_not_a_hand():
+    ratings = {slug: 1000.0 for slug in SKILL_SLUGS}
+    for bad in ("", "both_hands", "rh", "BOTH"):
+        with pytest.raises(ValueError):
+            plan_exercise(ratings, forced_hand=bad)
+
+
+def test_both_hands_can_be_pinned_at_a_level_that_would_not_choose_them():
+    """`both` is a real choice: levels 1 and 2 emit a single part left alone."""
+    ratings = {slug: 1000.0 for slug in SKILL_SLUGS}
+    plan = plan_exercise(ratings, pin_level=1, forced_hand="both")
+    assert plan.levels["texture"] == 1
+    assert plan.forced_hand == "both"
+
+
+def test_no_pin_leaves_the_plan_exactly_as_the_rating_would_have_it():
+    """Every existing caller passes neither pin, so this is the regression guard."""
+    ratings = {slug: 1000.0 for slug in SKILL_SLUGS}
+    plan = plan_exercise(ratings)
+    assert plan.forced_hand is None
+    assert plan.pinned_level is None
+    assert plan.levels["texture"] == elo.selection_level(1000.0, settings)

@@ -12,6 +12,7 @@ import type {
   CaptureStatus,
   Composer,
   Exercise,
+  HandChoice,
   HostInfo,
   IdentificationQuality,
   ImportReport,
@@ -148,11 +149,15 @@ export const api = {
 
   skills: () => request<SkillInfo[]>('/skills'),
 
-  nextExercise: (options: { skill?: string; bars?: number; key?: string } = {}) => {
+  nextExercise: (
+    options: { skill?: string; bars?: number; key?: string; level?: number; hands?: HandChoice } = {},
+  ) => {
     const params = new URLSearchParams();
     if (options.skill) params.set('skill', options.skill);
     if (options.bars) params.set('bars', String(options.bars));
     if (options.key) params.set('key', options.key);
+    if (options.level) params.set('level', String(options.level));
+    if (options.hands) params.set('hands', options.hands);
     const query = params.toString();
     return request<Exercise>(`/exercise/next${query ? `?${query}` : ''}`);
   },

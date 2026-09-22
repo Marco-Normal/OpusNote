@@ -318,3 +318,56 @@ def test_all_seeds_produce_parseable_musicxml():
         exercise = generate_exercise(DEFAULT_USER_LEVELS, bars=4, seed=rng.randrange(1, 10**6))
         parsed = converter.parseData(exercise.musicxml, format="musicxml")
         assert parsed is not None
+
+
+# ---------------------------------------------------------------------------
+# Pinning the hands
+#
+# The hand is implied by the texture level, which is why it could not be chosen: level 2
+# was the only way to read the bass clef. An explicit hand set overrides that implication
+# and nothing else — the rest of the level still decides how hard the material is.
+# ---------------------------------------------------------------------------
+
+
+def test_a_pinned_left_hand_reads_the_bass_clef_at_any_level():
+    levels = dict(DEFAULT_USER_LEVELS)
+    levels["texture"] = 1  # which alone would emit the right hand
+    exercise = generate_exercise(levels, bars=4, seed=21, hands=("LH",))
+    expected = extract_expected(exercise.score, exercise.tempo_bpm)
+    assert {note.hand for note in expected} == {"LH"}
+    assert len(exercise.score.parts) == 1, "one hand is one part"
+    clef = exercise.score.parts[0].getElementsByClass("Clef")[0]
+    assert clef.sign == "F", "the left hand is written in the bass clef"
+
+
+def test_a_pinned_right_hand_is_the_treble_clef_alone():
+    levels = dict(DEFAULT_USER_LEVELS)
+    levels["texture"] = 5  # which alone would emit both hands
+    exercise = generate_exercise(levels, bars=4, seed=22, hands=("RH",))
+    expected = extract_expected(exercise.score, exercise.tempo_bpm)
+    assert {note.hand for note in expected} == {"RH"}
+    assert len(exercise.score.parts) == 1
+    clef = exercise.score.parts[0].getElementsByClass("Clef")[0]
+    assert clef.sign == "G", "the right hand is written in the treble clef"
+
+
+def test_both_hands_can_be_asked_for_at_a_level_that_would_not_emit_them():
+    levels = dict(DEFAULT_USER_LEVELS)
+    levels["texture"] = 1
+    exercise = generate_exercise(levels, bars=4, seed=23, hands=("RH", "LH"))
+    expected = extract_expected(exercise.score, exercise.tempo_bpm)
+    assert {note.hand for note in expected} == {"RH", "LH"}
+    assert exercise.bass_pattern, "a left hand with nothing to play is not two hands"
+
+
+def test_asking_for_no_hand_at_all_leaves_the_level_to_decide():
+    levels = dict(DEFAULT_USER_LEVELS)
+    levels["texture"] = 2
+    plain = generate_exercise(levels, bars=4, seed=24)
+    assert {note.hand for note in extract_expected(plain.score, plain.tempo_bpm)} == {"LH"}
+
+
+@pytest.mark.parametrize("hands", [("RH", "RH"), ("LH", "RH"), ("both",), ()])
+def test_a_hand_set_the_generator_cannot_emit_is_refused(hands):
+    with pytest.raises(ValueError):
+        generate_exercise(dict(DEFAULT_USER_LEVELS), bars=4, seed=25, hands=hands)

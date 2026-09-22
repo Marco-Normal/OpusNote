@@ -50,6 +50,7 @@ from ..skills_data import (
     KEY_LEVELS,
     DEFAULT_USER_LEVELS,
     HAND_POSITION_LEVELS,
+    HANDS_FOR_CHOICE,
     INTERVAL_LEVELS,
     KEY_SIGNATURE_LEVELS,
     METER_LEVELS,
@@ -280,13 +281,29 @@ def generate_exercise(
     bars: int = 4,
     seed: int | None = None,
     key_name: str | None = None,
+    hands: tuple[str, ...] | None = None,
 ) -> GeneratedExercise:
     """Build one exercise.
 
     ``key_name`` pins the key. It is used by the repertoire bridge, so an
     exercise can be written in the key of the piece the player is working on
     rather than in whichever key the key-signature level happens to allow.
+
+    ``hands`` pins which hands play. Normally that is *implied* by the texture level — 1 is
+    the right hand alone, 2 the left, 3 and up are both — which is what made the hand
+    unchoosable and the bass clef reachable only at one difficulty. Pinning overrides the
+    implication and nothing else: the rest of the level still decides how hard the material
+    is, so a left-hand exercise can be asked for at level 1 or at level 8. ``("RH", "LH")``
+    is honoured at levels 1 and 2 as well, where the level alone would never choose it.
     """
+    if hands is not None:
+        wanted = tuple(hands)
+        if wanted not in set(HANDS_FOR_CHOICE.values()):
+            raise ValueError(
+                f"{wanted!r} is not a hand set this generator can emit; "
+                f"expected one of {sorted(set(HANDS_FOR_CHOICE.values()))}"
+            )
+
     resolved = dict(DEFAULT_USER_LEVELS)
     if levels:
         for slug, level in levels.items():
@@ -296,7 +313,11 @@ def generate_exercise(
     rng = random.Random(seed)
 
     texture_level = resolved["texture"]
-    texture = TEXTURE_LEVELS[texture_level]
+    # Copied, not mutated: TEXTURE_LEVELS is the taxonomy itself, and a pinned hand must not
+    # write itself back into the table every other exercise reads.
+    texture = dict(TEXTURE_LEVELS[texture_level])
+    if hands is not None:
+        texture["hands"] = tuple(hands)
     hand_params = HAND_POSITION_LEVELS[resolved["hand_position"]]
     interval_choices = INTERVAL_LEVELS[resolved["intervals"]]
     rhythm_cells = RHYTHM_CELLS[resolved["rhythm"]]

@@ -24,6 +24,23 @@ export interface MeasureMeta {
   bar_quarters: number;
 }
 
+/**
+ * The hands a player may pin, and what each one means.
+ *
+ * Normally the hand is *implied* by the texture level — 1 is right hand alone, 2 left, 3 and
+ * up both — which is what made the bass clef readable only at one difficulty. `both` is
+ * deliberately offered even at levels 1 and 2, where the level alone would never choose it.
+ */
+export const HAND_CHOICES = ['RH', 'LH', 'both'] as const;
+export type HandChoice = (typeof HAND_CHOICES)[number];
+
+/** How to name a hand in the interface. */
+export const HAND_LABELS: Record<HandChoice, string> = {
+  RH: 'Right hand',
+  LH: 'Left hand',
+  both: 'Both hands',
+};
+
 export interface Exercise {
   exercise_id: number;
   musicxml: string;
@@ -39,6 +56,12 @@ export interface Exercise {
   measures: MeasureMeta[];
   /** Left-hand figure used, when the exercise has two hands. */
   bass_pattern: string | null;
+  /**
+   * What the player asked for, when they asked for it. A pinned exercise is deliberate
+   * practice: scored and logged like any other, and it does not move the ratings.
+   */
+  pinned_level: number | null;
+  pinned_hand: HandChoice | null;
   rationale: string | null;
   complete?: boolean | null;
   step?: number | null;
@@ -102,6 +125,11 @@ export interface ScoreResult {
   by_hand: Record<string, { total: number; accuracy: number; wrong_pitch: number; missed: number }>;
   feedback: NoteFeedback[];
   target_skill: string | null;
+  /**
+   * False when the exercise was pinned, so the result panel can say the attempt was practice
+   * rather than leave an absent change that reads like a scoring failure.
+   */
+  rated: boolean;
   rating_change: RatingChange | null;
   skills: SkillSnapshot[];
   next_hint: string;

@@ -18,7 +18,7 @@ from .db import ensure_user_skill_rows, get_or_create_user, transaction
 from .music.expected import ExpectedNote, extract_expected, measure_meta
 from .music.generator import GeneratedExercise, generate_exercise
 from .scoring.engine import PlayedNote, accuracy_by_hand, score_performance
-from .skills_data import DEFAULT_USER_LEVELS, SKILLS, SKILLS_BY_SLUG
+from .skills_data import DEFAULT_USER_LEVELS, HANDS_FOR_CHOICE, SKILLS, SKILLS_BY_SLUG
 from . import store
 
 
@@ -52,8 +52,10 @@ def _plan_to_levels(plan: ExercisePlan) -> dict[str, int]:
 def _generate(
     plan: ExercisePlan, bars: int, seed: int | None = None, key_name: str | None = None
 ) -> tuple[GeneratedExercise, list[ExpectedNote], list[dict[str, Any]]]:
+    # The plan carries the hand pin, so nothing downstream has to be told about it twice.
+    hands = HANDS_FOR_CHOICE[plan.forced_hand] if plan.forced_hand else None
     generated = generate_exercise(
-        _plan_to_levels(plan), bars=bars, seed=seed, key_name=key_name
+        _plan_to_levels(plan), bars=bars, seed=seed, key_name=key_name, hands=hands
     )
     expected = extract_expected(generated.score, generated.tempo_bpm)
     measures = measure_meta(generated.score)
@@ -75,6 +77,10 @@ def _exercise_payload(exercise: dict[str, Any], *, rationale: str | None = None)
         "expected_notes": [note.to_dict() for note in exercise.get("expected", [])],
         "measures": exercise.get("measures", []),
         "bass_pattern": exercise.get("bass_pattern"),
+        # What the player asked for, so the interface can say it is pinned and offer to let
+        # go, and so scoring can tell deliberate practice from an assessment.
+        "pinned_level": exercise.get("pinned_level"),
+        "pinned_hand": exercise.get("pinned_hand"),
         "rationale": rationale,
     }
 
@@ -108,6 +114,8 @@ def create_exercise_from_plan(
             target_skill=plan.target_skill,
             bars=bar_count,
             key_name=key_name,
+            pinned_level=plan.pinned_level,
+            pinned_hand=plan.forced_hand,
         )
         if existing is not None:
             exercise = store.get_exercise(conn, int(existing["id"]))
@@ -141,6 +149,8 @@ def create_exercise_from_plan(
         source=source,
         bass_pattern=generated.bass_pattern,
         pinned_key=key_name,
+        pinned_level=plan.pinned_level,
+        pinned_hand=plan.forced_hand,
     )
     exercise = store.get_exercise(conn, exercise_id)
     assert exercise is not None
@@ -154,6 +164,8 @@ def next_exercise(
     skill: str | None = None,
     bars: int | None = None,
     key_name: str | None = None,
+    pin_level: int | None = None,
+    forced_hand: str | None = None,
     config: Settings | None = None,
 ) -> dict[str, Any]:
     cfg = config or default_settings
@@ -164,6 +176,8 @@ def next_exercise(
         target_skill=skill,
         recent_skills=recent,
         forced_key=key_name,
+        pin_level=pin_level,
+        forced_hand=forced_hand,
         config=cfg,
     )
     return create_exercise_from_plan(
@@ -226,13 +240,23 @@ def record_performance(
     levels: dict[str, int] = exercise["levels"]
     target_skill = exercise.get("target_skill")
     ratings = store.get_ratings(conn, user_id)
-    updated = elo_mod.apply_performance(
-        ratings,
-        levels,
-        result.score / 100.0,
-        target_skill=target_skill,
-        calibration=calibration,
-        config=cfg,
+    # A pinned exercise is deliberate practice: the player chose the material, so the attempt
+    # is not an assessment of them. It is scored and logged exactly like any other, and only
+    # the rating is held still. Without this, drilling easy material inflates the rating that
+    # chooses the automatic material — a perfect run at pinned level 1 against a rating of 900
+    # is still worth about +2.6, and the drift is upward while the work gets easier.
+    rated = exercise.get("pinned_level") is None and exercise.get("pinned_hand") is None
+    updated = (
+        elo_mod.apply_performance(
+            ratings,
+            levels,
+            result.score / 100.0,
+            target_skill=target_skill,
+            calibration=calibration,
+            config=cfg,
+        )
+        if rated
+        else dict(ratings)
     )
 
     by_hand = accuracy_by_hand(result.feedback)
@@ -256,17 +280,18 @@ def record_performance(
         played_notes=[dict(item) for item in played],
         analysis=analysis,
     )
-    store.apply_rating_updates(conn, user_id, updated)
-    # The change is recorded, not just applied: `user_skills` keeps only the current
-    # value, so this row is the only way to see a curve later.
-    store.record_rating_events(
-        conn,
-        user_id,
-        before=ratings,
-        after=updated,
-        score=result.score,
-        performance_id=performance_id,
-    )
+    if rated:
+        store.apply_rating_updates(conn, user_id, updated)
+        # The change is recorded, not just applied: `user_skills` keeps only the current
+        # value, so this row is the only way to see a curve later.
+        store.record_rating_events(
+            conn,
+            user_id,
+            before=ratings,
+            after=updated,
+            score=result.score,
+            performance_id=performance_id,
+        )
 
     passed = result.score >= cfg.pass_threshold
     skill_rows = {row["slug"]: row for row in store.get_skill_rows(conn, user_id)}
@@ -298,6 +323,9 @@ def record_performance(
         "by_hand": by_hand,
         "feedback": [item.to_dict() for item in result.feedback],
         "target_skill": target_skill,
+        # False for a pinned exercise, so the interface can say the attempt was practice
+        # rather than leave a "no change" that looks like a scoring failure.
+        "rated": rated,
         "rating_change": (
             {
                 "skill": target_skill,
@@ -305,7 +333,7 @@ def record_performance(
                 "after": round(focus_after, 1) if focus_after is not None else None,
                 "delta": round((focus_after - focus_before), 1) if focus_before is not None and focus_after is not None else None,
             }
-            if target_skill
+            if target_skill and rated
             else None
         ),
         "skills": [

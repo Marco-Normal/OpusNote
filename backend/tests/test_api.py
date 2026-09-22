@@ -633,3 +633,173 @@ def test_a_past_attempt_can_be_read_back_for_replay(client):
 
 def test_an_unknown_performance_is_not_found(client):
     assert client.get("/api/performances/9999").status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Deliberate practice: pinning the level and the hand
+#
+# The owner's decision (docs/ECOSYSTEM.md § Still open) is that handedness belongs to the
+# material and difficulty is a separate choice. Two requests that differ only in which hand
+# they ask for must therefore never be served each other's exercise — the fourth time this
+# reuse key has had to learn a new field.
+# ---------------------------------------------------------------------------
+
+
+def test_a_pinned_level_is_honoured_in_every_dimension(client):
+    payload = client.get("/api/exercise/next", params={"level": 3}).json()
+    assert set(payload["levels"].values()) == {3}, payload["levels"]
+
+
+def test_a_pinned_hand_is_the_clef_you_asked_to_read(client):
+    """Level 1 alone would emit the right hand; the pin is what makes it the left."""
+    payload = client.get(
+        "/api/exercise/next", params={"skill": "texture", "level": 1, "hands": "LH"}
+    ).json()
+    assert payload["levels"]["texture"] == 1
+    hands = {note["hand"] for note in payload["expected_notes"]}
+    assert hands == {"LH"}, f"asked for the left hand at level 1 and got {hands}"
+
+
+def test_both_hands_can_be_asked_for_at_level_one(client):
+    payload = client.get(
+        "/api/exercise/next", params={"skill": "texture", "level": 1, "hands": "both"}
+    ).json()
+    hands = {note["hand"] for note in payload["expected_notes"]}
+    assert hands == {"RH", "LH"}, f"asked for both hands at level 1 and got {hands}"
+
+
+def test_reuse_never_crosses_a_pinned_hand(client):
+    """The collision this feature creates: equal level profiles, different material."""
+    left = client.get(
+        "/api/exercise/next", params={"skill": "texture", "hands": "LH"}
+    ).json()
+    right = client.get(
+        "/api/exercise/next", params={"skill": "texture", "hands": "RH"}
+    ).json()
+    assert {note["hand"] for note in left["expected_notes"]} == {"LH"}
+    assert {note["hand"] for note in right["expected_notes"]} == {"RH"}
+    assert left["exercise_id"] != right["exercise_id"], (
+        "the left-hand exercise was served for a request for the right hand"
+    )
+
+
+def test_reuse_never_crosses_a_pinned_level(client):
+    one = client.get("/api/exercise/next", params={"skill": "texture", "level": 1}).json()
+    two = client.get("/api/exercise/next", params={"skill": "texture", "level": 2}).json()
+    assert one["levels"]["texture"] == 1
+    assert two["levels"]["texture"] == 2
+    assert one["exercise_id"] != two["exercise_id"]
+
+
+def test_reuse_still_serves_the_same_pinned_request_twice(client):
+    """The pin must not defeat reuse altogether: the same request is the same exercise."""
+    first = client.get("/api/exercise/next", params={"skill": "texture", "level": 4}).json()
+    second = client.get("/api/exercise/next", params={"skill": "texture", "level": 4}).json()
+    assert first["exercise_id"] == second["exercise_id"]
+
+
+def test_a_pinned_request_says_so(client):
+    payload = client.get(
+        "/api/exercise/next", params={"skill": "texture", "level": 2, "hands": "LH"}
+    ).json()
+    assert payload["pinned_level"] == 2
+    assert payload["pinned_hand"] == "LH"
+    assert "level 2" in payload["rationale"]
+
+
+def test_an_unpinned_request_pins_nothing(client):
+    payload = client.get("/api/exercise/next").json()
+    assert payload["pinned_level"] is None
+    assert payload["pinned_hand"] is None
+
+
+@pytest.mark.parametrize("params", [{"level": 0}, {"level": 11}, {"level": "two"}])
+def test_an_impossible_level_is_refused(client, params):
+    assert client.get("/api/exercise/next", params=params).status_code == 422
+
+
+@pytest.mark.parametrize("hands", ["rh", "both_hands", "RH,LH", ""])
+def test_an_unknown_hand_is_refused(client, hands):
+    response = client.get("/api/exercise/next", params={"hands": hands})
+    assert response.status_code == 422, f"{hands!r} was accepted"
+
+
+# ---------------------------------------------------------------------------
+# A pinned exercise is practice, not an assessment
+#
+# The owner's decision (2026-09-22): drilling easy material must not inflate the rating that
+# chooses the automatic material. A perfect run at pinned level 1 against a rating of 900 is
+# still worth about +2.6 under Elo, and twenty of them would move the rating ~50 points while
+# the player was doing easier work than usual — the opposite of what they asked for.
+# ---------------------------------------------------------------------------
+
+
+def _ratings(client) -> dict[str, float]:
+    return {row["slug"]: row["rating"] for row in client.get("/api/skills").json()}
+
+
+def _rating_events() -> int:
+    conn = store.open_connection()
+    try:
+        return int(conn.execute("SELECT COUNT(*) AS n FROM rating_events").fetchone()["n"])
+    finally:
+        conn.close()
+
+
+def test_a_pinned_exercise_is_scored_and_logged_but_moves_no_rating(client):
+    exercise = client.get(
+        "/api/exercise/next", params={"skill": "texture", "level": 2, "hands": "LH"}
+    ).json()
+    before = _ratings(client)
+    events_before = _rating_events()
+
+    result = client.post(
+        "/api/score",
+        json={
+            "exercise_id": exercise["exercise_id"],
+            "notes": perfect_performance(exercise),
+            "mode": "performance",
+        },
+    ).json()
+
+    assert result["score"] == pytest.approx(100.0), "a pinned attempt is still scored"
+    assert result["performance_id"] > 0, "and still logged, so the practice is recorded"
+    assert result["rated"] is False
+    assert result["rating_change"] is None, "nothing moved, so there is no change to report"
+    assert _ratings(client) == before, "deliberate practice must not move the ratings"
+    assert _rating_events() == events_before, "and must not add a point to the curve"
+
+
+def test_the_same_performance_unpinned_still_moves_the_rating(client):
+    """The contrast that makes the previous test about the pin rather than about scoring."""
+    exercise = client.get("/api/exercise/next", params={"skill": "texture"}).json()
+    before = _ratings(client)
+    result = client.post(
+        "/api/score",
+        json={
+            "exercise_id": exercise["exercise_id"],
+            "notes": perfect_performance(exercise),
+            "mode": "performance",
+        },
+    ).json()
+    assert result["rated"] is True
+    assert result["rating_change"] is not None
+    assert _ratings(client) != before
+
+
+def test_pinning_only_the_hand_also_makes_it_practice(client):
+    """A hand you chose is material you chose; the same reasoning applies."""
+    exercise = client.get(
+        "/api/exercise/next", params={"skill": "texture", "hands": "RH"}
+    ).json()
+    before = _ratings(client)
+    result = client.post(
+        "/api/score",
+        json={
+            "exercise_id": exercise["exercise_id"],
+            "notes": perfect_performance(exercise),
+            "mode": "performance",
+        },
+    ).json()
+    assert result["rated"] is False
+    assert _ratings(client) == before

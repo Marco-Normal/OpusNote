@@ -1214,6 +1214,99 @@ def scenario_two_hands(browser) -> None:
     page.close()
 
 
+def scenario_pinned_practice(browser) -> None:
+    """Deliberate practice: reading the bass clef does not have to be hard.
+
+    The hand used to be a *consequence* of the difficulty — texture 1 was the right hand
+    alone, 2 the left, 3 upward both — so the only way to read the bass clef was to be rated
+    at texture 2 and the only way out was to be rated higher. This drives the two Setup
+    controls end to end and asserts the three things the owner asked for: the level is what
+    they chose, the hand is what they chose, and the attempt is scored without moving the
+    ratings.
+    """
+    print("\n[8] Pinned practice: choose the difficulty and the hand")
+    # Comfortably two-handed, so a left-hand exercise at level 1 can only come from the pin.
+    set_all_ratings(1400)
+    page, errors = new_page(browser)
+    page.goto(BASE_URL, wait_until="domcontentloaded")
+    wait_for_app(page)
+    ensure_midi(page)
+
+    open_setup(page)
+    page.select_option("#pinned-level", "1")
+    page.select_option("#pinned-hand", "LH")
+    check(True, "the Setup panel offers a difficulty and a hand to pin")
+
+    with page.expect_response(lambda r: "/api/exercise/next" in r.url) as caught:
+        click_button(page, "Get exercise")
+    exercise = caught.value.json()
+    expected = exercise["expected_notes"]
+
+    check(
+        set(exercise["levels"].values()) == {1},
+        f"the pinned difficulty is every dimension at level 1 ({sorted(set(exercise['levels'].values()))})",
+    )
+    check(
+        {note["hand"] for note in expected} == {"LH"},
+        f"and the pinned hand is the left, at a level that would have chosen the right "
+        f"({sorted({note['hand'] for note in expected})})",
+    )
+    check(
+        page.get_by_text("level 1 pinned").count() >= 1,
+        "the interface says the difficulty is pinned",
+    )
+    check(
+        page.get_by_text("left hand pinned").count() >= 1,
+        "and that the hand is pinned",
+    )
+
+    ratings_before = page.evaluate(
+        "() => fetch('/api/skills').then((r) => r.json()).then((rows) => rows.map((s) => s.rating))"
+    )
+
+    start_run(page)
+    page.evaluate(PLAY_NOTES, [expected, 80, 220])
+    wait_for_phase(page, "result", timeout=90_000)
+
+    score = page.inner_text(".score-ring .value")
+    print(f"      score = {score}")
+    check(int(score) >= 95, f"a pinned attempt is still scored ({score}/100)")
+    check(
+        page.get_by_text("not rated · you pinned it").count() >= 1,
+        "and the result says why the rating did not move, instead of leaving it unexplained",
+    )
+
+    ratings_after = page.evaluate(
+        "() => fetch('/api/skills').then((r) => r.json()).then((rows) => rows.map((s) => s.rating))"
+    )
+    check(
+        ratings_before == ratings_after,
+        f"deliberate practice leaves the ratings alone ({ratings_before} -> {ratings_after})",
+    )
+
+    # And letting go puts the adaptive choice back.
+    open_setup(page)
+    page.select_option("#pinned-level", "")
+    page.select_option("#pinned-hand", "")
+    with page.expect_response(lambda r: "/api/exercise/next" in r.url) as again:
+        click_button(page, "Next exercise")
+    unpinned = again.value.json()
+    check(
+        unpinned["pinned_level"] is None and unpinned["pinned_hand"] is None,
+        "clearing the pins goes back to the difficulty the ratings choose",
+    )
+    check(
+        set(unpinned["levels"].values()) != {1},
+        f"and the exercise is no longer level 1 for a rating of 1400 "
+        f"({sorted(set(unpinned['levels'].values()))})",
+    )
+
+    page.screenshot(path=str(SHOTS / "26-pinned-practice.png"), full_page=True)
+    check(not errors, f"no console errors ({errors})")
+    page.close()
+
+
+
 def scenario_left_hand_alone(browser) -> None:
     """The left hand alone: the one configuration the hand correlation got wrong.
 
@@ -3878,6 +3971,7 @@ def main() -> int:
                 scenario_long_exercises,
                 scenario_two_hands,
                 scenario_left_hand_alone,
+                scenario_pinned_practice,
                 scenario_repertoire,
                 scenario_takes,
                 scenario_practice_log,

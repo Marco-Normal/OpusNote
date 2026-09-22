@@ -252,11 +252,17 @@ def insert_exercise(
     source: str = "generated",
     bass_pattern: str | None = None,
     pinned_key: str | None = None,
+    pinned_level: int | None = None,
+    pinned_hand: str | None = None,
 ) -> int:
     # `key_name` above is the key the exercise is *in*; `pinned_key` records that
     # the player asked for that key specifically. Only the latter is part of the
     # exercise's identity for reuse, or an exercise that happened to land in B
     # would satisfy a request to practise in B.
+    #
+    # `pinned_level` and `pinned_hand` are recorded for the same reason and one more: a
+    # pinned exercise is deliberate practice and is not rated (see `services.record_performance`),
+    # so serving one for an ordinary request would silently make a rated attempt unrated.
     cursor = conn.execute(
         """
         INSERT INTO exercises
@@ -281,6 +287,8 @@ def insert_exercise(
                     "bass_pattern": bass_pattern,
                     "levels_key": levels_key(levels),
                     "pinned_key": pinned_key,
+                    "pinned_level": pinned_level,
+                    "pinned_hand": pinned_hand,
                 }
             ),
             json_dump([note.to_dict() for note in expected]),
@@ -305,6 +313,8 @@ def find_reusable_exercise(
     target_skill: str,
     bars: int,
     key_name: str | None = None,
+    pinned_level: int | None = None,
+    pinned_hand: str | None = None,
     source: str = "generated",
     library_cap: int = 32,
 ) -> dict[str, Any] | None:
@@ -327,6 +337,10 @@ def find_reusable_exercise(
     3. Past the cap, rotate the least recently played.
     """
     key = levels_key(levels)
+    # A pin is part of the exercise's identity, not a detail of the request that produced it.
+    # `pinned_level` matters even though the levels already differ, because a profile the
+    # rating happens to derive as uniform would otherwise be served a *pinned* exercise —
+    # and a pinned exercise is not rated, so an ordinary attempt would silently stop counting.
     where = """
         FROM exercises e
         WHERE e.source = ?
@@ -334,8 +348,18 @@ def find_reusable_exercise(
           AND json_extract(e.params_json, '$.levels_key') = ?
           AND json_extract(e.params_json, '$.target_skill') = ?
           AND IFNULL(json_extract(e.params_json, '$.pinned_key'), '') = ?
+          AND IFNULL(json_extract(e.params_json, '$.pinned_level'), '') = ?
+          AND IFNULL(json_extract(e.params_json, '$.pinned_hand'), '') = ?
     """
-    params = (source, int(bars), key, target_skill, key_name or "")
+    params = (
+        source,
+        int(bars),
+        key,
+        target_skill,
+        key_name or "",
+        pinned_level if pinned_level is not None else "",
+        pinned_hand or "",
+    )
 
     untried = conn.execute(
         f"""
@@ -378,6 +402,10 @@ def get_exercise(conn, exercise_id: int) -> dict[str, Any] | None:
     exercise["target_skill"] = params.get("target_skill")
     exercise["measures"] = params.get("measures", [])
     exercise["bass_pattern"] = params.get("bass_pattern")
+    #: Set when the player pinned the level and/or the hand. Scoring reads these to decide
+    #: whether the attempt is an assessment or deliberate practice.
+    exercise["pinned_level"] = params.get("pinned_level")
+    exercise["pinned_hand"] = params.get("pinned_hand")
     exercise["expected"] = expected_from_dicts(json_load(exercise.get("expected_json"), []))
     return exercise
 

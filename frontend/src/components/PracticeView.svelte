@@ -7,7 +7,7 @@
   import { MIN_ZOOM, ScoreRenderer } from '../lib/score';
   import { app, BAR_CHOICES } from '../lib/state.svelte';
   import { theme } from '../lib/theme.svelte';
-  import type { Exercise, NoteStatus, PlayedNote, PracticeMode, ScoreResult } from '../lib/types';
+  import { HAND_LABELS, type Exercise, type NoteStatus, type PlayedNote, type PracticeMode, type ScoreResult } from '../lib/types';
   import ResultsPanel from './ResultsPanel.svelte';
   import SkillChips from './SkillChips.svelte';
   import NoteStrip from './NoteStrip.svelte';
@@ -175,6 +175,8 @@
         skill: forcedSkill || undefined,
         bars: app.bars,
         key: app.pinnedKey ?? undefined,
+        level: app.pinnedLevel ?? undefined,
+        hands: app.pinnedHand ?? undefined,
       });
       await tick();
       renderer = new ScoreRenderer(scoreContainer);
@@ -395,6 +397,32 @@
               title="Stop pinning the key"
               onclick={() => {
                 app.pinKey(null);
+                void loadExercise();
+              }}>×</button
+            >
+          </span>
+        {/if}
+        {#if app.pinnedLevel !== null}
+          <span class="pill accent" title="You chose this difficulty; it does not change your ratings">
+            level {app.pinnedLevel} pinned
+            <button
+              class="ghost tiny"
+              title="Go back to the difficulty your ratings choose"
+              onclick={() => {
+                app.setPinnedLevel(null);
+                void loadExercise();
+              }}>×</button
+            >
+          </span>
+        {/if}
+        {#if app.pinnedHand}
+          <span class="pill accent" title="You chose what to read; it does not change your ratings">
+            {HAND_LABELS[app.pinnedHand].toLowerCase()} pinned
+            <button
+              class="ghost tiny"
+              title="Let the difficulty decide which hand to read"
+              onclick={() => {
+                app.setPinnedHand(null);
                 void loadExercise();
               }}>×</button
             >

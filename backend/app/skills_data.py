@@ -275,6 +275,30 @@ HAND_POSITION_LEVELS: dict[int, dict[str, object]] = {
     10: {"span": 19, "shifts": 4},
 }
 
+#: The hands a player may ask for, and what each one means to the generator.
+#:
+#: This lives beside `TEXTURE_LEVELS` because it is the same fact seen from the other side.
+#: A texture level *implies* a hand set — 1 is the right hand alone, 2 the left, 3 and up are
+#: both — and that implication is what used to make the hand unchoosable: the only way to read
+#: the bass clef was to be rated at texture 2, and the only way out of it was to be rated
+#: higher. These are the explicit values a player may pin instead, and `both` is deliberately
+#: available at levels 1 and 2, which alone would never choose it.
+HANDS_FOR_CHOICE: dict[str, tuple[str, ...]] = {
+    "RH": ("RH",),
+    "LH": ("LH",),
+    "both": ("RH", "LH"),
+}
+
+#: The choices, for validation and for the API's own vocabulary.
+HAND_CHOICES: tuple[str, ...] = tuple(HANDS_FOR_CHOICE)
+
+#: How to name a choice in prose the player reads.
+HAND_LABELS: dict[str, str] = {
+    "RH": "right hand",
+    "LH": "left hand",
+    "both": "both hands",
+}
+
 #: Which hands play and how, per texture level.
 #:
 #: ``hands``           - parts to emit

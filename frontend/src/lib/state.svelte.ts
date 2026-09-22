@@ -13,7 +13,7 @@ import { fingerprint, type PortSnapshot } from './midiDevice';
 import { PedalGesture, type ControllerMove } from './pedalGesture';
 import { parseRoute, routeHash, type Route, type RouteEntity } from './route';
 import { PianoPlayer, sharedPlayer, unlockOnFirstGesture, type Instrument } from './pianoPlayer';
-import type { AppView, HostInfo, PianoStatus, Profile, Workout } from './types';
+import type { AppView, HandChoice, HostInfo, PianoStatus, Profile, Workout } from './types';
 
 const LATENCY_STORAGE_KEY = 'srt.latencyMs';
 const BARS_STORAGE_KEY = 'srt.bars';
@@ -23,6 +23,8 @@ const MIDI_PIN_STORAGE_KEY = 'srt.midi.pin';
 const COUNT_IN_BARS_STORAGE_KEY = 'srt.countInBars';
 const CLICK_VOLUME_STORAGE_KEY = 'srt.clickVolume';
 const WEEKLY_TARGET_STORAGE_KEY = 'srt.weeklyTargetDays';
+const PINNED_LEVEL_STORAGE_KEY = 'srt.pinnedLevel';
+const PINNED_HAND_STORAGE_KEY = 'srt.pinnedHand';
 
 /** Exercise lengths offered in the UI. Length is a preference, not difficulty. */
 export const BAR_CHOICES = [4, 8, 12, 16] as const;
@@ -34,6 +36,31 @@ function readBars(): number {
     return (BAR_CHOICES as readonly number[]).includes(value) ? value : 4;
   } catch {
     return 4;
+  }
+}
+
+/**
+ * The pinned difficulty, or null for the adaptive choice.
+ *
+ * Kept as a session preference beside the bar count because it is the same kind of thing —
+ * how you want to practise today — and cleared the same way, with a visible chip and an ×.
+ */
+function readPinnedLevel(): number | null {
+  try {
+    const value = Number(localStorage.getItem(PINNED_LEVEL_STORAGE_KEY));
+    return Number.isInteger(value) && value >= 1 && value <= 10 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The pinned hand, or null to let the difficulty decide. */
+function readPinnedHand(): HandChoice | null {
+  try {
+    const value = localStorage.getItem(PINNED_HAND_STORAGE_KEY);
+    return value === 'RH' || value === 'LH' || value === 'both' ? value : null;
+  } catch {
+    return null;
   }
 }
 
@@ -173,6 +200,25 @@ class AppState {
 
   /** Metronome click volume, 0..127. */
   clickVolume = $state(readClickVolume());
+
+  /**
+   * Deliberate practice: the difficulty the player asked for, or null for the adaptive one.
+   *
+   * A pinned level is every dimension at once, because "practise level 2" means level-2
+   * material rather than level-2 melody over level-5 rhythm. It is also not rated — see
+   * `docs/ECOSYSTEM.md` § Still open — so the interface says so where the result appears.
+   */
+  pinnedLevel = $state<number | null>(readPinnedLevel());
+
+  /**
+   * The hand to read, or null to let the difficulty decide.
+   *
+   * This exists because the hand was a *consequence* of the texture level: 1 was the right
+   * hand alone, 2 the left, 3 and up both. So the bass clef was readable only at one
+   * difficulty and the only way out of it was to be rated higher. Separating the two is what
+   * lets a player read the bass clef with easy material.
+   */
+  pinnedHand = $state<HandChoice | null>(readPinnedHand());
 
   /** Hides everything that is not the score, so the music owns the viewport. */
   focusMode = $state(readFocus());
@@ -566,6 +612,36 @@ class AppState {
     } catch {
       // As above.
     }
+  }
+
+  /** Pin the difficulty for deliberate practice, or null to go back to the adaptive choice. */
+  setPinnedLevel(value: number | null): void {
+    const level = value === null ? null : Math.round(value);
+    if (level !== null && (level < 1 || level > 10)) return;
+    this.pinnedLevel = level;
+    try {
+      if (level === null) localStorage.removeItem(PINNED_LEVEL_STORAGE_KEY);
+      else localStorage.setItem(PINNED_LEVEL_STORAGE_KEY, String(level));
+    } catch {
+      // As above.
+    }
+  }
+
+  /** Pin which hand to read, or null to let the difficulty decide. */
+  setPinnedHand(value: HandChoice | null): void {
+    if (value !== null && value !== 'RH' && value !== 'LH' && value !== 'both') return;
+    this.pinnedHand = value;
+    try {
+      if (value === null) localStorage.removeItem(PINNED_HAND_STORAGE_KEY);
+      else localStorage.setItem(PINNED_HAND_STORAGE_KEY, value);
+    } catch {
+      // As above.
+    }
+  }
+
+  /** True when the player has asked for the material rather than been given it. */
+  get pinned(): boolean {
+    return this.pinnedLevel !== null || this.pinnedHand !== null;
   }
 
   toggleFocus(): void {

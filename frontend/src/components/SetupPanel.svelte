@@ -13,6 +13,7 @@
    */
   import { onMount } from 'svelte';
   import { app } from '../lib/state.svelte';
+  import { HAND_CHOICES, HAND_LABELS, type HandChoice } from '../lib/types';
 
   let { onclose }: { onclose: () => void } = $props();
 
@@ -176,6 +177,48 @@
         <option value={2}>2 bars</option>
       </select>
       <span class="muted small">bars of click before a run starts</span>
+    </div>
+  </div>
+
+  <div class="group" data-setup-reading>
+    <h3>What you read</h3>
+    <p class="muted small">
+      Left alone, the difficulty comes from your ratings, and it also decides which hand you
+      read — level 1 is the right hand, level 2 the left, and 3 upward both. Pinning either
+      one hands you the choice: read the bass clef with easy material, or the right hand with
+      hard. <strong>A pinned exercise is scored and logged, and does not change your
+      ratings</strong> — you chose the material, so it is not an assessment of you. Both
+      settings clear with the × beside them in Practice.
+    </p>
+    <div class="row wrap">
+      <label class="muted small" for="pinned-level">Difficulty</label>
+      <select
+        id="pinned-level"
+        value={app.pinnedLevel === null ? '' : String(app.pinnedLevel)}
+        onchange={(event) => {
+          const raw = (event.currentTarget as HTMLSelectElement).value;
+          app.setPinnedLevel(raw === '' ? null : Number(raw));
+        }}
+      >
+        <option value="">from my ratings</option>
+        {#each Array.from({ length: 10 }, (_, index) => index + 1) as level (level)}
+          <option value={String(level)}>level {level}</option>
+        {/each}
+      </select>
+      <label class="muted small" for="pinned-hand">Hands</label>
+      <select
+        id="pinned-hand"
+        value={app.pinnedHand ?? ''}
+        onchange={(event) => {
+          const raw = (event.currentTarget as HTMLSelectElement).value;
+          app.setPinnedHand(raw === '' ? null : (raw as HandChoice));
+        }}
+      >
+        <option value="">from the difficulty</option>
+        {#each HAND_CHOICES as choice (choice)}
+          <option value={choice}>{HAND_LABELS[choice]}</option>
+        {/each}
+      </select>
     </div>
   </div>
 

@@ -36,9 +36,10 @@ from .models import (
     SkillRatingSeries,
     SystemStatus,
 )
+from .adaptive.elo import MAX_LEVEL, MIN_LEVEL
 from .practice.api import router as practice_router
 from .repertoire.api import router as repertoire_router
-from .skills_data import SKILLS, SKILLS_BY_SLUG, SKILL_SLUGS, level_for_key
+from .skills_data import HAND_CHOICES, SKILLS, SKILLS_BY_SLUG, SKILL_SLUGS, level_for_key
 from .workout import store as workout_store
 from .workout.api import router as workout_router
 
@@ -184,13 +185,34 @@ def exercise_next(
     skill: str | None = Query(default=None, description="Force a skill dimension"),
     bars: int | None = Query(default=None, ge=1, le=16),
     key: str | None = Query(default=None, description="Pin the key, e.g. 'B' or 'c#'"),
+    level: int | None = Query(
+        default=None,
+        ge=MIN_LEVEL,
+        le=MAX_LEVEL,
+        description="Pin the difficulty: every dimension at this level, and unrated",
+    ),
+    hands: str | None = Query(
+        default=None,
+        description="Pin what you read: 'RH', 'LH' or 'both', at any level",
+    ),
 ) -> ExerciseOut:
     if skill is not None and skill not in SKILL_SLUGS:
         raise HTTPException(status_code=422, detail=f"unknown skill {skill!r}")
     if key is not None and level_for_key(key) is None:
         raise HTTPException(status_code=422, detail=f"unknown key {key!r}")
+    if hands is not None and hands not in HAND_CHOICES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"unknown hands {hands!r}; expected one of {', '.join(HAND_CHOICES)}",
+        )
     payload = services.next_exercise(
-        conn, current_user_id(), skill=skill, bars=bars, key_name=key
+        conn,
+        current_user_id(),
+        skill=skill,
+        bars=bars,
+        key_name=key,
+        pin_level=level,
+        forced_hand=hands,
     )
     return ExerciseOut(**payload)
 

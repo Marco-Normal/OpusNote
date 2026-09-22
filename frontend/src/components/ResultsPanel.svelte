@@ -54,6 +54,12 @@
             {result.rating_change.delta > 0 ? '+' : ''}{result.rating_change.delta}
             <span class="muted">({Math.round(result.rating_change.before ?? 0)} → {Math.round(result.rating_change.after ?? 0)})</span>
           </span>
+        {:else if result.rated === false}
+          <!-- A missing rating change must not read as a scoring failure. The exercise was
+               pinned, which makes the attempt deliberate practice rather than an assessment. -->
+          <span class="pill" title="You chose this material, so the attempt does not move your ratings">
+            not rated · you pinned it
+          </span>
         {/if}
         <span class="pill">{result.mode === 'practice' ? 'practice' : 'performance'}</span>
       </div>
