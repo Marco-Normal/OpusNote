@@ -3005,3 +3005,60 @@ the tier that runs after every edit. The log view's one grid is now guarded wher
 conditional sibling added to it later would have to move that same geometry before any check
 notices, which is the sharpest statement the assertion can honestly make.
 
+## 2026-09-22 — sight-reading agent — the matcher stops rebuilding its training set
+
+Scope: `backend/app/practice/schema.py`, `backend/app/practice/store.py`, `backend/app/db.py`,
+`backend/app/main.py`, `backend/tests/test_autotag.py`, `backend/tests/test_migration_upgrade.py`.
+Commit `b9e0be5`.
+
+Did: the second layer, on the read side. The previous entry fixed the edits; what was left was that
+every sitting open, page load and quality report re-derived the matcher's training material from the
+notes. A fingerprint and a content feature per labelled segment is a pass over that segment's notes —
+**969 ms** on the owner's library, over a quarter of a million `Note` objects — producing an answer
+that only changes when a label or a boundary does.
+
+**The derived material is cached, and the database owns the invalidation.** `reference_state.version`
+is bumped by three triggers on `segments`: insert, delete, and update of exactly `piece_id`,
+`identified_by`, `start_ms` and `end_ms`. Putting it there rather than in the callers is the point: no
+write path can forget it, including an older build's (the triggers live in the file, so its writes bump
+the version too) and the second machine writing the same database over the LAN. A cache keyed on the
+labelled count or the ids would have missed the ordinary case — `assign_piece` changes a column, not a
+row — and the failure would have been a matcher quietly training on a label the player had already
+corrected. Measured: `sitting_detail` on the sitting with an unlabelled segment went **969 ms cold →
+2.8 ms warm**, and the cached answer is byte-identical to a forced rebuild (checked for the detail, the
+candidates and the quality report).
+
+Stated limits, none of which can serve a stale answer. The cache is per process, so the first read
+after a restart rebuilds. It is keyed by database file, and the version is stored *beside* the material
+and checked on every read, so an out-of-order write from a concurrent reader cannot paper over a
+relabel. Two readers may rebuild the same entry at once; serialising them behind a lock would hold a
+request for the second the lock exists to avoid, and duplicate work is the cheaper failure. `init_db`
+forgets everything, because the path may hold a different database afterwards — a wipe before a test, a
+restored backup — and a counter that restarts at zero would otherwise match an entry from the file that
+was there before.
+
+**And the payload.** `sitting_notes` is **4.61 MB** of JSON for the longest sitting — one object per
+note and per pedal move, sent whenever playback opens. `GZipMiddleware` takes it to **0.51 MB (9.1×)**
+for a few milliseconds of CPU, with a 1 KB floor so the many small responses (a label's segment list,
+the status heartbeat) do not pay for a header they do not need.
+
+Verified: **973 backend tests** (up from 968) and `./check.sh --fast` green in 80 s. The five new tests
+in `test_autotag.py` are the invalidation contract — rebuilt once while nothing changes, a new label
+enters, a relabel is visible, a practice kind does not evict, `init_db` forgets — and the standing rule
+was applied to them: dropping `trg_segments_reference_update` makes the relabel test's premise fail,
+serving the stale list and training on the old piece. `test_migration_upgrade`'s frozen table literal
+names `reference_state` deliberately, so removing it later is a decision rather than a drift.
+
+Impact on the other side — the shared-contract note the rules ask for: **a new table and three triggers
+on `segments`**. `reference_state(id, version)` is additive and an older build ignores it; its writes
+still bump the version, so a mixed-version pair on one database invalidates correctly in both
+directions. No existing table, column, route or response body changes. Responses of 1 KB or more may
+now be gzip-encoded when the client offers it, which is transparent to any HTTP client.
+
+Still not done, and named rather than left silent: `_labelled_rows`'s `limit` is still passed by
+nobody, so `identification_quality` remains linear in the whole labelled history — the cache removes
+the *rebuild* from that path, not the leave-one-out scoring, which is real work. The piano roll still
+filters every note of a sitting twice per animation frame, which is the largest remaining per-frame
+cost on a long sitting. `PRAGMA journal_mode = WAL` still runs on every connection, and `_find_sitting`
+still scans `sittings` per note and per pedal with no index on `started_ms`.
+
