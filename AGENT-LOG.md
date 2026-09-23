@@ -3178,3 +3178,48 @@ fifty sections on this machine. The deeper shape is that every edit re-reads the
 derived passages stay honest; returning the passages with the edit's own response would remove the
 re-read, and that is a contract change rather than a fix.
 
+## 2026-09-23 — sight-reading agent — CI was red for two reasons, and the first hid the second
+
+Scope: `.github/workflows/ci.yml`, `backend/tests/test_server_hardening.py`,
+`backend/tools/falsifications/require_both_sequencer_signals.sh` (new), `frontend/package.json`,
+`README.md`. Commit `c4ef01b`.
+
+Did: the CI failure. It was two failures: `check.sh --fast` stops at the step that fails, so only the
+first was ever visible and the frontend step had never run on the runner at all.
+
+**The test asserted a fact about the machine it ran on.**
+`test_the_sequencer_probe_accepts_either_signal` pointed one path at a nonexistent directory and the
+other at `/proc/asound/seq/clients` — the machine's own. That file is present on a box with the ALSA
+sequencer loaded and absent on a GitHub runner, so the test passed here and failed on every CI run for a
+reason that had nothing to do with the probe. It now uses two files under `tmp_path`, which is also the
+only way to cover both directions its docstring claims: the procfs listing alone, and the device alone.
+The production probe was already right — `SEQUENCER_PATH.exists() or SEQ_CLIENTS_PATH.exists()`.
+
+**And the runner could not have run the frontend tests anyway.** `ci.yml` pinned
+`node-version: '20'` while the frontend units are TypeScript executed by `node --test`. Node only
+learned to strip types itself in 23.6, so on 20 each of them dies with
+`ERR_UNKNOWN_FILE_EXTENSION: Unknown file extension ".ts"` — reproduced with
+`npx -y node@20 --test src/lib/clock.test.ts` rather than inferred from release notes. The backend step
+failed first, so that pin had never been exercised. It is 26 now: what `docs/PLAN-PHASE8-9.md` verified
+("Node 26 strips TypeScript types itself, so this needs no vitest") and what the project is developed
+on. The real floor is recorded as `engines: {node: ">=23.6"}` and the README's "Node 20+" is corrected,
+so the next pin cannot drift the same way in silence. `npm ci`'s lockfile sync still passes with the
+field added, and `actions/setup-node`'s own versions manifest lists 26.x (through 26.10.0), so the pin
+resolves rather than becoming a new red badge at the setup step.
+
+Verified by reproducing the runner rather than reasoning about it: a pytest plugin makes those two paths
+report absent, which fails the old test and passes the new one, and the whole backend suite (975) passes
+under it. `./check.sh --fast` green in 80 s. The either-signal property now has a break script and was
+falsified with the tool: `and` in place of `or` fails
+`test_the_sequencer_probe_accepts_either_signal` — which is exactly the wrong diagnosis the probe exists
+to prevent, since a container has the sequencer running and no `/dev/snd/seq`.
+
+Stated plainly, because it is the one thing this entry cannot claim: the CI has not been seen green on
+the runner. What is verified is the failure mode reproduced locally and the fix passing under it; the
+next push is the first run of the corrected workflow, and the Node-26 pin is backed by the version
+manifest rather than by a green action.
+
+Still not covered by CI, unchanged and deliberate: the browser tier, which needs `/usr/bin/chromium`
+and whose absence would make the badge mean "the runner has no Chromium" — the workflow's own header
+makes that argument, and it stays run locally and via `./check.sh --full`.
+
