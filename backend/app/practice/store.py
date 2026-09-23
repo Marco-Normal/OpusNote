@@ -22,6 +22,7 @@ from __future__ import annotations
 import collections
 import sqlite3
 import time
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -438,15 +439,21 @@ def _refresh_metrics(conn: sqlite3.Connection, sitting_id: int) -> None:
         "SELECT id, start_ms, end_ms FROM segments WHERE sitting_id = ?",
         (sitting_id,),
     ).fetchall()
-    # Whether this sitting has any pedal rows at all, which is not the same question
-    # as whether the pedal was pressed: imported history has none, and reporting a
-    # zero there would be reporting a fault that was never observed.
-    pedals_recorded = (
-        conn.execute(
-            "SELECT 1 FROM pedal_events WHERE sitting_id = ? LIMIT 1", (sitting_id,)
-        ).fetchone()
-        is not None
-    )
+    # The pedal is read once for the whole sitting and each segment takes the prefix that
+    # had happened by its end: a stretch that began before the boundary is still holding
+    # notes inside it. Re-reading that prefix per segment read the same rows once for every
+    # segment of the sitting — on a long pedalled sitting, one pass over the stream against
+    # one per boundary.
+    pedal_rows = conn.execute(
+        "SELECT onset_ms, value FROM pedal_events WHERE sitting_id = ? ORDER BY onset_ms",
+        (sitting_id,),
+    ).fetchall()
+    pedal_onsets = [int(row["onset_ms"]) for row in pedal_rows]
+    pedal_moves_all = [(int(row["onset_ms"]), int(row["value"])) for row in pedal_rows]
+    # Any row at all is the same question as "has this sitting any pedal rows" — and that is
+    # not the same as whether the pedal was pressed: imported history has none, and reporting
+    # a zero there would be reporting a fault that was never observed.
+    pedals_recorded = bool(pedal_rows)
     for segment in segments:
         rows = conn.execute(
             "SELECT onset_ms, duration_ms, pitch, velocity, channel FROM note_events"
@@ -469,14 +476,9 @@ def _refresh_metrics(conn: sqlite3.Connection, sitting_id: int) -> None:
             attack_window_ms=settings.attack_window_ms,
             restart_gap_ms=settings.restart_gap_ms,
         )
-        # The pedal is read for the whole sitting and then clipped to the segment: a
-        # stretch that began before the boundary is still holding notes inside it.
-        pedal_rows = conn.execute(
-            "SELECT onset_ms, value FROM pedal_events"
-            " WHERE sitting_id = ? AND onset_ms <= ? ORDER BY onset_ms",
-            (sitting_id, segment["end_ms"]),
-        ).fetchall()
-        pedal_moves = [(int(row["onset_ms"]), int(row["value"])) for row in pedal_rows]
+        # Clipped to the segment, out of the stream read above: a stretch that began before
+        # the boundary is still holding notes inside it.
+        pedal_moves = pedal_moves_all[: bisect_right(pedal_onsets, int(segment["end_ms"]))]
         pedalling = segment_pedal(notes, pedal_moves, recorded=pedals_recorded)
         median = median_velocity(notes)
         spread = velocity_range(notes)
@@ -1636,6 +1638,12 @@ def _notes_for_segments(
     One query per sitting rather than per segment: a sitting holds a few hundred
     notes, and asking for them once is the difference between a handful of queries
     and one per segment on every page load.
+
+    The sitting's notes come back onset-ordered, so each segment's slice is found with
+    a binary search rather than by re-scanning the whole list. The scan was quadratic in
+    the labels — every labelled segment walked every note of its sitting — and it is on
+    every matcher read, so a library that grows made each sitting open slower than the
+    last for no reason but the size of the training set.
     """
     by_sitting: dict[int, list[sqlite3.Row]] = {}
     for row in rows:
@@ -1648,6 +1656,7 @@ def _notes_for_segments(
             " WHERE sitting_id = ? ORDER BY onset_ms, pitch",
             (sitting_id,),
         ).fetchall()
+        onsets = [int(note["onset_ms"]) for note in notes]
         for row in group:
             start = int(row["start_ms"])
             end = int(row["end_ms"])
@@ -1659,8 +1668,7 @@ def _notes_for_segments(
                     duration_ms=int(note["duration_ms"]),
                     channel=note["channel"],
                 )
-                for note in notes
-                if start <= int(note["onset_ms"]) <= end
+                for note in notes[bisect_left(onsets, start) : bisect_right(onsets, end)]
             ]
     return out
 
@@ -1716,16 +1724,57 @@ def labelled_count(conn: sqlite3.Connection) -> int:
     )
 
 
-def _fingerprints(
-    conn: sqlite3.Connection, rows: list[sqlite3.Row]
+def _fingerprints_from(
+    rows: list[sqlite3.Row], notes: dict[int, list[Note]]
 ) -> dict[int, Fingerprint]:
-    notes = _notes_for_segments(conn, rows)
     return {
         int(row["id"]): fingerprint(
             notes.get(int(row["id"]), []), attack_window_ms=settings.attack_window_ms
         )
         for row in rows
     }
+
+
+def _features_from(
+    rows: list[sqlite3.Row], notes: dict[int, list[Note]]
+) -> dict[int, collections.Counter]:
+    """Each labelled segment's local content features, keyed by segment id."""
+    return {
+        int(row["id"]): shingles.features(notes.get(int(row["id"]), [])) for row in rows
+    }
+
+
+def references_from(
+    conn: sqlite3.Connection, rows: list[sqlite3.Row]
+) -> tuple[list[Example], dict[int, collections.Counter]]:
+    """The matcher's training material: examples and local features, from one read.
+
+    A fingerprint and a content feature are two projections of the *same* note list, and
+    the notes are the expensive part — one query per sitting, and a large result set off a
+    slow disk. Deriving both from a single ``_notes_for_segments`` is the difference
+    between reading every reference's notes twice per page load and reading them once;
+    the callers that need both (the sitting's candidates, the quality report) used to
+    fetch the same rows twice, in two different shapes.
+    """
+    notes = _notes_for_segments(conn, rows)
+    prints = _fingerprints_from(rows, notes)
+    return (
+        [
+            Example(
+                segment_id=int(row["id"]),
+                piece_id=int(row["piece_id"]),
+                fingerprint=prints[int(row["id"])],
+            )
+            for row in rows
+        ],
+        _features_from(rows, notes),
+    )
+
+
+def _fingerprints(
+    conn: sqlite3.Connection, rows: list[sqlite3.Row]
+) -> dict[int, Fingerprint]:
+    return _fingerprints_from(rows, _notes_for_segments(conn, rows))
 
 
 def examples_from(conn: sqlite3.Connection, rows: list[sqlite3.Row]) -> list[Example]:
@@ -1745,10 +1794,19 @@ def _segment_features(
     conn: sqlite3.Connection, rows: list[sqlite3.Row]
 ) -> dict[int, collections.Counter]:
     """Each labelled segment's local content features, keyed by segment id."""
-    notes = _notes_for_segments(conn, rows)
-    return {
-        int(row["id"]): shingles.features(notes.get(int(row["id"]), [])) for row in rows
-    }
+    return _features_from(rows, _notes_for_segments(conn, rows))
+
+
+def _pool_features(
+    rows: list[sqlite3.Row], features: dict[int, collections.Counter]
+) -> dict[int, collections.Counter]:
+    """One content signature per piece, from the features of the segments that carry it."""
+    signatures: dict[int, collections.Counter] = {}
+    for row in rows:
+        present = features[int(row["id"])]
+        if present:
+            signatures.setdefault(int(row["piece_id"]), collections.Counter()).update(present)
+    return signatures
 
 
 def _pooled_signatures(
@@ -1762,13 +1820,7 @@ def _pooled_signatures(
     leave the runner-up undefined — which is why the auto band had never fired.
     """
     rows = _labelled_rows(conn, exclude_segment_id=exclude_segment_id)
-    features = _segment_features(conn, rows)
-    signatures: dict[int, collections.Counter] = {}
-    for row in rows:
-        present = features[int(row["id"])]
-        if present:
-            signatures.setdefault(int(row["piece_id"]), collections.Counter()).update(present)
-    return signatures
+    return _pool_features(rows, _segment_features(conn, rows))
 
 
 def _shares(
@@ -1909,10 +1961,13 @@ def candidates_for_sitting(conn: sqlite3.Connection, sitting_id: int) -> dict[in
     labelled = _labelled_rows(conn)
     if not labelled:
         return {}
-    examples = examples_from(conn, labelled)
+    # One read of the references for both projections: the fingerprints the matcher scores
+    # against and the per-piece signatures it compares content with. They are derived from
+    # the same notes, and fetching those twice was half of every sitting open.
+    examples, local = references_from(conn, labelled)
     # Pooled once for the whole sitting: the reference set is the same for every segment in
     # it, and Phase 22b's whole point is that its size is O(pieces) rather than O(labels).
-    signatures = _pooled_signatures(conn)
+    signatures = _pool_features(labelled, local)
 
     out: dict[int, list[SegmentCandidate]] = {}
     context: int | None = None
@@ -2101,14 +2156,9 @@ def identification_quality(db_path: Path | None = None) -> IdentificationQuality
         considered = labelled[-settings.autotag_quality_limit :]
         quality.evaluated = len(considered)
         quality.skipped = len(labelled) - len(considered)
-        examples = examples_from(conn, labelled)
+        examples, local = references_from(conn, labelled)
         prints = {example.segment_id: example.fingerprint for example in examples}
-        local = _segment_features(conn, labelled)
-        pooled: dict[int, collections.Counter] = {}
-        for row in labelled:
-            pooled.setdefault(int(row["piece_id"]), collections.Counter()).update(
-                local[int(row["id"])]
-            )
+        pooled = _pool_features(labelled, local)
 
         if quality.skipped:
             quality.notes.append(

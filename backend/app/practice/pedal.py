@@ -26,6 +26,7 @@ arrives is exactly what an unplugged device looks like.
 from __future__ import annotations
 
 import statistics
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
 
 from .sessionize import Note
@@ -118,12 +119,21 @@ def changes(pedals: list[tuple[int, int]]) -> int:
     return count
 
 
-def down_ratio(pedals: list[tuple[int, int]], span_ms: int) -> float:
-    """The share of the span the pedal was down, 0..1."""
+def _down_ratio_of(stretches: list[PedalInterval], span_ms: int) -> float:
+    """The share of the span the given stretches cover, 0..1.
+
+    Split out from :func:`down_ratio` so a caller that already built the stretches —
+    ``segment_pedal`` does, for the blurs — does not have to rebuild them to measure them.
+    """
     if span_ms <= 0:
         return 0.0
-    covered = sum(stretch.end_ms - stretch.start_ms for stretch in intervals(pedals, span_ms))
+    covered = sum(stretch.end_ms - stretch.start_ms for stretch in stretches)
     return round(min(1.0, max(0.0, covered / span_ms)), 3)
+
+
+def down_ratio(pedals: list[tuple[int, int]], span_ms: int) -> float:
+    """The share of the span the pedal was down, 0..1."""
+    return _down_ratio_of(intervals(pedals, span_ms), span_ms)
 
 
 def blur_attacks(notes: list[Note], stretches: list[PedalInterval]) -> list[int]:
@@ -152,29 +162,39 @@ def blur_attacks(notes: list[Note], stretches: list[PedalInterval]) -> list[int]
         return []
 
     ordered = sorted(notes, key=lambda note: (note.epoch_ms, note.pitch))
+    onsets = [note.epoch_ms for note in ordered]
+    # A release-ordered view of the same notes. `held` only ever grows as the attack moves
+    # later — see the cursor below — so one pass over this list replaces a fresh scan of
+    # every note for every cluster, which is what made this quadratic in the segment.
+    by_release = sorted(notes, key=lambda note: note.end_ms)
+    releases = [note.end_ms for note in by_release]
+
     found: list[int] = []
     for stretch in stretches:
         # The attacks inside this stretch, clustered the same way `metrics.attacks`
-        # clusters them so a chord counts once.
-        inside = [
-            note
-            for note in ordered
-            if stretch.start_ms <= note.epoch_ms <= stretch.end_ms
+        # clusters them so a chord counts once. Sliced out of the onset-ordered list
+        # rather than scanned for, so a stretch costs the notes it actually holds.
+        inside = ordered[
+            bisect_left(onsets, stretch.start_ms) : bisect_right(onsets, stretch.end_ms)
         ]
+        if not inside:
+            continue
         clusters: list[list[Note]] = []
         for note in inside:
             if clusters and note.epoch_ms - clusters[-1][0].epoch_ms <= 50:
                 clusters[-1].append(note)
             else:
                 clusters.append([note])
+        # The notes released inside this stretch and before the attack, in release order.
+        # Clusters are in onset order, so their attacks are non-decreasing and the cursor
+        # never rewinds: `held` accumulates exactly the set the from-scratch scan rebuilt.
+        cursor = bisect_left(releases, stretch.start_ms)
+        held: set[int] = set()
         for cluster in clusters:
             attack_ms = cluster[0].epoch_ms
-            held: set[int] = set()
-            for note in ordered:
-                # Released inside this stretch and before the attack, so the pedal is
-                # what is keeping it sounding.
-                if stretch.start_ms <= note.end_ms < attack_ms:
-                    held.add(note.pitch % 12)
+            while cursor < len(by_release) and by_release[cursor].end_ms < attack_ms:
+                held.add(by_release[cursor].pitch % 12)
+                cursor += 1
             if not held:
                 continue
             arriving = {note.pitch % 12 for note in cluster}
@@ -215,7 +235,7 @@ def segment_pedal(
     return PedalMetrics(
         recorded=True,
         changes=changes(pedals),
-        down_ratio=down_ratio(pedals, span),
+        down_ratio=_down_ratio_of(stretches, span),
         blur=len(found),
         blur_at_ms=tuple(found),
     )
