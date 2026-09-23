@@ -3090,3 +3090,48 @@ else red. That is the narrowest possible catch: the insert and delete triggers, 
 assertion and `init_db`'s clear all still pass with the update trigger gone, so the script proves the
 update path specifically rather than "some test noticed something".
 
+## 2026-09-22 — sight-reading agent — the cap that must not be applied
+
+Scope: `backend/app/practice/store.py`, `backend/tests/test_autotag.py`,
+`backend/tools/falsifications/cap_the_reference_set.sh` (new). Commit `94590af`.
+
+Did: the item the two entries above left open — "`_labelled_rows`'s `limit` is passed by nobody" — and
+the answer is that it must stay that way. The docstring claimed "``limit`` … is what every live path
+uses"; nothing does, and `docs/PLAN-PHASE22.md` §Step 3.6, `backend/app/config.py` and
+`docs/ECOSYSTEM.md` all record that Phase 22b retired the reference window **as a correctness
+boundary**. The parameter and the sentence were the leftover, and the honest fix was to delete them
+rather than to start passing one.
+
+The measurement that settles it, on the owner's own library — 54 labelled segments across **four**
+pieces: a newest-20 reference set leaves the answer alone (piece 20, 0.699 against 0.701), newest-10
+**evicts a piece**, and newest-5 loses half the library and answers with a *different piece* (19 at
+0.535 where 20 scored 0.701). That is the shape of the defect Phase 22b retired: the old window held
+one piece for 47 of 54 queries, left the runner-up undefined for 46 of them, and the auto band never
+fired once. A cap here is a correctness change wearing a performance fix's clothes, and "make sure it
+doesn't break anything" is answered by not applying it.
+
+So the `limit` parameter is gone and the docstring now says why there is no cap, and where the cost is
+bounded instead: `autotag_quality_limit` caps how many segments the accuracy report evaluates and names
+the number in the report rather than sampling silently. `labelled_count`'s "ignoring the matcher's cap"
+is corrected with it.
+
+The remaining cost, stated honestly rather than implied to be fixed: `identification_quality` is still
+O(evaluated × labels). With the reference cache warm it is **129 ms** at the owner's 54 labels today,
+**869 ms** at 200 and **2.9 s** at 1,000. The cache removed the *rebuild*, not the leave-one-out
+scoring, and no cap removes the scoring without changing what the matcher is allowed to know. The lever
+that does not touch the matcher is on the frontend: `load()` awaits the quality panel before
+`openSelectedSitting()`, so a slow report holds the timeline behind a panel nobody is waiting for. That
+is where a fix belongs if the number ever matters.
+
+Verified: **974 backend tests** (up from 973) and `./check.sh --fast` green. The guard pins the decision
+through `cached_references`, the material every live path reads — one quiet piece labelled once plus
+thirty newer labels of another must both remain references — and it was falsified with the project's
+tool: `cap_the_reference_set.sh` puts a `LIMIT 20` back on the SELECT, the control passes, and the run
+reports **`falsified`** attributed to `test_every_label_is_a_reference_however_lopsided_the_library`
+(`1 failed, 973 passed`, nothing else red).
+
+Not done, deliberately: the two settings Phase 22b left dead, `SRT_AUTOTAG_NEIGHBOURS` and
+`SRT_AUTOTAG_TRAINING_LIMIT`. `config.py` records their removal as a deployment decision — an operator
+may have set the env vars and a documented setting is not withdrawn in a code commit — so they are
+untouched, and this entry is the reminder rather than the removal.
+
