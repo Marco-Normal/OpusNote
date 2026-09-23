@@ -41,19 +41,40 @@ ago`, or `no notes yet` — and reports which one is in use (`Auto · CASIO USB-
 ## 2. Pedal control
 
 The PX-870 has three pedals. The sostenuto is barely used musically, which makes it the one
-viable hands-free switch: one press and release arms take recording, and another stops it.
+viable hands-free switch, and the Setup panel binds **three gestures** on it — a press, a double
+press and a press and hold — each to one action or to nothing:
 
-The damper and the soft pedal are deliberately unbound. Both are *played*, so a press
-mid-phrase would end the take being recorded. The damper previously carried a double-tap
-gesture that toggled a workout; it was retired for exactly this reason, and workouts are now
-declared from the banner instead.
+| Gesture | Ships bound to |
+| --- | --- |
+| press | flag the place for review |
+| double press | start or finish a workout |
+| press and hold | arm or stop take recording |
 
-Two invariants govern the gesture:
+The list also offers *finish the sitting*, which ships unbound. One action occupies one gesture, so
+choosing an action for a gesture takes it from whichever gesture held it.
 
-- It is **inert during a scored attempt**, so a stray pedal cannot disturb a run.
+**The safest action takes the easiest gesture.** A press is the one a player is most likely to fire
+by accident, so it carries the flag — a place in the log to come back to, drawn on a sitting's
+timeline strip beside the pedal-blur hairlines. Stopping a take is the only action that can destroy
+work, so it waits behind a deliberate hold.
+
+The damper and the soft pedal are deliberately unbound, and no setting changes that. Both are
+*played*, so a press mid-phrase would fire a command during ordinary pedalling: the soft pedal was
+bound to take recording once, and the owner reported that tapping it stopped the recording. The
+damper previously carried a double-tap gesture that toggled a workout, retired for the same reason.
+
+Three invariants govern the gestures:
+
+- The sostenuto is the only controller read, so no played pedal can carry one.
+- They are **inert during a scored attempt** — every action, the flag included — so a stray pedal
+  cannot disturb a run.
 - Nothing is ever bound to a controller message the instrument has not been observed to send.
   The Setup panel reports which controllers the piano has actually sent, because a gesture
   bound to a message the instrument never emits is a feature that silently does not exist.
+
+Which action each gesture carries is a preference, kept in the browser, and it is validated when it
+is read: an action name this build does not recognise falls back to the default for that one gesture
+rather than leaving a pedal silently doing nothing.
 
 ## 3. Two hands and the left-hand library
 

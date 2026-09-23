@@ -14,6 +14,13 @@ toggles a workout.** The unit tests in Step 1.1 and the module in Step 1.3 show 
 mapping; everything else (discovery, the silence gate, `onController` being read-only) landed as
 written.
 
+**Superseded in part by Phase 23** (`PLAN-PHASE23.md`), which keeps the pedal and the discovery rule
+but replaces the one-action mapping with three configurable gestures on CC66: a single press flags a
+place for review, a double press starts or finishes a workout, and a press and hold arms or stops the
+take — so take recording is no longer on the single press, and the damper carries nothing at all (its
+double tap retired earlier, on the same day, for firing mid-phrase). Read the paragraphs above as the
+state after 20b, not as the current behaviour; `docs/FEATURES.md` § 2 is the current one.
+
 **Goal.** Make the app usable from the bench without reaching for the computer: the sostenuto
 pedal becomes a hands-free switch **after** the app has observed that the piano sends it, the
 count-in becomes a choice, a piece or a sitting becomes a link you can open on the other machine,

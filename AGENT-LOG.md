@@ -3223,3 +3223,89 @@ Still not covered by CI, unchanged and deliberate: the browser tier, which needs
 and whose absence would make the badge mean "the runner has no Chromium" — the workflow's own header
 makes that argument, and it stays run locally and via `./check.sh --full`.
 
+## 2026-09-23 — sight-reading agent — the sostenuto stops being a single button
+
+Scope: `frontend/src/lib/pedalGesture{,.test}.ts`, `frontend/src/lib/pedalBindings{,.test}.ts` (new),
+`frontend/src/lib/{state.svelte,capture,api,types}.ts`,
+`frontend/src/components/{SetupPanel,SegmentTimeline}.svelte`,
+`backend/app/practice/{models,schema,store,api}.py`, `backend/tests/test_practice_{store,api}.py`,
+`backend/tests/test_migration_upgrade.py`, `backend/tools/e2e_browser.py`,
+`backend/tools/falsifications/` (four new scripts), `docs/PLAN-PHASE23.md` (new), and
+`README`-adjacent docs: `docs/{ECOSYSTEM,FEATURES,PLAN-PHASE20B}.md`.
+
+Did: **the middle pedal now carries three gestures instead of one.** The request was to "bind the
+pedals to a list of quick actions", and the design went out of its way to narrow that, because read
+literally it re-opens a defect the owner reported in use. `HandsfreeAction` was a single-member union
+whose own comment said a second action would be a type change the compiler points at; it is now
+`mark_review | toggle_workout | toggle_audio_capture | finish_sitting`, and `PedalGesture` tells a
+*press*, a *double press* and a *press and hold* apart on CC66 alone. Each gesture is bound in Setup
+to one action or to nothing, and the partition is a pure module (`pedalBindings.ts`) rather than three
+fields in the store, because "one action occupies one gesture" is a rule the store cannot test.
+
+**Why not the damper and the soft pedal, which is what was asked for.** Both are *played*, and this
+project has paid for that twice: the soft pedal was bound to take recording in 20b and unbound the
+same day after the owner reported that tapping it stopped the recording, and the damper's double tap
+was retired for firing during ordinary pedalling. The damper is the worse case — pressed constantly, so
+even an additive action would fire throughout normal playing and bury the strip in flags nobody asked
+for. So the customization is *which action each gesture on CC66 carries*, not which pedal carries a
+gesture. The sostenuto is unused musically, which is what makes three gestures on it free.
+
+**The safest action takes the easiest gesture, and that is a behaviour change.** A press flags the
+place for review; a double press starts or finishes a workout; the hold — the one gesture that cannot
+be accidental — arms or stops the take. Take recording therefore moves *off* the single press, which
+is the owner's daily habit, so the bench scenario's assertions were inverted in the same commit rather
+than left to be discovered. `finish_sitting` ships unbound.
+
+**A review flag is the blur hairline's shape with a different meaning** — the owner's words were "like
+we have pedal blurs … a little flag saying you should review near here". A blur is a place the app
+*measured*; a flag is a place a person *asserted*. It travels as its own raw stream: a `sitting_marks`
+table, an optional `EventBatch.marks` (so a client that predates it is unaffected), `review_marks_ms`
+on the sitting detail, and a `.review` layer on the strip. `CaptureClient.mark()` is deliberately not
+a subscription to CC66 — a mark is written only when the flag action is bound *and* fired, so an
+unbound pedal writes nothing. It is not a JSON column on `sittings` (the client cannot know the open
+sitting, so a retried press could land in the wrong one) and not a widened `pedal_events` (`midi.ts`
+warns that routing CC66 down the sustain path records the middle pedal as sustain and corrupts
+`pedal_blur` and `pedal_basis`).
+
+**The property that makes the extra gesture free.** With single and double both bound, a tap cannot be
+recognised until the double window closes. A fire therefore carries the **press** timestamp, not the
+dispatch one, so a flag resolved 300 ms late still lands where the player was; only the confirmation
+is late. There is a break script for exactly that, because it is the kind of thing a later
+"simplification" would quietly undo.
+
+**Two defects the tests found that reading did not.** (1) The private field `pending` shadowed the
+`pending` getter on the prototype, so the accessor was dead and the recogniser's public "is anything
+still waiting on the clock" always read the raw field — the new unit test failed on its first run, and
+the field is `pendingTap` now. (2) `EventBatch` and `store.ingest` were widened for marks, but the
+API-level emptiness guard in `practice/api.py` was not, so a mark-only flush — the *ordinary* case,
+since a flag is pressed between phrases — returned 422 and the client would have retried it forever,
+blocking every note behind it. The browser tier caught that one; both now have assertions.
+
+**A pre-existing failure, and why it had sat there.** Running the bench at all was impossible: the
+tier died in `reset_all()` with `reset_all does not cover ['reference_state']`, before reaching a
+single scenario. `reference_state` was added in 22b and is in neither `DATA_TABLES` nor
+`REFERENCE_TABLES`, so **the whole browser tier was red at HEAD** — and it is the tier the CI workflow
+deliberately does not run (it needs Chromium), which is how a table added in September went
+unregistered. It belongs in `REFERENCE_TABLES`, not `DATA_TABLES`: its one row is seeded by `init_db`
+and advanced from then on by triggers on `segments`, so deleting it between scenarios would leave it
+absent for the rest of the process, the triggers would update nothing, and the matcher's in-process
+reference cache would stop invalidating — each scenario would read the one before it. Named there with
+the reason; the gate's own refusal message is what makes that decision a lookup rather than a guess.
+
+Verified: frontend **145 passed**, `svelte-check` clean, build clean. Backend **982 passed** (the
+frozen-shape test refused the new table until it was named in `EXPECTED_COLUMNS`/`EXPECTED_INDEXES`,
+which is that gate working). `scenario_bench` green, with three new assertions: a press and hold arms
+the take, a single tap leaves it alone *and* leaves a flag on the sitting (`0 -> 1 marks`), and a press
+during a scored run leaves neither. Four falsifications each caught their break **by name** with
+`--expect`: `stamp_the_flag_when_it_fires.sh` (`expected: 1000` — the deferred tap stamped at 1300),
+`let_a_single_press_stop_the_take.sh` (`expected: 'mark_review'`), `refuse_a_mark_only_flush.sh`
+(422), and `drop_the_mark_stream.sh` end to end in the browser ("flags the place instead"). The tree
+was committed first so the harness could restore cleanly, which is the rule it enforces.
+
+Not done, deliberately: no binding for the damper or the soft pedal and no silence gate that would make
+one safe; no deletion or editing of a flag (a mis-fired flag is inert and costs one hairline, and the
+fix if it becomes noise is a click-to-remove rather than a delete mode); no per-segment flag count; no
+`SCHEMA_VERSION` bump, since a brand-new table is created by `CREATE TABLE IF NOT EXISTS` on every
+`init_db`; and `README.md` needed no change — its only mention of pedals is the Setup grouping label,
+with no behavioural claim to go stale.
+

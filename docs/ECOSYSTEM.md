@@ -204,7 +204,7 @@ sessionizer and segmentation move across as-is with their tests.
 
 | 21 | **The log at speed, and the blur you can find** | Blur positions cached beside the count and marked on the sitting strip; and an edit path that applies the server's own answer instead of refetching the matcher's accuracy, the machine's health and the week's ratings after every click. **Landed.** | S |
 | 22 | **Hearing the piece** | Where the playing actually turns over (an adaptive gap with a 2 s floor, plus minimum and maximum sizes), and a matcher that survives a growing library (tempo-invariant local shingles pooled per piece, IDF containment, a hybrid score). Passages and piece-sessions are derived from attempts, so the log shows *n* attempts at one passage rather than *n* unrelated rows. **Landed 22a–22c.** One acceptance number was corrected to its measurement and one decision was dropped after measuring: see § *Phase 22* below. | high |
-| 23 | **The pedal as a quick-action surface** | The sostenuto's one hard-coded action becomes three gestures on the same pedal — single, double, hold — each bound in Setup to one action or to nothing: a review flag, start/finish a workout, arm/stop the take, or finish the sitting. A review flag is a raw mark event in its own table, drawn on the sitting strip beside the blur hairlines. **Planned.** | medium |
+| 23 | **The pedal as a quick-action surface** | The sostenuto's one hard-coded action becomes three gestures on the same pedal — single, double, hold — each bound in Setup to one action or to nothing: a review flag, start/finish a workout, arm/stop the take, or finish the sitting. A review flag is a raw mark event in its own table, drawn on the sitting strip beside the blur hairlines. **Landed.** | medium |
 
 Phases 1-2 are the useful minimum: they get the library out of the Rust app's
 directory and into a browser, which is most of what you asked for.
@@ -1791,7 +1791,7 @@ keeping the existing numbers is a result, not a non-event.
 bars 40–48; no section generation or looping; no per-hand inference; no audio; no persisted group
 table; no schema change; no new endpoint.
 
-### Phase 23 — planned (the pedal as a quick-action surface)
+### Phase 23 — landed (the pedal as a quick-action surface)
 
 **Implementation plan:** [`PLAN-PHASE23.md`](./PLAN-PHASE23.md). Asked for by the owner as "bind the
 pedals to a list of quick actions" — the middle pedal should start a workout, drop a marker on the
@@ -1865,6 +1865,28 @@ unchanged — the same shape `pedals` had when it was added.
 controller), 23-D4 (a new persisted raw stream) and 23-D5 (the run-inert rule reaffirmed rather than
 relaxed) extend the runtime and trust boundaries 20-D5 opened. This document plus its decisions
 tables remains the decision record; no ADR directory is created.
+
+**Verified.** Frontend **145 passed**, `svelte-check` clean, build clean; backend **982 passed**.
+`scenario_bench` green, including three new assertions: a press and hold arms the take, a single tap
+leaves it alone *and* leaves a flag on the sitting, and a press during a scored run leaves neither.
+Four falsifications each caught their break by name (`stamp_the_flag_when_it_fires.sh`,
+`let_a_single_press_stop_the_take.sh`, `refuse_a_mark_only_flush.sh` in `npm test` and pytest;
+`drop_the_mark_stream.sh` end to end in the browser).
+
+**Two defects the tests found that reading did not.** The private field `pending` shadowed the
+`pending` getter on the prototype, so the accessor was dead and the recogniser's public "is anything
+still waiting on the clock" always read the raw field — caught by the new unit test at first run.
+And `EventBatch` and `ingest` were widened for marks but the API-level emptiness guard was not, so a
+mark-only flush — the *ordinary* case, since a flag is pressed between phrases — returned 422 and the
+client would have retried it forever; the browser tier caught it, and it is asserted now.
+
+**One pre-existing failure, found by running the tier and fixed to unblock it.** `reference_state`,
+added in 22b, is in neither `DATA_TABLES` nor `REFERENCE_TABLES`, so `reset_all` raised for *every*
+browser scenario and the whole tier was red at HEAD. It belongs in `REFERENCE_TABLES`: its one row is
+seeded by `init_db` and advanced by triggers on `segments`, so deleting it between scenarios would
+leave it absent for the rest of the process and the matcher's in-process reference cache would stop
+invalidating. That the table gate caught it is the gate working; that it sat unrun is the cost of a
+tier nothing invoked.
 
 ### Still open, from the earlier brainstorm
 
