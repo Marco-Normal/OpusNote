@@ -2,7 +2,8 @@
 
 The difficulty model, the adaptive engine, the scorer, the timing model, and the integration
 behaviours that are not obvious from the code. The [README](../README.md) is the front page;
-[FEATURES.md](FEATURES.md) covers user-facing behaviour.
+[FEATURES.md](FEATURES.md) covers user-facing behaviour; [PERFORMANCE.md](PERFORMANCE.md) owns what
+a backend change is allowed to cost.
 
 - [1. Architecture](#1-architecture)
 - [2. The API contract](#2-the-api-contract)

@@ -296,6 +296,7 @@ deploy/                systemd units, kiosk policy, installer
 | --- | --- |
 | [docs/FEATURES.md](docs/FEATURES.md) | Detailed behaviour of every feature |
 | [docs/ENGINEERING.md](docs/ENGINEERING.md) | Architecture, API contract, difficulty model, adaptive engine, scorer, timing, configuration, known limitations |
+| [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | What a backend change's cost may scale with, the four shapes that have cost real seconds here, and how to measure and guard them |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Running on the piano machine, the LAN server, backup, moving between machines |
 | [deploy/README.md](deploy/README.md) | The install checklist: systemd service, kiosk, MIDI permission policy |
 | [THIRD-PARTY.md](THIRD-PARTY.md) | Licence notices for bundled, vendored and installed components |
