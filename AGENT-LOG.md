@@ -3062,3 +3062,18 @@ filters every note of a sitting twice per animation frame, which is the largest 
 cost on a long sitting. `PRAGMA journal_mode = WAL` still runs on every connection, and `_find_sitting`
 still scans `sittings` per note and per pedal with no index on `started_ms`.
 
+## 2026-09-22 — sight-reading agent — correction to the entry above
+
+The entry above listed the piano roll's per-frame note filter as a remaining cost and called it "the
+largest remaining per-frame cost on a long sitting". It was asserted and not measured, and measured it
+is not worth acting on. On 23,482 notes — the owner's longest sitting — one pass of the `nearby`
+filter is **0.140 ms per frame**, about 0.8% of a 16.7 ms budget at 60 fps. The entry also said "twice
+per animation frame"; `visibleNotes` is called with the already-filtered `nearby`, so the work over the
+whole sitting is a single pass, and the second number was double the truth.
+
+So the windowed binary search that entry implied is not scheduled: it would buy about a seventh of a
+millisecond for a sorted-order contract and a long-note lookback bound, which is a bad trade. The rest
+of that entry's "not done" list stands unchanged — `_labelled_rows`'s unused cap and the leave-one-out
+scoring in `identification_quality`, `journal_mode = WAL` on every connection, and `_find_sitting`'s
+unindexed scan per event.
+
