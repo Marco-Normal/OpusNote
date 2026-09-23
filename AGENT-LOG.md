@@ -2898,3 +2898,61 @@ failure that cannot be attributed is refused. The dangerous direction stayed clo
 
 The refused one is `reload_everything_after_an_edit.sh`, still unresolved: it proves nothing either
 way until it is looked at, and it is named in the tier's summary rather than left silent.
+
+## 2026-09-22 — sight-reading agent — the edits stop rescanning material they do not need
+
+Scope: `backend/app/practice/pedal.py`, `backend/app/practice/store.py`. Commit `a63e991`.
+
+Did: the four hottest passes in the practice domain, which were all answering the wrong question. Each
+asked "what does this cost?" and answered "everything the library holds" rather than "what this
+segment holds". Reported as slow segment editing — 10+ s to split or merge on the notebook — which read
+like a hardware problem and was not one.
+
+**Two quadratic loops, both the same shape: a fresh scan of a whole list per item.** `blur_attacks`
+rebuilt the pedal-held pitch-class set from scratch for every chord cluster inside every pedal stretch,
+against the entire note list — O(stretches × clusters × notes). One split of the largest sitting made
+**81.7M calls to `Note.end_ms`**. It is reached from every boundary edit through `_refresh_metrics`, so
+a split or merge on a 23k-note sitting cost **3.0–7.6 s** unprofiled (21–24 s under `cProfile`) here,
+and more on the notebook. It now slices the notes inside a stretch out of an onset-ordered list and
+carries a release-ordered cursor that only advances, which is valid because clusters are in onset order
+and so their attacks are non-decreasing: O((N+S) log N).
+
+`_notes_for_segments` fetched a sitting's notes once and then filtered that whole list **for every
+segment in the sitting** — O(labels × notes_per_sitting) — and it is on every matcher read, so each
+sitting open grew with the training set for no reason but the size of the training set. Same bisect
+fix. `candidates_for_sitting` at 1,000 labelled segments went **3,116 ms → 195 ms**, and, more to the
+point, became flat in the label count instead of linear.
+
+**Two reads done twice, or once per item where once would do.** `candidates_for_sitting` and
+`identification_quality` each derived fingerprints *and* content features for the same reference rows
+from two separate reads of the same notes, and the sitting path called `_labelled_rows` twice as well;
+`references_from` derives both projections from one `_notes_for_segments`, with the pooling extracted so
+both callers share it. `_refresh_metrics` re-read the pedal prefix with a fresh SQL query for every
+segment of the sitting, which on a long pedalled sitting re-read the same rows once per boundary; it now
+reads the stream once and each segment takes the prefix that had happened by its end. `segment_pedal`
+built its stretches twice — once for the blurs, once through `down_ratio` — and now measures the
+stretches it already has; `down_ratio` keeps its signature and its tests.
+
+Verified: 968 backend tests; `./check.sh --fast` green in **77 s**. Because these changes are supposed
+to have no observable effect, equivalence was proved against the *pre-change* implementations before the
+suite was trusted: 4,000 randomized fuzz cases and all 68 real segments for `blur_attacks`; all 54
+labelled rows (237,915 notes) for `_notes_for_segments`; byte-identical examples, local features and
+pooled signatures for `references_from`; the new pedal prefix equal to the old per-segment SQL prefix on
+all 68 segments; `segment_pedal` equal to its pre-change body on all 68, blur positions included; and a
+full recompute reproducing every already-valued column of the 48 stored metric rows. That recompute
+fills 36 NULLs in the columns Phases 18b/21 added and never backfilled — the values a re-segment would
+have written, so a fill rather than a change.
+
+Impact on the other side: none. No API, schema, route, setting or stored format changes; every function
+keeps its signature and its output. `piano-progress` and `practice-logger` are untouched.
+
+Not done, and named rather than left silent. `_labelled_rows` has a `limit` whose docstring says "every
+live path uses it" and **five call sites that pass none**, so `identification_quality` is still linear in
+the entire labelled history — 6.0 s at 1,000 labels, while it grades only `autotag_quality_limit` of
+them. Capping the reference set changes matcher accuracy, so it wants a decision and an accuracy
+measurement, not a quiet edit; that is the next thing here. Also unlanded: `PRAGMA journal_mode = WAL`
+runs on every connection (~0.3 ms each, more on an HD, and requests open 2–3); `sitting_notes` returns
+4.6 MB of uncompressed JSON with no gzip middleware; and `_find_sitting` is called per note and per
+pedal with no index on `sittings(started_ms)`. A non-flaky guard for these two quadratics would have to
+count work rather than time, and none is added here — so the equivalence proofs above are the evidence
+for this change, not a standing assertion that a future edit cannot quietly undo.
