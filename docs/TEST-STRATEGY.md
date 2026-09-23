@@ -267,7 +267,7 @@ because the thing being verified spans both processes the README already documen
 
 | Tier | Contains | Budget | When |
 | --- | --- | --- | --- |
-| `--fast` | backend unit + integration + invariants + contracts + seams; frontend tests; the deploy policy test; `svelte-check`; build | **< 180 s** | after every meaningful edit |
+| `--fast` | backend unit + integration + invariants + contracts + seams; frontend tests; the deploy policy test; the docs check; `svelte-check`; build | **< 180 s** | after every meaningful edit |
 | `--full` | everything in `--fast`, plus coverage (report only), the browser scenarios, and mutation (report only) | no budget | before a slice is called done |
 | `--falsify [filter]` | every break script, run against the check it declares — twice per script, control then break | about an hour | before trusting an assertion, and after touching the tooling |
 | `--falsify-quick [filter]` | the same, minus the scripts whose check is the whole fast tier | about 10 min | a faster pass that names what it deferred |

@@ -3372,3 +3372,35 @@ real enforcement — it is not built.
 
 Impact on the other side: none. No contract, table, endpoint or schema changed.
 
+## 2026-09-23 — documentation agent — check_docs, so the standing rule can fail a build
+
+Scope: `backend/tools/check_docs.py` (new), `backend/tools/falsifications/` (four new break scripts),
+`check.sh` (one step), `docs/ECOSYSTEM.md`, `docs/TEST-STRATEGY.md`, `README.md`.
+
+Did: **the documentation standing rule now has a command behind it.** The rule says a change is not
+done until the documents it invalidates are updated in the same commit. Nothing checked it, and that
+is how `ECOSYSTEM.md` came to describe a shipped phase as **Planned** for three commits with every
+tier green.
+
+`backend/tools/check_docs.py` runs in `--fast` — sub-second, so the 82 s tier is unchanged — and
+gates on four objective things: a relative link or `#anchor` that does not resolve; a `docs/*.md`
+that nothing links to from the README; a plan and the phase table disagreeing about whether a phase
+shipped (reading the table row, and falling back to the status line for the phases the table leaves
+unmarked); and a landed plan still ending in "Next step: execute…". It also reports, without gating,
+a short canary list of exact phrases whose return would mean a fixed bug has come back — a heuristic
+that can be wrong must not be allowed to fail a build.
+
+It refuses rather than guessing: if `ECOSYSTEM.md`'s phase table or status line cannot be parsed it
+exits 2 and says which, instead of printing a clean run it has not earned.
+
+**Two defects it found on its first run, in this repository's own new text.** The README index
+reached only three of the five Phase 20 plans — the `[20A] … [20E]` elision left B, C and D
+unlinked — and the row-status matcher missed `**20a–20e landed.**` because it was case-sensitive, so
+five of the ten plan/phase pairs were silently uncompared. Both are fixed here, and the pair count
+is now the full ten.
+
+Each gate has a break script under `backend/tools/falsifications/`; the falsification results are
+recorded in the next entry.
+
+Impact on the other side: none. `check.sh` gained a step; no application code changed.
+

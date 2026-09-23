@@ -139,6 +139,15 @@ frontend npm test
 step "deploy tests"
 bash "$ROOT/deploy/browser.test.sh"
 
+# The standing rule in docs/ECOSYSTEM.md says a change is not done until the documents it
+# invalidates are updated in the same commit. That was a habit until this step existed, and the
+# habit failed: ECOSYSTEM.md described a shipped phase as **Planned** for three commits, four
+# landed plans still said `planned`, and nothing in any tier read a single document. This checks
+# what is objective — that every link resolves, that no document is unreachable, and that a plan
+# and the phase table do not disagree about whether the work shipped.
+step "docs"
+"$ROOT/backend/.venv/bin/python" "$ROOT/backend/tools/check_docs.py"
+
 step "typecheck"
 frontend npm run check
 

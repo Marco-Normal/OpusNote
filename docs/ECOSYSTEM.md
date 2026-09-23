@@ -2059,21 +2059,29 @@ wrong, add a note that says so and names the successor — `PLAN-PHASE20B.md`'s 
 superseded by `PLAN-PHASE23.md`, and it says exactly that. Deleting the old text destroys the reason
 the new text exists.
 
-#### The check before you commit
+#### What is enforced, and what is not
 
-Nothing enforces this rule yet, so it is a habit — and a habit needs a step:
+`backend/tools/check_docs.py` runs in the `--fast` tier, so every edit is checked. It gates on the
+four things that are objective and always the author's to fix:
 
-```bash
-grep -rn '\*\*Status:.*planned' docs/PLAN-*.md   # a plan you just landed?
-grep -rn 'Next step: execute' docs/PLAN-*.md     # a footer you just invalidated?
-grep -rnE 'SCHEMA_VERSION (is|was) now' docs/    # a "current version" claim to re-read
-```
+| Gate | What it refuses |
+| --- | --- |
+| Links and anchors | a relative link that does not resolve, or a `#anchor` no heading provides |
+| Reachability | a `docs/*.md` that nothing links to from `README.md` — an unreachable document is how fifteen of these went stale unnoticed |
+| Status agreement | a plan and `ECOSYSTEM.md` disagreeing about whether a phase shipped, whether the disagreement is in the table row or the status line |
+| Re-execution footers | a landed plan still ending in *"Next step: execute…"* |
 
-(Each is scoped so that it cannot match this section — the first draft of these commands did, and a
-check that always reports a hit is worse than no check.)
+Each gate has a break script in `backend/tools/falsifications/` — `break_a_document_link.sh`,
+`make_a_document_unreachable.sh`, `stale_phase_status.sh`, `restore_the_execute_footer.sh` — so
+none of them is trusted until it has been seen to fail (`TEST-STRATEGY.md` §8). Run them with
+`./check.sh --falsify check_docs` or one at a time through `falsify.sh`.
 
-Then the three questions a grep cannot answer: does the status line name the phases that are
-actually landed, does the document you edited still agree with the one beside it, and did you write
-any bare count. A link-and-status checker in `backend/tools/` wired into `check.sh --fast` would be
-the honest enforcement of this rule; it does not exist yet, and until it does the rule is only as
-good as the agent reading it.
+It also *reports* a short list of exact phrases whose return would mean a bug this repository
+already fixed has come back. Those are canaries, not gates: a heuristic that can be wrong must
+never fail a build, because an operator who cannot trust a red light learns to ignore it.
+
+**Nothing checks whether a claim is true.** `FEATURES.md` said "8 seconds" for two phases and no
+checker could have read the intent. The trigger table above is the part that still depends on the
+agent, and these are the questions a checker cannot ask: does the status line name the phases that
+are actually landed, does the document you edited still agree with the one beside it, and did you
+write any bare count.

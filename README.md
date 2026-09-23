@@ -226,6 +226,7 @@ decorative:
 | Frontend | Pure modules under `node --test` |
 | Typecheck and build | `svelte-check` and the production build |
 | Deploy | The kiosk's managed Chromium policy, read by a plain-bash test |
+| Docs | Links, anchors, reachability and plan/phase status agreement — the standing rule in `docs/ECOSYSTEM.md` |
 | Browser end-to-end | 17 scenarios in real Chromium against a real server |
 | Coverage and mutation | Reports only; not gates until their baselines are established |
 | Falsification | Every break script, run against the assertion it claims to break — a check that passes with the break applied is a test that cannot fail |
@@ -320,7 +321,7 @@ deploy/                systemd units, kiosk policy, installer
 | Document | Contents |
 | --- | --- |
 | [docs/PLAN-PHASE8-9.md](docs/PLAN-PHASE8-9.md) | MIDI that sets itself up, and the LAN server — landed |
-| [docs/PLAN-PHASE20A.md](docs/PLAN-PHASE20A.md) … [20E](docs/PLAN-PHASE20E.md) | Deliberate practice, piano-side ergonomics, log trust, journal depth, audio takes — landed |
+| [docs/PLAN-PHASE20A.md](docs/PLAN-PHASE20A.md), [B](docs/PLAN-PHASE20B.md), [C](docs/PLAN-PHASE20C.md), [D](docs/PLAN-PHASE20D.md), [E](docs/PLAN-PHASE20E.md) | Deliberate practice, piano-side ergonomics, log trust, journal depth, audio takes — landed |
 | [docs/PLAN-PHASE21.md](docs/PLAN-PHASE21.md), [docs/PLAN-PHASE22.md](docs/PLAN-PHASE22.md) | The blur and the edit path; hearing the piece — landed |
 | [docs/PLAN-PHASE23.md](docs/PLAN-PHASE23.md) | The pedal as a quick-action surface: three configurable gestures on the sostenuto, and a review flag — landed |
 | [docs/PLAN-OPUS-NOTE-IDENTITY.md](docs/PLAN-OPUS-NOTE-IDENTITY.md) | The rename, the visual identity and the navigation declutter |
