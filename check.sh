@@ -57,8 +57,8 @@ step() {
 # a break that stops the build, a timeout — which is a gap to investigate rather than a defect.
 # --------------------------------------------------------------------------------------------
 if [ "$TIER" = "--falsify" ] || [ "$TIER" = "--falsify-quick" ]; then
-  falsified=0; failed=0; refused=0; skipped=0; deferred=0
-  failures=(); refusals=(); deferred_names=()
+  falsified=0; failed=0; refused=0; skipped=0; deferred=0; unattributed=0
+  failures=(); refusals=(); deferred_names=(); unattributed_names=()
   # Each distinct check is proven green once, not once per break script. Nineteen scripts declare
   # `./check.sh --fast`, and repeating its 74 s positive control for each of them was 23 minutes of
   # identical work against byte-identical source — the difference between this tier taking an hour
@@ -97,12 +97,13 @@ if [ "$TIER" = "--falsify" ] || [ "$TIER" = "--falsify-quick" ]; then
     case "$status" in
       0) echo "  falsified           $name"; falsified=$((falsified + 1)); CONTROL_PASSED[$check]=1 ;;
       1) echo "  FAILED              $name"; failed=$((failed + 1)); failures+=("$name"); CONTROL_PASSED[$check]=1 ;;
+      3) echo "  unattributed        $name"; unattributed=$((unattributed + 1)); unattributed_names+=("$name"); CONTROL_PASSED[$check]=1 ;;
       *) echo "  refused             $name"; refused=$((refused + 1)); refusals+=("$name") ;;
     esac
     printf '%s\n' "$out" > "/tmp/falsify-$name.log" 2>/dev/null || true
   done
   echo
-  echo "falsify: $falsified falsified, $failed failed, $refused refused, $skipped undeclared"
+  echo "falsify: $falsified falsified, $failed failed, $refused refused, $unattributed unattributed, $refused refused, $skipped undeclared"
   if [ "$deferred" -gt 0 ]; then
     echo "$deferred deferred to the full pass (their check is the whole fast tier):"
     printf '  %s\n' "${deferred_names[@]}"
@@ -110,6 +111,10 @@ if [ "$TIER" = "--falsify" ] || [ "$TIER" = "--falsify-quick" ]; then
   if [ "${#failures[@]}" -gt 0 ]; then
     echo "these assertions could not fail when their break was applied:" >&2
     printf '  %s\n' "${failures[@]}" >&2
+  fi
+  if [ "${#unattributed_names[@]}" -gt 0 ]; then
+    echo "these checks failed, but not for the reason their break names, so nothing is proved:" >&2
+    printf '  %s\n' "${unattributed_names[@]}" >&2
   fi
   if [ "${#refusals[@]}" -gt 0 ]; then
     echo "these runs were refused, so they prove nothing either way:" >&2

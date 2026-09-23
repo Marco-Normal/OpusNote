@@ -21,7 +21,7 @@
 # The checks that must catch it are "reuse never crosses a pinned hand" and "reuse never
 # crosses a pinned level" in `backend/tests/test_api.py`.
 # CHECK: cd backend && .venv/bin/python -m pytest -q tests/test_api.py
-# EXPECT: reuse never crosses a pinned level
+# EXPECT: the left-hand exercise was served for a request for the right hand
 #
 #   backend/tools/falsify.sh \
 #     backend/tools/falsifications/forget_the_pin_when_reusing_an_exercise.sh \

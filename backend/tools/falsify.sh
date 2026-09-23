@@ -364,7 +364,9 @@ if [ -n "$EXPECT" ]; then
     echo "So this failure cannot be attributed to the assertion the break is meant to test —" >&2
     echo "something else went red, and the assertion may still be incapable of failing." >&2
     echo "Output kept at $OUT" >&2
-    exit 1
+    # 3, not 1: this is not "the assertion cannot fail", it is "the check failed for a reason
+    # nobody named". A caller that treated both as one outcome would report the wrong thing.
+    exit 3
   fi
   echo
   echo "the failure names what it was expected to name: $EXPECT"
