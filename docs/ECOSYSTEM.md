@@ -204,6 +204,7 @@ sessionizer and segmentation move across as-is with their tests.
 
 | 21 | **The log at speed, and the blur you can find** | Blur positions cached beside the count and marked on the sitting strip; and an edit path that applies the server's own answer instead of refetching the matcher's accuracy, the machine's health and the week's ratings after every click. **Landed.** | S |
 | 22 | **Hearing the piece** | Where the playing actually turns over (an adaptive gap with a 2 s floor, plus minimum and maximum sizes), and a matcher that survives a growing library (tempo-invariant local shingles pooled per piece, IDF containment, a hybrid score). Passages and piece-sessions are derived from attempts, so the log shows *n* attempts at one passage rather than *n* unrelated rows. **Landed 22a–22c.** One acceptance number was corrected to its measurement and one decision was dropped after measuring: see § *Phase 22* below. | high |
+| 23 | **The pedal as a quick-action surface** | The sostenuto's one hard-coded action becomes three gestures on the same pedal — single, double, hold — each bound in Setup to one action or to nothing: a review flag, start/finish a workout, arm/stop the take, or finish the sitting. A review flag is a raw mark event in its own table, drawn on the sitting strip beside the blur hairlines. **Planned.** | medium |
 
 Phases 1-2 are the useful minimum: they get the library out of the Rust app's
 directory and into a browser, which is most of what you asked for.
@@ -1642,7 +1643,7 @@ sharing."*
 | 20-D2 | Is an inferred kind ever applied? | **No — offered only**, with the basis recorded | The autotag restraint is preserved; a manual tag can never be silently overwritten |
 | 20-D3 | Does undo survive a restart? | **No** — inverse operations over existing routes, and `resegment` stays irreversible | No new table, no backup change, no second source of truth for segment boundaries; the one loss (an absorbed segment's identification outcome) is stated rather than papered over |
 | 20-D4 | Does in-app audio replace the piano's pen-drive recording? | **No** — a low-bitrate convenience for sharing, never an archive | Quality is not an acceptance criterion, so a standing switch is affordable and privacy/retention stay simple |
-| 20-D5 | Which pedal is the hands-free trigger? | **The sostenuto (CC66) alone, discovered rather than assumed**, with a CC64 double-tap carrying the workout | No gesture is bound to a message the piano has not been seen to send, and no gesture is bound to a pedal that is played — the soft pedal is unbound because the user uses it |
+| 20-D5 | Which pedal is the hands-free trigger? | **The sostenuto (CC66) alone, discovered rather than assumed**, with a CC64 double-tap carrying the workout | No gesture is bound to a message the piano has not been seen to send, and no gesture is bound to a pedal that is played — the soft pedal is unbound because the user uses it. **Superseded in part:** the CC64 double-tap was retired the same day (2026-09-17), because the damper is played and it fired mid-phrase; Phase 23 keeps the pedal and the discovery rule but replaces the one-action mapping with three configurable gestures on the same pedal (23-D1, 23-D3) |
 | 20-D6 | Does one missed day break the streak? | **No — one grace day per rolling seven**, with a weekly target carrying the habit | The familiar consecutive-day number survives; the weekly target needs no server-side setting |
 | 20-D7 | Are focus passages inferred from the log? | **No — manual, or seeded from an existing A/B loop** | There is no score alignment to infer from, and 18b made that a non-goal; nothing is claimed about bars the app cannot see |
 
@@ -1790,6 +1791,81 @@ keeping the existing numbers is a result, not a non-event.
 bars 40–48; no section generation or looping; no per-hand inference; no audio; no persisted group
 table; no schema change; no new endpoint.
 
+### Phase 23 — planned (the pedal as a quick-action surface)
+
+**Implementation plan:** [`PLAN-PHASE23.md`](./PLAN-PHASE23.md). Asked for by the owner as "bind the
+pedals to a list of quick actions" — the middle pedal should start a workout, drop a marker on the
+timeline, and so on — and taken through design first, because the request as literally stated
+conflicted with two invariants the pedal feature was built on.
+
+The pedal carries one hard-coded action today. `HandsfreeAction` is a single-member union whose own
+comment says a second action would be a change the compiler points at; this phase spends that
+widening. Three *gestures* on the sostenuto — single, double, hold — are each bound in Setup to one
+action or to nothing, drawn from a list of four: a review flag, start/finish a workout, arm/stop the
+take, and finish the sitting.
+
+**The request was narrowed deliberately, and the narrowing is the design.** "Bind the pedals" read
+literally means the damper and the soft pedal, and both are *played*. The soft pedal was bound to the
+take gesture in 20b and unbound the same day, after the owner reported that tapping it stopped the
+recording; the damper's double-tap was retired for the same reason. The damper is the worse case of
+the two — it is pressed constantly, so *even an additive action* would fire throughout ordinary
+playing. Customization is therefore **which action each gesture on CC66 carries**, not which pedal
+carries a gesture. That costs nothing: the sostenuto is unused musically, so three gestures on it are
+free.
+
+**Defaults put the safest action on the easiest gesture.** single flags a review, double works a
+workout, and the hold — the one gesture that cannot be accidental — arms and stops the take. This
+moves take recording off the single press, which is a change to the owner's daily habit, so the bench
+scenario's take assertions are inverted as part of the phase rather than discovered afterwards.
+`finish_sitting` ships unbound.
+
+**The review flag is the blur hairline's shape with a different meaning.** "Like we have pedal
+blurs… a little flag saying 'you should review near here'." A blur is a place the app *measured*; a
+flag is a place a person *asserted*. It travels as a raw mark event — its own table
+(`sitting_marks`), an optional `EventBatch.marks` field, `review_marks_ms` on the sitting detail — so
+the **server** assigns the sitting (a client cannot know it) and a retried batch stays idempotent,
+exactly as `pedal_events` works. It is deliberately *not* a JSON column on `sittings` (a retried
+press could land in the wrong sitting) and *not* a widened `pedal_events` (every CC64 reader would
+have to learn to filter, and `midi.ts` warns that routing CC66 down the sustain path records the
+middle pedal as sustain and corrupts `pedal_basis` and `pedal_blur`).
+
+**One property makes the extra gesture complexity free.** With single and double both bound, a single
+tap cannot be recognised until the double window expires. That wait costs nothing because a fire
+carries the **press's** timestamp, not the dispatch time: the flag lands where it was pressed and only
+its confirmation is late. The gesture also stays inert during a scored attempt for every action,
+including the flag — exempting the harmless one would turn a tested invariant into a per-action
+judgement about what counts as harmless, which is how the damper's double-tap got retired in the
+first place.
+
+**Non-goals.** No binding to the damper or the soft pedal and no gate that would make it safe; no new
+controller; no deletion or editing of a flag; no per-segment flag count; no live flag overlay on the
+practice view; no change to the blur rule or the pedal figures; no `SCHEMA_VERSION` bump (a new table
+is created by `init_db`), no `BACKUP_VERSION` change, no new route.
+
+#### Decisions taken
+
+| ID | Question | Decision | Consequence |
+| --- | --- | --- | --- |
+| 23-D1 | Which pedals may carry a quick action? | **The sostenuto (CC66) alone** — customization is which action each *gesture on it* carries | The played-pedal invariant survives; the damper's constant use cannot misfire, and the soft-pedal defect the owner reported cannot return |
+| 23-D2 | How is more than one action bound to a pedal nobody plays? | **Three gestures — single, double, hold** — each independently bound to an action or to nothing, one action per gesture | Several quick actions without spending the invariant; the sostenuto is unused musically, so the gestures are free |
+| 23-D3 | Which action takes which gesture by default? | **The safest takes the easiest**: single → flag, double → workout, hold → arm/stop the take; `finish_sitting` unbound | The destructive action needs a deliberate hold; take recording moves off the single press, so the bench assertions are inverted as part of the work |
+| 23-D4 | Where does a review flag live? | **Its own raw mark stream** — `sitting_marks`, an optional `EventBatch.marks`, `review_marks_ms` | The server assigns the sitting and retries stay idempotent; the pedal figures stay CC64-only |
+| 23-D5 | Is the gesture inert during a scored attempt? | **Yes — every action, with no exemption for the flag** | The existing falsified invariant stays uniform instead of becoming a per-action harmlessness judgement |
+| 23-D6 | What does a fire timestamp? | **The press, not the dispatch** | The deferred single tap is free: the flag's position is exact and only its confirmation is late |
+| 23-D7 | Does a new table bump `SCHEMA_VERSION`? | **No** — `CREATE TABLE IF NOT EXISTS` runs on every `init_db`; no `ADDED_COLUMNS` entry, no `BACKUP_VERSION` change | Follows the rule § *Phase 20* states for `piece_passages`; an older build simply never reads the table |
+| 23-D8 | Does a configurable binding weaken discovery? | **No** — the panel keeps reporting whether CC66 has actually been seen | The picker chooses an action; it never claims the pedal works |
+
+**Schema and migration.** One new table, `sitting_marks(id, sitting_id, onset_ms, epoch_ms)` with a
+dedupe index on `(sitting_id, onset_ms)`, declared in the practice `CREATE` and created by `init_db`.
+No columns are added to an existing table, so `ADDED_COLUMNS` is untouched and `SCHEMA_VERSION` stays
+**5** (23-D7). The wire field is additive and optional, so a client that predates it keeps working
+unchanged — the same shape `pedals` had when it was added.
+
+**ADR signal.** 23-D1/23-D2/23-D8 (the pedal as a configurable action surface bound to one discovered
+controller), 23-D4 (a new persisted raw stream) and 23-D5 (the run-inert rule reaffirmed rather than
+relaxed) extend the runtime and trust boundaries 20-D5 opened. This document plus its decisions
+tables remains the decision record; no ADR directory is created.
+
 ### Still open, from the earlier brainstorm
 
 **Section practice** (pick bars, slow down, loop until clean) and **per-hand practice**,
@@ -1883,7 +1959,7 @@ levels 3–10 read as voicing, so the taxonomy mixes two axes at its bottom end.
 | An unauthenticated LAN can still *edit* and *upload* (D8) | Visible banner; the irreversible paths are loopback-only, which is the part that cannot be undone by hand |
 | A future move to a reverse proxy or a non-loopback deployment breaks the boundary silently | `request.client.host` is the check today and there is no proxy in this topology; if one is ever added, the check must move to a trusted header, and this row is the reminder |
 | Captured audio (Phase 20e) grows without bound and is the first thing in the app whose size matters | ~14 MB per hour at 32 kbps mono, against a few MB per *year* for notes. Deliberately not auto-pruned: the System panel reports captured-audio size and deletion stays loopback-only, so the player decides rather than a policy |
-| The sostenuto pedal is bound to a controller message the piano may not send (Phase 20-D5) | The device bar reports which of CC64/66/67 have actually been seen before anything is bound, and the `Record takes` button and a CC64 double-tap cover the actions without it. A piano that sends none of them keeps every feature except the gesture |
+| The sostenuto pedal is bound to a controller message the piano may not send (Phase 20-D5) | The device bar reports which of CC64/66/67 have actually been seen before anything is bound, and the `Record takes` button and the workout banner cover the actions without it. A piano that sends none of them keeps every feature except the gestures — and Phase 23 keeps this report while making which action each gesture carries configurable (23-D8) |
 
 ### Non-goals
 
