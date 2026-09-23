@@ -3135,3 +3135,46 @@ Not done, deliberately: the two settings Phase 22b left dead, `SRT_AUTOTAG_NEIGH
 may have set the env vars and a documented setting is not withdrawn in a code commit — so they are
 untouched, and this entry is the reminder rather than the removal.
 
+## 2026-09-22 — sight-reading agent — the cost that vanished when the last section was labelled
+
+Scope: `backend/app/practice/store.py`, `backend/tests/test_autotag.py`,
+`backend/tools/falsifications/read_the_sitting_notes_per_segment.sh` (new). Commit `8b775c3`.
+
+Did: a reported symptom — "operations are slow while a sitting still has an unlabelled section, and snap
+back the moment everything is labelled". Not an impression, and the cause was precise.
+
+**The gate is in the code.** `candidates_for_sitting` returns `{}` the instant nothing is undecided, so
+the cost is exactly zero once the last label lands — which is why the boundary the owner noticed is so
+sharp, and worth naming in the answer rather than leaving as folklore. Every edit reaches that function
+because `PracticeLogView.edit()` re-reads the sitting after writing, deliberately, so the derived
+passages match the segments.
+
+**Each question re-read the whole sitting's notes.** `segment_identification` fetched the segment's
+notes with a query by *sitting* — `WHERE sitting_id = ?` returns every note in the sitting, and the
+caller keeps one segment's share. Asking it once per open section meant a sitting read its own notes n
+times per edit. Measured on the owner's library, `sitting_detail` on a 23k-note sitting: **1 section
+171 ms, 5 → 241 ms, 20 → 516 ms, 50 → 1062 ms**, with `_notes_for_segments` called 51 times and 734 ms
+of the run inside `fetchall` alone.
+
+`segment_identification` now accepts the notes it is about to use, and both callers read once for the
+whole run. The second caller is the one that would have been missed: `_autotag_rows` had the same shape
+on the pass that runs when a sitting is *first* segmented — the other half of "I just finished and
+opened it" — and it also rebuilt the entire reference set uncached; it reads `cached_references` now,
+the material the timeline already caches. After: **1 → 171 ms, 5 → 173, 20 → 207, 50 → 259** — flat in
+the open sections instead of linear.
+
+Verified: **975 backend tests** and `./check.sh --fast` green. Equivalence is direct rather than argued:
+the batched note read returns exactly what the per-segment read returned for all 68 segments, and the
+cached references equal `examples_from` + `_pooled_signatures` for the autotag pass. The guard counts
+note reads rather than timing them, so it cannot pass by running on a quiet machine — the first draft of
+the test failed for the honest reason that a cold reference cache costs one extra read on the *first*
+sitting, which is why it now warms the cache before counting. It was falsified with the tool: deleting
+the handed-down `notes=` argument restores the defect, and the run reports **`falsified`** attributed to
+`test_reading_a_sitting_does_not_read_its_notes_once_per_open_section` (`1 failed, 974 passed`).
+
+Not done, and the shape of what is left: the per-edit cost is flat now but not zero — one passage pass
+and one suggestion pass over the sitting's notes remain, about 80 ms with nothing open and 260 ms with
+fifty sections on this machine. The deeper shape is that every edit re-reads the whole detail so the
+derived passages stay honest; returning the passages with the edit's own response would remove the
+re-read, and that is a contract change rather than a fix.
+
