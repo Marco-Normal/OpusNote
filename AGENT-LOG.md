@@ -2799,3 +2799,64 @@ count written down once and not re-read after the last test was added. Appending
 per this file's rule.
 
 Impact on the other side: none. The count was the only wrong thing.
+
+## 2026-09-22 — sight-reading agent — the standing rule becomes a command
+
+Scope: `backend/tools/falsify.sh`, all 49 break scripts, `backend/tools/falsifications/
+click_the_beat_as_a_quarter.sh` (new), `check.sh`, `frontend/src/lib/{beatGrid.ts,beatGrid.test.ts}`
+(new), `frontend/src/lib/metronome.ts`, `docs/TEST-STRATEGY.md`. Commits `5fe1647`, `a4a4fde`.
+
+Did: Step 5's first two items — the falsification tier, and the metronome's arithmetic where it can
+actually be tested.
+
+**The standing rule was a preference because nothing ran it.** §8 has said since Phase 19 that no
+assertion is trusted until it has been seen to fail, and there were 49 break scripts with the pairing
+between a break and its check living only in each script's prose. A break could rot into a no-op, or
+into a check that can no longer fail, and nothing would notice. Each script now declares
+`# CHECK:` and, where the failure must name the assertion, `# EXPECT:` — the example its header
+already gave, made readable. `falsify.sh <script>` needs no second argument and
+`./check.sh --falsify [filter]` runs the set.
+
+**The migration was extracted, not retyped, and then read.** 48 of the 49 declarations came out of
+the usage example already in the header. The diff was checked for truncation and one was truncated:
+`drop_take_catch_up.sh` uses pytest's `-k 'a or b'`, and a `[^"']+` character class stops at the
+nested quote, leaving a bare `-k` that would have made pytest exit 4 and the run refuse for a reason
+that looked like a broken break. The pattern now allows the opposite quote inside. One script
+resisted — its header mentions `falsify.sh` in prose before the usage — and is declared by hand
+rather than by teaching the parser to guess, which is how a parser starts being wrong quietly.
+
+**`--falsify` is its own tier, not part of `--full`.** Each script runs its check twice, so the full
+set is about an hour, most of it the nineteen scripts whose declared check is the whole fast tier. It
+reports four outcomes and only one of them is a failure: `failed` means the check passed with the
+break applied, so the assertion cannot fail. `refused` — an already-red check, a break that stops the
+build, a timeout, an unattributed failure — proves nothing either way and is reported as a gap. The
+distinction matters because the tool refuses far more often than it fails, and a tier that treated
+every non-zero exit as a defect would be crying wolf.
+
+**A monitoring mistake worth recording.** The first full run was started with its output piped
+through `tail`, so it was buffered and unobservable, and the run blocked every edit because a dirty
+tree makes the later scripts refuse. It was killed; the trap restored the tree even under a kill,
+which is the first real test of that path in anger. The lesson is that a run which must not overlap
+edits should be started *last*, and its output should stream.
+
+**The metronome's arithmetic now has tests, and the reason it could not before is the reason it now
+has its own module.** `metronome.ts` imports Tone at module scope, so nothing in it loads under
+`node --test`. The click grid has moved to `lib/beatGrid.ts`, which imports nothing, and
+`metronome.ts` keeps the Web Audio side — the synth, the rolling lookahead window, the visual beat.
+This is the extraction TEST-STRATEGY Slice 6 called for, done now because the module finally has a
+reason to be reachable.
+
+The load-bearing test is the invariant the recorded defect violated: **a bar lasts as long as its
+notation says** — a bar's beats, each times its own unit times seconds-per-quarter, sum to its length
+in quarters — checked across 4/4, 3/4, 6/8, 9/8, 12/8, 2/2 and 3/8. That defect was the metronome
+being handed seconds-per-*quarter* and using it as seconds-per-*beat*, which coincides only when the
+beat is a quarter; in 12/8 it ended the run a quarter of the way early and silently truncated the
+performance. Eleven tests, and `click_the_beat_as_a_quarter.sh` restores the defect: it fails on
+`actual: 6, expected: 7`.
+
+Verified: 133 frontend tests (was 122); 968 backend; `npm run check` clean; `./check.sh --fast` green
+in 77 s; the metronome falsifier reports `falsified` with the failure attributed.
+
+Impact on the other side: none. No API, schema, route or setting change. `metronome.ts` exports the
+same `Metronome` class and `BeatInfo` it always did; the pure pieces moved to a module nothing else
+imports directly.

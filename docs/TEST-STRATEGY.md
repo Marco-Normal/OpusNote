@@ -614,6 +614,31 @@ applied — bash defers a trap until the foreground command returns, and a survi
 could write after restoration — and both were fixed and re-tested. A tool that certifies checks
 has to be harder to fool than the checks it certifies.
 
+### Running the whole set
+
+Each break script declares its own pairing, which is the usage example its header already gave:
+
+```
+# CHECK: cd backend && .venv/bin/python -m pytest -q tests/test_segment.py
+# EXPECT: the adaptive threshold
+```
+
+`falsify.sh <script>` then needs no second argument, and `./check.sh --falsify [filter]` runs every
+script. The declaration lives in the script rather than in a manifest because a second list is a
+second thing to keep in step, and the failure mode of a stale manifest is a break quietly paired
+with the wrong check.
+
+`--falsify` is its own tier. Each script runs its check **twice** — once on the unbroken tree as the
+positive control, once with the break applied — so a full pass is about an hour, most of it the
+nineteen scripts whose declared check is `./check.sh --fast`. It is the tier that keeps the other
+tiers honest, not one that can run after every edit.
+
+It reports four outcomes and treats them differently. `falsified` is the good one. `failed` means the
+check passed with the break applied, so the assertion cannot fail — that is a defect in the suite
+and the tier exits non-zero. `refused` means the tool declined to answer: an already-red check, a
+break that stops the build, a timeout, an unattributed failure. A refusal proves nothing either way
+and is reported as a gap to investigate. `undeclared` is a break script with no `CHECK` line.
+
 ---
 
 ## 9. What this replaces
