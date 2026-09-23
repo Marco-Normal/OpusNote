@@ -65,17 +65,31 @@ def test_the_host_route_answers_with_this_machines_view(client) -> None:
     assert "System" in body["clients"] or body["clients"] == []
 
 
-def test_the_sequencer_probe_accepts_either_signal(monkeypatch) -> None:
-    """`/dev/snd/seq` is absent in containers while the sequencer is running."""
-    from pathlib import Path
+def test_the_sequencer_probe_accepts_either_signal(monkeypatch, tmp_path) -> None:
+    """`/dev/snd/seq` is absent in containers while the sequencer is running.
 
+    The two paths are files under ``tmp_path`` rather than the machine's own. A CI runner has
+    no ALSA sequencer at all, so ``/proc/asound/seq/clients`` is not there to be pointed at —
+    a test that reads the real path passes on the developer's box and fails on the runner,
+    which is a fact about the machine rather than about the probe.
+    """
     from app import hostinfo
 
-    monkeypatch.setattr(hostinfo, "SEQUENCER_PATH", Path("/nonexistent/seq"))
-    monkeypatch.setattr(hostinfo, "SEQ_CLIENTS_PATH", Path("/nonexistent/clients"))
+    device = tmp_path / "seq"
+    clients = tmp_path / "clients"
+    monkeypatch.setattr(hostinfo, "SEQUENCER_PATH", device)
+    monkeypatch.setattr(hostinfo, "SEQ_CLIENTS_PATH", clients)
+
+    assert hostinfo.sequencer_available() is False, "neither signal present"
+
+    clients.write_text("")
+    assert hostinfo.sequencer_available() is True, "the procfs listing alone is enough"
+
+    clients.unlink()
     assert hostinfo.sequencer_available() is False
-    monkeypatch.setattr(hostinfo, "SEQ_CLIENTS_PATH", Path("/proc/asound/seq/clients"))
-    assert hostinfo.sequencer_available() is True
+
+    device.write_text("")
+    assert hostinfo.sequencer_available() is True, "and the device alone is enough"
 
 
 def test_alsa_clients_is_empty_rather_than_failing_without_a_sequencer(monkeypatch) -> None:

@@ -147,7 +147,8 @@ the scorer and the timing model.
 
 ## Quick start
 
-**Prerequisites:** Python 3.11, Node 20+, and a Chromium-based browser. Web MIDI requires Chrome,
+**Prerequisites:** Python 3.11, Node 23.6+ (the frontend units are TypeScript run directly by
+`node --test`, which older Node cannot load), and a Chromium-based browser. Web MIDI requires Chrome,
 Edge or Opera on desktop; the interface detects unsupported browsers and reports this rather
 than failing silently.
 

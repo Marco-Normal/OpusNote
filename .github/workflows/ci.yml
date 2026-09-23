@@ -33,7 +33,12 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          # Not 20. The frontend units are TypeScript run by `node --test`, and Node only
+          # learned to strip types itself in 23.6 — on 20 every one of them dies with
+          # `ERR_UNKNOWN_FILE_EXTENSION: Unknown file extension ".ts"`. The tier aborted at the
+          # backend step before this could be seen, so the pin went on saying 20 while the
+          # tests needed 26; see docs/PLAN-PHASE8-9.md §the frontend test runner.
+          node-version: '26'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
