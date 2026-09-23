@@ -2956,3 +2956,52 @@ runs on every connection (~0.3 ms each, more on an HD, and requests open 2–3);
 pedal with no index on `sittings(started_ms)`. A non-flaky guard for these two quadratics would have to
 count work rather than time, and none is added here — so the equivalence proofs above are the evidence
 for this change, not a standing assertion that a future edit cannot quietly undo.
+
+## 2026-09-22 — sight-reading agent — the undo offer stops taking the detail column
+
+Scope: `frontend/src/components/PracticeLogView.svelte`, `backend/tools/e2e_browser.py`, new
+`backend/tools/falsifications/split_the_detail_column.sh`, `README.md`. Commit `3db5080`.
+
+Did: a layout defect with no wrong value in it, reported as "something about the undo operation
+makes the layout very weird". `e8adf80` put the undo offer directly above `<SegmentTimeline …>`
+inside `{#if detail}`, which reads as "above the card" and is not: `.columns.wide-left` is a
+**grid**, and a grid child is a *column*, not a banner. The notice became the second column, the
+timeline was auto-placed into the cell that left — (2,1), under the sitting list, at the list's
+width — and the column it vacated held nothing but the notice. So the whole detail panel moves,
+and only when an edit has something to offer.
+
+The fix is one wrapper: the notice and the card are now the children of a single `.stack`, already
+a global primitive at `app.css:280`, so the pair is one grid item and the detail is back in the
+wide column beside the list. No new CSS and no prop into `SegmentTimeline`, and the notice keeps
+the placement the plan asked for. `@media (max-width: 900px)` collapses to a single column either
+way, which is why it only ever showed on a wide viewport.
+
+Verified: `./check.sh --fast` green in 77 s. The scenario asserted `[data-undo]`'s *presence* and
+never its position, which is how a purely geometric defect shipped, so `scenario_practice_log` now
+measures it at 1280×1000 while the offer is on screen — the timeline's left edge at or past the
+sitting list's right edge, and the notice sharing the timeline's left edge and sitting above it.
+Falsified per §8, and the control is what makes the break mean something: with the fix, list
+126–525 and detail 553–1154 side by side; with `display: contents` on the wrapper, the **timeline**
+moves to 111–541 at top 590, under the list, while the notice keeps 553. The assertion goes red
+naming it: `FAILED: the sitting detail stays in the wide column beside the list (timeline left 111,
+list right 525)`. A scratch capture (`.scratch/shots/undo-fixed.png`, `undo-broken.png`, both
+gitignored) drove that same break by toggling the property on the live page, so the picture and the
+falsification describe one state and not two. README's falsification count was stale — 37 when it
+was written at `c723dd0`, 50 before this change — and reads 51 now.
+
+One tier deliberately not run, and said out loud rather than left to be assumed: **`--full` was
+started and stopped on the owner's call**, for a one-component layout fix whose only `--full`-owned
+surface is `scenario_practice_log` — and that scenario ran twice, control and break, under the
+falsification above. What is not covered by that substitution is the rest of the browser registry
+and the mutation report, neither of which this change can move.
+
+Impact on the other side: none. No API, schema, route, setting or stored format changes; the only
+edits outside one frontend component are an assertion and its break script.
+
+Not done, and named rather than left silent: nothing in this project reads *position* except the
+one staff-top ordering check, and a component cannot be mounted by `node --test` here, so the only
+place this could have been caught is the browser tier — which is `--full` and the falsify pass, not
+the tier that runs after every edit. The log view's one grid is now guarded where it broke; a second
+conditional sibling added to it later would have to move that same geometry before any check
+notices, which is the sharpest statement the assertion can honestly make.
+
