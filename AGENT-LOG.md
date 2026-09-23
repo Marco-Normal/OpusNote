@@ -2860,3 +2860,41 @@ in 77 s; the metronome falsifier reports `falsified` with the failure attributed
 Impact on the other side: none. No API, schema, route or setting change. `metronome.ts` exports the
 same `Metronome` class and `BeatInfo` it always did; the pure pieces moved to a module nothing else
 imports directly.
+
+## 2026-09-22 — sight-reading agent — making the falsify tier finishable
+
+Scope: `check.sh`, `backend/tools/falsify.sh`,
+`backend/tools/falsifications/forget_the_pin_when_reusing_an_exercise.sh`. Commits `7a52021`,
+`8ea77c6`.
+
+Did: the tier worked and took about 40 minutes, which is a release-time tier and not something anyone
+runs while editing. Two changes, both measured.
+
+**Each distinct check is proven green once, not once per break script.** Nineteen of the fifty scripts
+declare `./check.sh --fast`, and each falsification runs its check twice — once as the positive control,
+once with the break applied — so 19 × 74 s of the controls were re-proving the same thing against
+byte-identical source. `--falsify` now remembers a check it has seen pass in the same run and tells the
+next script so. Measured on two scripts sharing that check: 226 s where the old shape cost 296 s, and
+the saving is 74 s per shared check — about 22 minutes across the set. A check is remembered only after
+a script reports `falsified` or `failed`, both of which prove the control passed, and never after a
+refusal, because a refusal may *be* the control failing. This is not the "skip the control" flag the
+tool's header refuses to provide: the control is still run, once per distinct check.
+
+**`--falsify-quick` runs the other 31 and names the 19 it deferred.** Measured at 7 m 13 s. The
+deferred ones are not less important — they are the assertions the author could not pin to a single
+test file, which is worth seeing — they are deferred because each costs a full fast tier twice.
+
+**The first quick pass earned its keep immediately: 29 falsified, 1 "failed", 1 refused.** The one
+reported as unable to fail had not failed. Its `EXPECT` had been mis-extracted from prose in its own
+header — the third mis-extraction from that one file — so the tool refused to attribute the failure
+and exited 1, and the tier printed that under "these assertions could not fail". Two different things
+sharing one exit code, and the summary was wrong about which. An unattributed failure now exits 3 and
+is named separately. The `EXPECT` is corrected to the message the assertion actually raises, and the
+script now reports `falsified` on `test_reuse_never_crosses_a_pinned_hand`.
+
+Worth stating plainly: every wrong declaration found today was caught by the tool rather than by
+reading it, and none could produce a false certification — a check that cannot run is refused, and a
+failure that cannot be attributed is refused. The dangerous direction stayed closed throughout.
+
+The refused one is `reload_everything_after_an_edit.sh`, still unresolved: it proves nothing either
+way until it is looked at, and it is named in the tier's summary rather than left silent.
