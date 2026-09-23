@@ -39,11 +39,11 @@ Two endpoints carry the whole interaction:
 - `GET /api/exercise/next` → MusicXML plus the expected-note timeline
 - `POST /api/score` → played notes in, per-note feedback and sub-scores out
 
-`/api/exercise/next` takes three optional overrides, all of them a deliberate choice by the player
-rather than something derived from a rating: `key` (used by the repertoire bridge, so an exercise can
-be written in the key of the piece being studied), `level=N` (every dimension at N — a pin, so it can
-raise a level as well as lower it, unlike the `max_level` parameter `plan_exercise` accepts and
-nothing passes) and `hands=RH|LH|both`.
+`/api/exercise/next` takes five optional overrides, all of them a deliberate choice by the player
+rather than something derived from a rating: `skill` (force a dimension), `bars` (1–16), `key` (used
+by the repertoire bridge, so an exercise can be written in the key of the piece being studied),
+`level=N` (every dimension at N — a pin, so it can raise a level as well as lower it, unlike the
+`max_level` parameter `plan_exercise` accepts and nothing passes) and `hands=RH|LH|both`.
 
 `hands` exists because the hand is otherwise a *consequence* of the difficulty: `TEXTURE_LEVELS` gives
 `("RH",)` at level 1, `("LH",)` at 2 and `("RH", "LH")` at 3–10, so the bass clef was readable only at
@@ -70,10 +70,13 @@ source of truth, and it asserts at import time that every parameter table define
 | Rhythm | quarters/halves | mixed tuplets and syncopation |
 | Intervals | steps only | fully disjunct |
 | Hand position | five-finger RH | free position changes |
-| Texture | right hand alone | four-voice writing |
+| Texture | right hand alone | dense writing with a stride or wide bass |
 | Accidentals | diatonic only | highly chromatic |
 | Tempo | 50–60 BPM | 160–200 BPM |
 | Articulation | legato, no marks | full expressive marking set |
+
+Level 10 is *dense*, not four-voice: `generator.py` collapses `three_voices` into one inner voice,
+so no more than two voices are ever written.
 
 Each exercise is generated from a level per skill, then tagged with them.
 
@@ -125,8 +128,15 @@ For each expected note, within a ±200 ms window:
   instability. This uses a separate, much wider matching window, because a hesitation is *late*,
   not *wrong*: reusing the tight pitch window made stalls invisible.
 
-Overall = 0.5·pitch + 0.3·rhythm + 0.2·continuity. Pass at 80. Every threshold lives in
-`backend/app/config.py` and is overridable by environment variable.
+Overall = 0.5·pitch + 0.3·rhythm + 0.2·continuity, and the weights and the pass mark are
+`SRT_WEIGHT_*` and `SRT_PASS_THRESHOLD` in `backend/app/config.py`.
+
+Not every threshold is so configurable. Four are hardcoded in `scoring/engine.py`, and moving any
+of them is a code change rather than a setting: `WRONG_PITCH_FRACTION` (a wrong pitch counts as
+fully wrong), the rhythm blend `0.7·accuracy + 0.3·steadiness`, the continuity blend
+`0.6·hesitation + 0.4·stability`, and the stability scale `pstdev(ratios) / 0.35`. They are named
+here because a reader who trusts "every threshold is a config knob" will go looking for a knob that
+does not exist.
 
 **Hand attribution.** MIDI does not report which hand played a note, so the hand is derived from
 the notation: the generator emits the right hand as part 1 and the left as part 2, and each
@@ -219,7 +229,7 @@ Every environment variable is optional.
 | `SRT_DEFAULT_RATING` | `700` | Where an uncalibrated learner starts |
 | `SRT_ELO_K` | `32` | Rating step |
 | `SRT_EXERCISE_BARS` | `4` | Bars per exercise |
-| `SRT_WORKOUT_LENGTH` | `8` | Exercises in a workout |
+| `SRT_WORKOUT_LENGTH` | `8` | Exercises in a workout. Was `SRT_SESSION_LENGTH`, a name nothing read; the old name is not read now either |
 | `SRT_SITTING_GAP_S` | `300` | Silence that closes a sitting |
 | `SRT_SEGMENT_GAP_S` | `8` | Silence after which a *take* being recorded is cut. Superseded for segmenting a stored sitting by Phase 22a's adaptive rule below; measured against a real session; see [FEATURES.md](FEATURES.md) §6 |
 | `SRT_SEGMENT_FLOOR_MS` | `2000` | Phase 22a: the shortest pause that can be a segment boundary |
@@ -240,7 +250,17 @@ Every environment variable is optional.
 | `SRT_PIANO_DIR` | `<data dir>/piano` | Where the one-time sampled piano is kept and served from |
 | `SRT_BACKUP_DIR` | `<data dir>/backups` | Where the nightly JSON exports are written |
 | `SRT_BACKUP_KEEP` | `14` | How many daily backups to keep |
-| `SRT_API_TARGET` | `http://127.0.0.1:8000` | Proxy target for the dev server |
+| `SRT_FRONTEND_DIST` | `<repo>/frontend/dist` | The built client the API serves |
+| `SRT_USER` | `local` | The single profile's display name |
+| `SRT_ELO_K_CALIBRATION` | `56` | Rating step during calibration — larger than the steady-state `SRT_ELO_K`, so a few answers move the seed fast |
+| `SRT_SELECTION_WINDOW` | `60` | **Read by nothing.** Kept intact pending a deployment decision |
+| `SRT_RHYTHM_TOLERANCE_BEATS` | `0.50` | How far a note may sit from its beat and still count as on time |
+| `SRT_WEIGHT_PITCH` | `0.50` | Overall-score weight on pitch |
+| `SRT_WEIGHT_RHYTHM` | `0.30` | Overall-score weight on rhythm |
+| `SRT_WEIGHT_CONTINUITY` | `0.20` | Overall-score weight on continuity |
+| `SRT_CALIBRATION_LENGTH` | `8` | Exercises in a calibration run |
+| `SRT_AUTOTAG_QUALITY_LIMIT` | `400` | Segments read when the matcher reports its own accuracy |
+| `SRT_API_TARGET` | `http://127.0.0.1:8000` | Dev-server proxy target — read by `frontend/vite.config.ts`, not by `config.py` |
 
 ## 9. Known limitations
 
@@ -256,3 +276,9 @@ Every environment variable is optional.
 - **No authentication.** One local profile, by design. `POST /api/profile/reset` clears it.
 - **Startup cost.** Importing music21 takes a second or two; exercises themselves generate in
   roughly 20 ms.
+- **Half-pedalling is not modelled.** The pedal is read as down or up, so a partial press reads as
+  released. This is stated in `practice/pedal.py`, not an oversight.
+- **The LAN surface is read-mostly, not read-only.** With no authentication, anyone who can reach
+  the port can read every table and can run a `merge`-mode backup import. Only the irreversible
+  paths — delete, profile reset, re-segment with `confirm`, and `replace`-mode import — are refused
+  off the loopback address. See [`DEPLOYMENT.md`](DEPLOYMENT.md) § *What the LAN may do*.

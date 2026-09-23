@@ -3,7 +3,7 @@
 # The single entry point for verification. See docs/TEST-STRATEGY.md.
 #
 #   ./check.sh --fast    everything that must pass after every edit (budget: 180 s)
-#   ./check.sh --full    the above plus the browser, mutation and scale tiers
+#   ./check.sh --full    the above plus coverage, the browser scenarios and mutation (all reports)
 #   ./check.sh --falsify [filter]   every break script, run against the check it declares
 #   ./check.sh --falsify-quick [filter]   the same, minus the scripts whose check is the whole
 #                                   fast tier: about 10 minutes instead of 40, and it says
@@ -59,8 +59,9 @@ step() {
 if [ "$TIER" = "--falsify" ] || [ "$TIER" = "--falsify-quick" ]; then
   falsified=0; failed=0; refused=0; skipped=0; deferred=0; unattributed=0
   failures=(); refusals=(); deferred_names=(); unattributed_names=()
-  # Each distinct check is proven green once, not once per break script. Nineteen scripts declare
-  # `./check.sh --fast`, and repeating its 74 s positive control for each of them was 23 minutes of
+  # Each distinct check is proven green once, not once per break script. At 2026-09-23, 23 of the 59
+  # scripts declare `./check.sh --fast`, and repeating its 74 s positive control for each of them was
+  # 23 minutes of
   # identical work against byte-identical source — the difference between this tier taking an hour
   # and taking forty minutes. A check is remembered only once a script has reported `falsified` or
   # `failed`, both of which prove the control passed; a refusal is never cached, because a refusal
@@ -90,7 +91,7 @@ if [ "$TIER" = "--falsify" ] || [ "$TIER" = "--falsify-quick" ]; then
     printf '  running             %s\n' "$name"
     # `|| status=$?` rather than a bare assignment: `set -e` aborts the whole tier when a command
     # substitution in an assignment fails, so the first script that did not report `falsified`
-    # ended the run before the summary. Measured — the first full pass died at script 28 of 50
+    # ended the run before the summary. Measured — the first full pass died at script 28 of the 50
     # with exit 2 and no table, which is the one thing a coverage tier must never do.
     status=0
     out="$("$ROOT/backend/tools/falsify.sh" "$script" ${trust[@]+"${trust[@]}"} 2>&1)" || status=$?
@@ -156,7 +157,7 @@ if [ "$TIER" = "--full" ]; then
   step "browser scenarios"
   "$ROOT/backend/tools/run_e2e.sh"
 
-  # Also a report until its baseline is known — 883 tests have never been graded, so the
+  # Also a report until its baseline is known — the suite has never been graded, so the
   # first score is a discovery rather than a verdict.
   step "mutation (report only)"
   backend mutmut run || true

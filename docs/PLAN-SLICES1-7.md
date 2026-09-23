@@ -1,7 +1,8 @@
 # Plan — Slices 1-7 of the test strategy (Slice 8 last)
 
-**Status: executing.** Each slice lands as its own verified commit; `docs/TESTING.md`
-(Slice 8) is written only after slices 1-7 are complete.
+**Status: stalled after Slice 1.** Slice 1 is landed and authoritative in
+[`PLAN-SLICE1.md`](./PLAN-SLICE1.md); this document covers slices 2-7, none of which has
+started. `docs/TESTING.md` (Slice 8) is **not yet written**.
 
 **Parent spec:** [`TEST-STRATEGY.md`](./TEST-STRATEGY.md) §4. §1 is the measured
 diagnosis, §7 the decisions (T1-T9), §8 the standing rule. This document does not
@@ -469,7 +470,7 @@ injection via `page.route`; timing injection in the fake MIDI.
 
 ---
 
-## Slice 8 — `docs/TESTING.md`
+## Slice 8 — `docs/TESTING.md` (not yet written)
 
 Written last. The decision procedure ("what did I change → which tier of test is
 owed"), one worked recipe per test kind taken from this repository, the falsification

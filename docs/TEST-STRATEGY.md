@@ -1,11 +1,24 @@
 # Test strategy — the regression guardrail
 
-Status: **planned.** Slice 0 is the foundation; slices 1-8 follow it in risk order.
+Status: **partly landed.** Slice 0 (grade the suite) and Slice 1 (persistence and migration) are
+landed. Slices 3-7 are partial. Slice 2 (invariants) and Slice 8 (`docs/TESTING.md`) are not started.
+
+| Slice | State | Evidence |
+| --- | --- | --- |
+| 0 Grade the suite | landed | `check.sh --full` runs `mutmut`; `pytest.ini` sets `--strict-markers` and `--timeout`; `backend/tools/falsify.sh` and `backend/tools/falsifications/` |
+| 1 Persistence and migration | landed | `backend/tests/test_migration_upgrade.py`; `db.py` reads and writes `PRAGMA user_version` |
+| 2 Invariants | **not started** | `hypothesis` is in `requirements-dev.txt` and imported by no test |
+| 3 Contracts | partial | PATCH null semantics and the backup closed-set refusal are covered; no OpenAPI or schema snapshot, no per-route status-code matrix |
+| 4 Seams | mostly landed | cross-domain tests in `test_repertoire.py`, `test_backup.py`, `test_migration_upgrade.py` |
+| 5 Non-functional | partial | `transaction(immediate=True)` is applied throughout `practice/store.py`; still no concurrency test and no `monkeypatch.setenv` test |
+| 6 Frontend depth | partial | `score`, `types` and `playback` have tests; `liveMatch.ts` does not, and `tsconfig.json` still excludes `src/**/*.test.ts` |
+| 7 Browser reach | partial | keyboard, route interception and an injectable `performance.now` landed; no `aria-live` or reduced-motion assertion |
+| 8 `docs/TESTING.md` | **not written** | the file does not exist in the tree |
 
 This document owns one question: **how do we know a change did not break something
 else?** That question was previously answered in four places at once — the README's
 *Tests* section, `ROADMAP.md`'s standing rules and *Verification additions*, and the
-acceptance bullets of nineteen phases — which is exactly how it became unanswerable.
+acceptance bullets of the phases then in flight — which is exactly how it became unanswerable.
 Those places now point here.
 
 It is a standing engineering policy, not a phase. Phases add features; this decides how
@@ -14,6 +27,14 @@ any of them is allowed to be called finished.
 ---
 
 ## 1. The diagnosis, measured
+
+*Measured 2026-09-20, at the commit that closed Slice 0. The counts below are that snapshot, not a
+live figure — read them as history, and run the commands to get today's.*
+
+**Current state (2026-09-23, at Phase 23's landing):** 982 backend tests, 145 frontend, 17 browser
+scenarios, 18 migration tests. Slice 0 and Slice 1 landed; 3-7 partial; 2 and 8 not started.
+Re-measure with `backend/.venv/bin/python -m pytest --collect-only -q`, `cd frontend && npm test`,
+and `grep -c 'def scenario_' backend/tools/e2e_browser.py`.
 
 | Layer | State |
 | --- | --- |
@@ -50,6 +71,9 @@ correct by luck, not by construction. A test that cannot fail is worse than no t
 because it is bought with confidence.
 
 ### 1.1 The suite lies in nine specific places
+
+*Since repaired, and kept as the diagnosis that started this document: the unfailable assertions
+quoted below now assert something, and the line numbers are the ones they held on 2026-09-20.*
 
 Nine green ticks over nothing, all verified by reading the code.
 
@@ -231,20 +255,22 @@ properties extend them past the shipped catalogue.
 
 **Grade the suite, do not merely grow it.** Mutation testing answers the actual question —
 *mutate the source; any survivor is a line the suite executes but cannot see.* No quantity
-of new tests substitutes for knowing whether the existing 883 can fail. A new assertion
+of new tests substitutes for knowing whether the suite can fail. A new assertion
 that has not been seen to fail is not yet a test.
 
 ---
 
 ## 3. Execution model
 
-**One command, two tiers.** `./check.sh` at the repository root — the single entry point,
+**One command, four tiers.** `./check.sh` at the repository root — the single entry point,
 because the thing being verified spans both processes the README already documents.
 
 | Tier | Contains | Budget | When |
 | --- | --- | --- | --- |
-| `--fast` | backend unit + integration + invariants + contracts + seams; frontend tests; `svelte-check`; build | **< 180 s** | after every meaningful edit |
-| `--full` | everything in `--fast`, plus browser e2e, mutation, scale and fault injection | no budget | before a slice is called done |
+| `--fast` | backend unit + integration + invariants + contracts + seams; frontend tests; the deploy policy test; `svelte-check`; build | **< 180 s** | after every meaningful edit |
+| `--full` | everything in `--fast`, plus coverage (report only), the browser scenarios, and mutation (report only) | no budget | before a slice is called done |
+| `--falsify [filter]` | every break script, run against the check it declares — twice per script, control then break | about an hour | before trusting an assertion, and after touching the tooling |
+| `--falsify-quick [filter]` | the same, minus the scripts whose check is the whole fast tier | about 10 min | a faster pass that names what it deferred |
 
 **There is no migration step in `check.sh`, in either tier.** Migration coverage is ordinary
 pytest and belongs in `--fast`: it is fast, and the acceptance criterion for the slice that
@@ -252,7 +278,7 @@ adds it is that a schema regression fails the tier run after every edit. Marking
 test `slow` would be worse than useless — §1.2's missing `user_version` guard is exactly the
 kind of thing that would then be exercised in neither tier.
 
-**Why 180 and not 90.** The backend suite is already ~55 s and the frontend, typecheck and
+**Why 180 and not 90.** The backend suite is already ~75 s and the frontend, typecheck and
 build are seconds. At a 90-second ceiling that leaves roughly half a minute for everything
 this document proposes to add — which is not enough for property testing (Slice 2) to run
 more than a token number of examples, and `hypothesis` at ten examples is barely better than
@@ -304,7 +330,7 @@ nobody has proven can fail.
 4. **An inventory of the nine dead functions** and the duplicated owners, as a list to
    retire deliberately — not removed here, because deletion is a separate decision with its
    own evidence.
-5. `pytest.ini` gains `--strict-markers` and a per-test timeout, so the two tiers are
+5. `pytest.ini` gains `--strict-markers` and a per-test timeout, so the tiers are
    enforceable rather than conventional.
 
 **Acceptance.**
@@ -547,7 +573,7 @@ hand-write badly.
   red — worse than no baseline. Contrast and layout *are* asserted, numerically.
 - **Load testing.** One user, one piano, one machine. Concurrency and scale get bounds, not
   benchmarks.
-- **Rewriting the existing 883 tests.** They are good, and the audit says so explicitly:
+- **Rewriting the suite.** It is good, and the audit says so explicitly:
   `scoring/engine.py` at 99.3%, the backup round-trip, legacy import idempotence, the
   bass-pattern sweeps, the 12 named regressions, and the cross-domain seams. They are being
   *graded*; the survivors of that grading get attention.
@@ -565,7 +591,7 @@ hand-write badly.
 | --- | --- | --- | --- |
 | T1 | Add dev dependencies? | **A small justified set**: `hypothesis`, `coverage`, `mutmut` | Hand-writing property generation and mutation tooling would be worse in every way; all three are `requirements-dev.txt` only |
 | T2 | Coverage as a gate? | **No — report only** | A threshold on a codebase at 97% with a live plateau bug rewards testing getters |
-| T3 | Mutation score as a gate? | **Report first, gate once the baseline is known** | 883 tests have never been graded; the first score is a discovery, not a verdict |
+| T3 | Mutation score as a gate? | **Report first, gate once the baseline is known** | the suite has never been graded; the first score is a discovery, not a verdict |
 | T4 | Fix the harness before adding tests? | **Yes — Slice 0 first** | Anything built on a suite that reports green over a skipped scenario inherits the lie |
 | T5 | Visual regression baselines? | **No** | Font rendering makes an OSMD diff noise, and noise teaches people to ignore red |
 | T6 | Migrations before invariants? | **Yes — Slice 1** | The one code path that runs on the real database had never executed when this was written |
@@ -619,9 +645,12 @@ has to be harder to fool than the checks it certifies.
 Each break script declares its own pairing, which is the usage example its header already gave:
 
 ```
-# CHECK: cd backend && .venv/bin/python -m pytest -q tests/test_segment.py
-# EXPECT: the adaptive threshold
+# CHECK: cd frontend && npm test
+# EXPECT: minutes round into the hour
 ```
+
+That pair is real, from `carry_the_minute_into_the_hour.sh`. `# EXPECT:` is optional; without it the
+tool says on the way past that any non-zero exit was accepted.
 
 `falsify.sh <script>` then needs no second argument, and `./check.sh --falsify [filter]` runs every
 script. The declaration lives in the script rather than in a manifest because a second list is a
@@ -630,14 +659,16 @@ with the wrong check.
 
 `--falsify` is its own tier. Each script runs its check **twice** — once on the unbroken tree as the
 positive control, once with the break applied — so a full pass is about an hour, most of it the
-nineteen scripts whose declared check is `./check.sh --fast`. It is the tier that keeps the other
-tiers honest, not one that can run after every edit.
+scripts whose declared check is `./check.sh --fast` (23 of the 59 at 2026-09-23). It is the tier that
+keeps the other tiers honest, not one that can run after every edit.
 
-It reports four outcomes and treats them differently. `falsified` is the good one. `failed` means the
+It reports five outcomes and treats them differently. `falsified` is the good one. `failed` means the
 check passed with the break applied, so the assertion cannot fail — that is a defect in the suite
-and the tier exits non-zero. `refused` means the tool declined to answer: an already-red check, a
-break that stops the build, a timeout, an unattributed failure. A refusal proves nothing either way
-and is reported as a gap to investigate. `undeclared` is a break script with no `CHECK` line.
+and the tier exits non-zero. `unattributed` means the check failed, but not for the reason the break
+names, so nothing is proved either way; it is its own exit code. `refused` means the tool declined
+to answer: an already-red check, a break that stops the build, or a timeout. A refusal proves
+nothing either way and is reported as a gap to investigate. `undeclared` is a break script with no
+`CHECK` line.
 
 ---
 
@@ -651,6 +682,9 @@ and is reported as a gap to investigate. `undeclared` is a break script with no 
 ---
 
 ## Appendix — dead code and duplicated owners
+
+*Line numbers here are as of 2026-09-20, when Slice 0 took the inventory; symbols may have moved
+since (`practice/store.py`'s `streak_days` is now `streak`).*
 
 Inventoried in Slice 0 and **deliberately not removed**. Deletion is a decision with its own
 evidence, and sweeping it into a test-strategy slice would be exactly the "while here" work

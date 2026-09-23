@@ -80,6 +80,10 @@ Selected capabilities:
   says when a rest day is being counted, and two missed days inside the same week do. Today not
   being played yet never counts against you. The week review also names your target —
   *"on 3 of 4 target days"* — which is a preference rather than a score.
+- **Workouts, declared rather than inferred.** *Start workout* … *Finish workout* marks the window on
+  purpose; everything played inside it is labelled deliberate sight-reading rather than mistaken for
+  ordinary practice, and the log separates "how long did I play" from "how much deliberate
+  sight-reading did I do". A workout can be started from any section.
 - **Repertoire management** with a journal, tagged and rated, alongside scores (PDF and
   MusicXML) and recordings with waveform A/B loops.
 - **Playback** through the piano itself, a sampled Yamaha C5, or a synthesiser, with a
@@ -103,7 +107,7 @@ cheerfully produce code and tests that agree with each other and are both wrong.
 
 So the discipline that made this work is verification, and it is the part worth looking at:
 
-- **[51 falsification scripts](backend/tools/falsifications)** each break the production code
+- **[59 falsification scripts](backend/tools/falsifications)** each break the production code
   deliberately, to prove that an assertion can actually fail. A test that cannot fail is not a
   test, and a suite of them is a green light over nothing.
 - **[docs/TEST-STRATEGY.md](docs/TEST-STRATEGY.md)** records the suite being graded rather than
@@ -133,14 +137,15 @@ evidence, and that "it passes" can be made to mean something.
 | Layer | Location | Responsibility |
 | --- | --- | --- |
 | Client | `frontend/src` | Render notation, capture MIDI, run the metronome, display feedback |
-| API | `backend/app/main.py` | Serve exercises as MusicXML, score performances |
-| Storage | `backend/app/store.py` + SQLite | Profiles, skill ratings, exercise library, attempt history |
+| API | `backend/app/` | Serve exercises as MusicXML, score performances, and own the library, practice log, workouts, backup and device status |
+| Storage | `backend/app/*/store.py` + SQLite | One database, one owner per domain: `practice/`, `repertoire/`, `workout/`, plus `store.py` for profiles, skills and attempts |
 
-The client makes **no musical judgements of its own**; every score comes from the API. Two
-endpoints carry the whole interaction — `GET /api/exercise/next` returns MusicXML plus the
-expected-note timeline, and `POST /api/score` takes played notes and returns per-note feedback
-with sub-scores. This keeps the generator and the scorer replaceable without touching the
-browser.
+The client makes **no musical judgements of its own**; every score comes from the API. The practice
+loop turns on two endpoints — `GET /api/exercise/next` returns MusicXML plus the expected-note
+timeline, and `POST /api/score` takes played notes and returns per-note feedback with sub-scores —
+while the log, library and workouts are served by their own routers under `/api/practice`,
+`/api/repertoire` and `/api/workout`. Keeping the generator and the scorer behind `/api` is what
+makes them replaceable without touching the browser.
 
 See [docs/ENGINEERING.md](docs/ENGINEERING.md) for the difficulty model, the adaptive engine,
 the scorer and the timing model.
@@ -205,12 +210,14 @@ walks a learner of fixed true ability and asserts that the served difficulty con
 
 ## Verification
 
-`./check.sh` is the single entry point. It has two tiers, because a suite nobody runs is
+`./check.sh` is the single entry point. It has four tiers, because a suite nobody runs is
 decorative:
 
 ```bash
-./check.sh --fast    # everything that must pass after every edit (budget: 180 s)
-./check.sh --full    # the above, plus the browser, mutation and scale tiers
+./check.sh --fast            # everything that must pass after every edit (budget: 180 s)
+./check.sh --full            # the above plus coverage, the browser scenarios and mutation
+./check.sh --falsify [filter]       # every break script, against the check it declares (~1 h)
+./check.sh --falsify-quick [filter] # the same, minus the scripts whose check is the fast tier
 ```
 
 | Tier | Scope |
@@ -218,8 +225,10 @@ decorative:
 | Backend | Unit and API integration tests (`pytest`) |
 | Frontend | Pure modules under `node --test` |
 | Typecheck and build | `svelte-check` and the production build |
-| Browser end-to-end | 14 scenarios in real Chromium against a real server |
-| Mutation | Report only; not a gate until its baseline is established |
+| Deploy | The kiosk's managed Chromium policy, read by a plain-bash test |
+| Browser end-to-end | 17 scenarios in real Chromium against a real server |
+| Coverage and mutation | Reports only; not gates until their baselines are established |
+| Falsification | Every break script, run against the assertion it claims to break — a check that passes with the break applied is a test that cannot fail |
 
 The browser suite injects a **simulated Web MIDI device** before any page script runs, so the
 genuine MIDI input path — status-byte decoding, input selection, and onset measurement against
@@ -239,47 +248,93 @@ What each tier must cover is owned by [docs/TEST-STRATEGY.md](docs/TEST-STRATEGY
 ```
 backend/
   app/
-    main.py            FastAPI application — thin HTTP layer
+    main.py            FastAPI application — the practice loop's HTTP layer
     services.py        Orchestration: generate, score, adapt, persist
-    store.py           All SQL
-    db.py              Schema and connection handling
+    db.py              Schema, connection handling, migrations
     models.py          Request/response schemas
     skills_data.py     The difficulty model (single source of truth)
     config.py          Every tunable, environment-overridable
-    music/
-      generator.py     Skill levels → music21 score
-      expected.py      Score → expected-note timeline
+    backup.py          JSON export and import           (/api/backup)
+    hostinfo.py        ALSA / MIDI device status        (/api/host)
+    piano.py           One-time sampled-piano download  (/api/audio)
+    bridge.py          piano-progress import bridge
+    music/             Skill levels → music21 score, and score → expected timeline
+      generator.py  expected.py  events.py  harmony.py  melody.py  tonality.py  bass_patterns.py
     scoring/engine.py  Pitch / rhythm / continuity
-    adaptive/
-      elo.py           Rating mathematics
-      selector.py      Which skill, how hard
-    practice/          Passive logging, segmentation, recognition
-    repertoire/        Pieces, journal, media
-  tests/               Unit and integration tests
+    adaptive/          elo.py  selector.py
+    practice/          Passive logging, segmentation, recognition, metrics, pedal
+    repertoire/        Pieces, journal, passages, media, takes, importer
+    workout/           Declared workouts: api.py  store.py  schema.py  models.py
+  tests/               Unit, API, migration, contract and seam tests
   tools/
     e2e_browser.py     Real-browser end-to-end verification
     run_e2e.sh         Start a server and run the scenarios
+    falsify.sh         Prove an assertion can fail, or refuse to claim it did
+    falsifications/    One break script per guarded assertion
     measure_autotag.py How well the matcher performs on drill-shaped practice
+    measure_real.py    The same, against the real local fixture
 frontend/
   src/
     app.css            Design tokens — colour, type, shape (single source)
-    App.svelte         Shell, navigation, keyboard shortcuts
+    App.svelte         Shell, navigation, keyboard shortcuts, workout banner
+    main.ts            Mount point
     lib/               API, MIDI, metronome, scoring display, live matching, state
-    components/        Practice, Library, Progress, Setup, charts
-docs/                  Architecture, features, deployment, test strategy
+    components/        Practice, Library, Progress, Setup, charts, timeline
+    assets/fonts/      The bundled notation font
+docs/                  Reference, decisions, verification and plans
 deploy/                systemd units, kiosk policy, installer
 ```
 
 ## Documentation
 
+**Reference** — what the application does and how it is built.
+
 | Document | Contents |
 | --- | --- |
 | [docs/FEATURES.md](docs/FEATURES.md) | Detailed behaviour of every feature |
-| [docs/ENGINEERING.md](docs/ENGINEERING.md) | Difficulty model, adaptive engine, scorer, timing, configuration |
-| [docs/ECOSYSTEM.md](docs/ECOSYSTEM.md) | Why the ecosystem is one application rather than three |
-| [docs/TEST-STRATEGY.md](docs/TEST-STRATEGY.md) | What the tests must cover, and the tiers they belong to |
-| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Running on the piano machine, backup, moving between machines |
-| [deploy/README.md](deploy/README.md) | systemd service, Chromium kiosk, MIDI permission policy |
+| [docs/ENGINEERING.md](docs/ENGINEERING.md) | Architecture, API contract, difficulty model, adaptive engine, scorer, timing, configuration, known limitations |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Running on the piano machine, the LAN server, backup, moving between machines |
+| [deploy/README.md](deploy/README.md) | The install checklist: systemd service, kiosk, MIDI permission policy |
+| [THIRD-PARTY.md](THIRD-PARTY.md) | Licence notices for bundled, vendored and installed components |
+
+**Decisions and direction** — why the application is shaped the way it is.
+
+| Document | Contents |
+| --- | --- |
+| [docs/ECOSYSTEM.md](docs/ECOSYSTEM.md) | The target architecture, the phase plan, and the decision record for every phase |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | The original slice roadmap — **superseded** by ECOSYSTEM; kept for its reasoning |
+| [docs/INTEGRATION-practice-logger.md](docs/INTEGRATION-practice-logger.md) | The original two-project integration proposal — **superseded**; kept for what it verified |
+
+**Verification** — how a change is known not to have broken something.
+
+| Document | Contents |
+| --- | --- |
+| [docs/TEST-STRATEGY.md](docs/TEST-STRATEGY.md) | What the tests must cover, the tiers they belong to, and the standing rule that no assertion is trusted until it has been seen to fail |
+| [docs/TEST-DATA.md](docs/TEST-DATA.md) | The local-only fixture of real practice data, and the trap it holds |
+| [check.sh](check.sh) | The single verification entry point (`--fast`, `--full`, `--falsify`, `--falsify-quick`) |
+
+**Plans for landed work** — implementation records, not open work.
+
+| Document | Contents |
+| --- | --- |
+| [docs/PLAN-PHASE8-9.md](docs/PLAN-PHASE8-9.md) | MIDI that sets itself up, and the LAN server — landed |
+| [docs/PLAN-PHASE20A.md](docs/PLAN-PHASE20A.md) … [20E](docs/PLAN-PHASE20E.md) | Deliberate practice, piano-side ergonomics, log trust, journal depth, audio takes — landed |
+| [docs/PLAN-PHASE21.md](docs/PLAN-PHASE21.md), [docs/PLAN-PHASE22.md](docs/PLAN-PHASE22.md) | The blur and the edit path; hearing the piece — landed |
+| [docs/PLAN-PHASE23.md](docs/PLAN-PHASE23.md) | The pedal as a quick-action surface: three configurable gestures on the sostenuto, and a review flag — landed |
+| [docs/PLAN-OPUS-NOTE-IDENTITY.md](docs/PLAN-OPUS-NOTE-IDENTITY.md) | The rename, the visual identity and the navigation declutter |
+| [docs/PLAN-SLICE0.md](docs/PLAN-SLICE0.md), [docs/PLAN-SLICE1.md](docs/PLAN-SLICE1.md) | Slices 0 and 1 of the test strategy — landed |
+
+**Open work** — the only plan in this tree that describes anything not yet done.
+
+| Document | Contents |
+| --- | --- |
+| [docs/PLAN-SLICES1-7.md](docs/PLAN-SLICES1-7.md) | Slices 2-7 of the test strategy — **stalled after Slice 1**; `docs/TESTING.md` (Slice 8) is not yet written |
+
+**The record.**
+
+| Document | Contents |
+| --- | --- |
+| [AGENT-LOG.md](AGENT-LOG.md) | The append-only shared log: what each agent did, and why |
 
 ## Limitations
 

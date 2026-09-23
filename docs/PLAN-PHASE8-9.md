@@ -3,6 +3,13 @@
 Implements `docs/ECOSYSTEM.md` §10 (decisions D7–D9). Design authority is that
 document; this plan owns *how*, and nothing here re-opens the *what*.
 
+**Status: landed.** Both phases are delivered — see `ECOSYSTEM.md` §10. Kept as the
+implementation record, with two supersessions to note before following any step: this plan creates a
+**systemd user unit** for the kiosk (§6.2), and the shipped installer uses **XDG autostart** instead,
+because `systemctl --user` has no bus to talk to under `sudo` — `deploy/README.md` owns the current
+mechanism, and it carries the cleanup for a machine that ran the earlier version. The Node line in
+the example installs also predates the **23.6** floor the frontend now requires.
+
 Written for an engineer with no context on this codebase. Every step has the exact
 file, the exact code, the exact command, and the output that means it worked.
 

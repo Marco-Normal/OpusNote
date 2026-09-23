@@ -3,7 +3,7 @@
 **Parent spec:** [`ECOSYSTEM.md`](./ECOSYSTEM.md) § *Phase 20* § *20c — log trust and habit (F1,
 B3)*, with decisions 20-D3 and 20-D6. That section owns what and why; this document owns the how.
 
-**Status:** planned.
+**Status: landed** (2026-09-21). See `ECOSYSTEM.md` § *Phase 20* for what it delivered.
 
 **Goal.** Make the log safe to edit and the streak fit a real week. Undo for the three reversible
 boundary edits, built from the routes that already exist; a `resegment` that says plainly that it
@@ -1070,5 +1070,5 @@ Execution Route:
 - User confirmation required: no
 ```
 
-**Next step:** after 20c, write `PLAN-PHASE20D.md` (journal and library depth) and
-`PLAN-PHASE20E.md` (audio takes) against the tree as it then stands.
+**Landed.** Both `PLAN-PHASE20D.md` and `PLAN-PHASE20E.md` were written and have landed since; see
+`ECOSYSTEM.md` § *Phase 20* and `AGENT-LOG.md` (2026-09-21).

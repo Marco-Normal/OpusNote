@@ -2188,6 +2188,6 @@ Execution Route:
 - User confirmation required: no
 ```
 
-**Next step:** execute with the `executing-plans` skill. After 20b, the remaining plans are
-`PLAN-PHASE20C.md` (log trust and habit), `PLAN-PHASE20D.md` (journal and library depth) and
-`PLAN-PHASE20E.md` (audio takes), each written against the tree as it then stands.
+**Landed.** `PLAN-PHASE20C.md`, `PLAN-PHASE20D.md` and `PLAN-PHASE20E.md` were written and have all
+landed since, completing Phase 20; see `ECOSYSTEM.md` § *Phase 20* and `AGENT-LOG.md` (2026-09-17).
+The pedal mapping this plan describes is superseded — see the note above and `PLAN-PHASE23.md`.

@@ -4,7 +4,8 @@
 how. The *why* — the measurement that made this a phase at all — is § *The measured case* below,
 and it is the reason the phase exists rather than the identification work being a tuning change.
 
-**Status:** planned.
+**Status: landed 22a–22c** (2026-09-21). Task 5 (22d) was settled by measurement rather than code —
+see `ECOSYSTEM.md` § *Phase 22*.
 
 **Goal.** Make the log tell the truth about what was practised. Two failures, one cause:
 

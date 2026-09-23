@@ -1,6 +1,6 @@
 # Opus Note — visual identity and navigation declutter
 
-Status: `complete — slices 0-6 executed and verified (see §6.1-6.5)`
+Status: `complete for slices 0, 3, 4, 5 and 6; slices 1 and 2 have no execution record (see §6.1-6.5)`
 Date: `2026-09-20`
 Scope: `frontend only` (display-name rebrand + visual identity + information architecture)
 

@@ -5,8 +5,9 @@ how. The *why* is § *The request, and what it collides with* below — the phas
 request as first stated would have re-opened a defect the owner reported in use, and the design's
 whole shape is the consequence of taking that seriously rather than routing around it.
 
-**Status:** planned. The design below is approved; the implementation plan is the second half of
-this document and is written separately.
+**Status: landed.** The design below was approved first and the implementation plan is the second
+half of this document; both were executed. The measured verification numbers are recorded in
+`ECOSYSTEM.md` § *Phase 23* and `AGENT-LOG.md` (2026-09-23).
 
 **Goal.** Make the one pedal nobody plays into a small, configurable quick-action surface. Today
 the sostenuto carries exactly one hard-coded action — one press and release arms take recording,

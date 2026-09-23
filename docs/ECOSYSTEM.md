@@ -5,8 +5,9 @@ Rust app" premise of
 [`INTEGRATION-practice-logger.md`](./INTEGRATION-practice-logger.md), which
 remains accurate about *what exists today* but is no longer the destination.
 
-Status: **decided; Phases 1-13 and 15-19 are landed.** See §9 and §10 for what each
-delivered, and §10 for the Phase 18 and 19 specifications.
+Status: **decided; Phases 1-13 and 15-23 are landed. Phase 14 is planned.**
+§9 covers Phases 1-7; §10 covers Phases 8-23 and closes with the decisions, the risks and the
+non-goals. Each landed phase names its own evidence in place.
 
 ---
 
@@ -101,7 +102,7 @@ backend/app/
 ```
 
 Deliberately **no restructuring of the existing sight-reading modules.** They
-work, they have 418 tests, and moving files for tidiness buys nothing. New
+work, they had 418 tests when this was written, and moving files for tidiness buys nothing. New
 domains are added beside them.
 
 Why one app rather than three:
@@ -127,8 +128,11 @@ One database, three domains:
 
 ```
 repertoire     composers, pieces, piece_journal, piece_passages, media
-practice       sittings, note_events, segments, segment_metrics, identification_corrections
-sight-reading  users, skills, user_skills, exercises, exercise_skills, performances, workouts
+practice       sittings, note_events, pedal_events, identification_outcomes, segments,
+               segment_metrics, reference_state
+workout        workouts
+sight-reading  users, skills, user_skills, exercises, exercise_skills, performances,
+               rating_events
 ```
 
 **The word "note" currently means three different things** across the projects,
@@ -181,6 +185,10 @@ Each phase ships on its own and leaves the system working. Nothing here discards
 existing code: the sight-reading modules stay put, and `practice-logger`'s
 sessionizer and segmentation move across as-is with their tests.
 
+Phases 1-13 and 15-23 are landed; Phase 14 is planned. An inline **Landed** note
+appears only on phases that landed after this table was first written; the status line at the top of
+this document carries the rest.
+
 | # | Phase | Delivers | Risk |
 | --- | --- | --- | --- |
 | 0 | **Stop the bleeding** *(optional)* | Point both apps at a configurable data dir and run them on the piano machine. Fixes the sync pain today, with no rewrite. | none |
@@ -192,17 +200,19 @@ sessionizer and segmentation move across as-is with their tests.
 | 6 | **Cross-domain features** | Sight-reading generated from your active pieces; unified time-per-piece; one dashboard; workouts (roadmap Slice E). | low |
 | 7 | **Portability** | JSON export/import, deployment notes for the piano machine, backup guidance for WAL. | low |
 | 8 | **MIDI that sets itself up** | Auto-connect and auto-select on a piano that is switched on later, across a device list that includes ALSA's dead *Midi Through* port. | low |
+| 9 | **LAN server** | A planted notebook serving the whole app on the local network: `deploy/`, kiosk autostart, capture heartbeat, upload cap, concurrent-write hardening. | medium |
+| 10 | **Playback** | Hear a scored attempt back (either hand, or the exercise as written) and hear a logged sitting or segment from the practice log, with a playhead. | low |
 | 11 | **Progress you can see** | Rating history per skill, click-and-hear a past attempt, sub-score trends, week in review. | low |
 | 12 | **Ops polish** | Nightly rotating backups, a health panel, latency suggested from your own timing bias. | low |
 | 13 | **Library depth** | Attach and render scores (PDF and MusicXML), waveform with A/B loop, sustain pedal captured, self-similarity auto-tagging. **Landed in full (13a and 13b).** | medium |
-| 14 | **More musical content** | Unusual meters, clef reading, dynamics and articulation depth. | medium |
-| 10 | **Playback** | Hear a scored attempt back (either hand, or the exercise as written) and hear a logged sitting or segment from the practice log, with a playhead. | low |
-| 9 | **LAN server** | A planted notebook serving the whole app on the local network: `deploy/`, kiosk autostart, capture heartbeat, upload cap, concurrent-write hardening. | medium |
+| 14 | **More musical content** | Unusual meters, clef reading, dynamics and articulation depth. **Planned.** | medium |
+| 15 | **Playback you can navigate, and a real piano** | Seeking into a long sitting (a transport strip, arrow-key and `« 30 s` / `30 s »` jumps), one shared player instead of one per component, and the sampled piano fetched once and served locally. **Landed.** | medium |
+| 16 | **The exercise ladder actually climbs** | The anchor's arithmetic: 25 attempts per skill at a rating near 800 still served level 1, because the selector aims 220 Elo below the rating while a level is 100 Elo. Diagnosed from the backup — 306 of 324 `exercise_skills` rows were level 1. **Landed.** | medium |
+| 17 | **A sitting ends when the piano does** | The dashboard refreshes itself, a MIDI disconnect closes the sitting (`CLOSE_QUIET_MS`), and segmentation is retuned from a real 42-minute sitting. **Landed.** | low |
 | 18 | **The data the logger already has** | 18a: the journal joins the measurement — a sitting link, a real editor, a calendar series. 18b: the pedal, touch and register numbers that are recorded and unused. **Landed.** | medium |
-| 19 | **Playing back what was actually played** | A stale same-pitch note-off silences re-struck notes at the pedal-up — 1,747 notes in the owner's own sessions. Plus one owner for the pedal threshold. **Landed.** | S–M |
+| 19 | **Playing back what was actually played** | A stale same-pitch note-off silences re-struck notes at the pedal-up — 1,747 notes in the owner's own sessions. Plus one owner for the pedal threshold. **Landed.** | medium |
 | 20 | **Deliberate practice, the piano-side toolkit, and audio takes** | *How* a segment was practised (20a); hands-free control from the unused sostenuto pedal, count-in choice, real URLs and a command palette (20b); undo and a humane streak (20c); journal and library depth (20d); low-bitrate audio takes captured in-app (20e). Five slices, independently shippable. **20a–20e landed.** | medium–high |
-
-| 21 | **The log at speed, and the blur you can find** | Blur positions cached beside the count and marked on the sitting strip; and an edit path that applies the server's own answer instead of refetching the matcher's accuracy, the machine's health and the week's ratings after every click. **Landed.** | S |
+| 21 | **The log at speed, and the blur you can find** | Blur positions cached beside the count and marked on the sitting strip; and an edit path that applies the server's own answer instead of refetching the matcher's accuracy, the machine's health and the week's ratings after every click. **Landed.** | low |
 | 22 | **Hearing the piece** | Where the playing actually turns over (an adaptive gap with a 2 s floor, plus minimum and maximum sizes), and a matcher that survives a growing library (tempo-invariant local shingles pooled per piece, IDF containment, a hybrid score). Passages and piece-sessions are derived from attempts, so the log shows *n* attempts at one passage rather than *n* unrelated rows. **Landed 22a–22c.** One acceptance number was corrected to its measurement and one decision was dropped after measuring: see § *Phase 22* below. | high |
 | 23 | **The pedal as a quick-action surface** | The sostenuto's one hard-coded action becomes three gestures on the same pedal — single, double, hold — each bound in Setup to one action or to nothing: a review flag, start/finish a workout, arm/stop the take, or finish the sitting. A review flag is a raw mark event in its own table, drawn on the sitting strip beside the blur hairlines. **Landed.** | medium |
 
@@ -247,7 +257,7 @@ sequencing.
 
 ---
 
-## 9. Decisions taken, and what Phase 1 delivered
+## 9. Decisions taken, and what Phases 1-7 delivered
 
 | ID | Decision | Consequence |
 | --- | --- | --- |
@@ -403,8 +413,8 @@ Import button as the repertoire import.
   minutes, segment and note counts, last played and the tempo trend, shown in the
   Repertoire detail *beside* the journal's written-down minutes. They are
   deliberately not summed: a session can be both measured and written down.
-- **One dashboard**: the Log tab — today, streak, a twelve-week calendar, time per
-  piece, neglected pieces, the source split, and the sitting timeline.
+- **One dashboard**: the Log tab — today, streak, a calendar (30 days by default, with 7, 30 and
+  90-day choices), time per piece, neglected pieces, the source split, and the sitting timeline.
 - `SRT_SESSION_LENGTH` — dead config since the beginning — became
   `SRT_WORKOUT_LENGTH`, because a workout is what it always meant.
 
@@ -435,14 +445,14 @@ wipe every table, restore, and compare row counts and sample rows.
 
 | Item | Note |
 | --- | --- |
-| Retiring `practice-logger/` | Its code is ported and its history is importable; deleting the directory is the user's call, not mine |
+| ~~Retiring `practice-logger/`~~ | **Done** — its code and history were ported, and the directory is no longer in this repository |
 | Courtesy clef/time-signature at system breaks | OSMD has no rule for it; recorded as an open decision, unchanged |
 | Self-similarity identification | **Ported as Phase 13b** — see §10; the original design's `identification_corrections` became `identification_outcomes` so acceptances are recorded too |
 | `SRT_*` env prefix on non-sight-reading settings | Cosmetic debt, noted and deferred |
 
 ---
 
-## 10. Planned: unattended capture (Phase 8) and the LAN server (Phase 9)
+## 10. Phases 8-23: what landed, and the decisions behind it
 
 **Implementation plan:** [`PLAN-PHASE8-9.md`](./PLAN-PHASE8-9.md) owns the
 step-by-step *how* for both phases — 15 tasks with complete code, exact commands,
@@ -737,7 +747,7 @@ buried in a large change.
 
 ### Phase 13b — landed (recognising what you played)
 
-The design in `practice-logger/docs/DESIGN.md` §5, built at last: a pitch-class profile,
+The design the standalone logger's `DESIGN.md` §5 described, built at last: a pitch-class profile,
 tempo proximity and register overlap per segment, k-nearest over your own labelled
 segments, confidence bands, and the "was this right?" prompt. The reference is *you* —
 there is still no symbolic score to match against, and every segment you tag becomes an
@@ -1209,9 +1219,9 @@ is kept from reading as a fault that was never observed. The timeline renders pe
 blur, median velocity and register balance, each with the label that says what it is:
 **register balance is worded as registers, not as hands**, because that is what it measures.
 
-**Verified.** Backend 811 passing (19 new pedal units, 2 metric-integration, 7 journal, 5 for
-the defect fixes). Frontend 72 passing, `svelte-check` clean, build clean. All twelve browser
-scenarios pass. The migrations were exercised against a **real pre-18 database** — the e2e
+**Verified** (Phase 18, 2026-09-16). Backend 811 passing (19 new pedal units, 2 metric-integration,
+7 journal, 5 for the defect fixes). Frontend 72 passing, `svelte-check` clean, build clean. All
+twelve browser scenarios then in the suite passed. The migrations were exercised against a **real pre-18 database** — the e2e
 one, whose `segment_metrics` had seven columns and whose `identification_outcomes.segment_id`
 was `NOT NULL` — with a row planted in the old shape first: every column was added, the
 nullable rebuild ran, and the planted row survived it with its action and score intact.
@@ -1324,8 +1334,8 @@ can forget it. `PEDAL_DOWN` is exported from `playback.ts` and imported by `midi
 stays at the owner it already had rather than moving into `types.ts`, because `playback.ts`
 is reachable from the Node test runner and a runtime import there would have needed
 `allowImportingTsExtensions` turned on for the whole project to support one constant.
-Seven tests, and the frontend suite is 72 passing with `svelte-check` clean. The browser
-suite gained one scenario assertion and all twelve scenarios pass.
+Seven tests, and the frontend suite is 72 passing with `svelte-check` clean. The browser suite
+gained one scenario assertion, and all twelve scenarios then in the suite passed.
 
 Verified against the owner's own backup with the shipped functions rather than a
 re-implementation of them — `sustained()` then `resolveOverlaps()` over the four pedalled
@@ -1356,7 +1366,7 @@ held to 5200 ms — plays it through the piano, and asserts that the scheduled s
 pitch never has two note-ons before a note-off. `__fakeMidi.samePitchOverlaps()` reads the
 timestamps `send()` already records, so no new harness was needed. Removing the
 `resolveOverlaps` call from `play()` makes it fail with "1 overlapping pairs"; restoring it
-gives 0. All twelve scenarios pass on a fresh database.
+gives 0. All twelve scenarios then in the suite passed on a fresh database.
 
 **A wrong conclusion, kept because it is instructive.** The first attempt to run the suite
 used a standalone `p.chromium.launch()` probe, which failed with "Executable doesn't exist
@@ -1368,7 +1378,7 @@ a test that does not match the real path is worth nothing — which is the same 
 scenarios exist to catch, arriving from the other direction. The system Chromium (148) is
 fine and no install is needed.
 
-### Phase 20 — in progress (deliberate practice, the piano-side toolkit, and audio takes)
+### Phase 20 — landed, 20a–20e (deliberate practice, the piano-side toolkit, and audio takes)
 
 Chosen by the user from a survey of everything in the app *except* the sight-reading loop,
 and approved as five independently shippable slices. The organising finding is the mirror
@@ -1444,7 +1454,8 @@ and behaves the same on `localhost:8000` and `piano.local:8000`.
 **Landed after 20e, so one mapping the plan left open had to be settled here.** The plan was written
 before audio capture existed and named a single hands-free action; the acceptance bullet below asks
 for capture too, and the user settled which pedal carries which: the sostenuto (CC66) **arms and
-stops capture**, and the damper's double tap **in silence** toggles a workout. The user then
+stops capture** (a mapping Phase 23 replaced with three gestures — see below), and the damper's
+double tap **in silence** toggled a workout until it was retired the same day. The user then
 corrected a first cut that also bound the soft pedal (CC67): that pedal *is* played, so a press
 mid-phrase would end the take being recorded, and it is now bound to nothing — the device bar says
 so per pedal rather than leaving an unbound pedal looking broken. A take has no route of its own:
@@ -1463,7 +1474,7 @@ choice, no URL for anything, and no keyboard path through the app.
   controller numbers (`64`, `66`, `67`) have *ever* been seen from the connected piano, and
   says `not seen yet` before a pedal is pressed, beside what each pedal is bound to. The
   sostenuto (CC66) is the hands-free trigger, and the fallback when a piano never sends it is
-  the button in the device bar plus a double-tap of CC64 gated on two seconds of silence. The
+  the workout banner (the CC64 double-tap that once covered it was retired on 2026-09-17). The
   soft pedal (CC67) is bound to nothing, because it is played: as first built it also carried
   capture, and a press mid-phrase ended the take being recorded. Nothing is bound to a message
   the piano has not been observed to send.
@@ -1643,7 +1654,7 @@ sharing."*
 | 20-D2 | Is an inferred kind ever applied? | **No — offered only**, with the basis recorded | The autotag restraint is preserved; a manual tag can never be silently overwritten |
 | 20-D3 | Does undo survive a restart? | **No** — inverse operations over existing routes, and `resegment` stays irreversible | No new table, no backup change, no second source of truth for segment boundaries; the one loss (an absorbed segment's identification outcome) is stated rather than papered over |
 | 20-D4 | Does in-app audio replace the piano's pen-drive recording? | **No** — a low-bitrate convenience for sharing, never an archive | Quality is not an acceptance criterion, so a standing switch is affordable and privacy/retention stay simple |
-| 20-D5 | Which pedal is the hands-free trigger? | **The sostenuto (CC66) alone, discovered rather than assumed**, with a CC64 double-tap carrying the workout | No gesture is bound to a message the piano has not been seen to send, and no gesture is bound to a pedal that is played — the soft pedal is unbound because the user uses it. **Superseded in part:** the CC64 double-tap was retired the same day (2026-09-17), because the damper is played and it fired mid-phrase; Phase 23 keeps the pedal and the discovery rule but replaces the one-action mapping with three configurable gestures on the same pedal (23-D1, 23-D3) |
+| 20-D5 | Which pedal is the hands-free trigger? | **The sostenuto (CC66) alone, discovered rather than assumed.** The CC64 double-tap this decision originally added was **retired the same day** (2026-09-17) | No gesture is bound to a message the piano has not been seen to send, and no gesture is bound to a pedal that is played — the soft pedal is unbound because the user uses it, and the damper's double tap was retired because the damper is played and it fired mid-phrase. Phase 23 keeps the pedal and the discovery rule but replaces the one-action mapping with three configurable gestures on the same pedal (23-D1, 23-D3) |
 | 20-D6 | Does one missed day break the streak? | **No — one grace day per rolling seven**, with a weekly target carrying the habit | The familiar consecutive-day number survives; the weekly target needs no server-side setting |
 | 20-D7 | Are focus passages inferred from the log? | **No — manual, or seeded from an existing A/B loop** | There is no score alignment to infer from, and 18b made that a non-goal; nothing is claimed about bars the app cannot see |
 
@@ -1713,8 +1724,10 @@ library is **not** invalidated by an edit to one sitting; the browser assertions
 "just refresh everything" cannot quietly undo it. `resegment` is the one exception and refetches the
 matcher's panel explicitly, because it rebuilds the rows that panel is measured from.
 
-**Impact on the queued slices.** `SCHEMA_VERSION` is now **3**, so `PLAN-PHASE20D.md`'s "2 → 3"
-becomes 3 → 4 and `PLAN-PHASE20E.md`'s "3 → 4" becomes 4 → 5. `PracticeLogView.edit()` is rewritten
+**Impact on the queued slices.** `SCHEMA_VERSION` was **3** at this point in history, so
+`PLAN-PHASE20D.md`'s "2 → 3" became 3 → 4 and `PLAN-PHASE20E.md`'s "3 → 4" became 4 → 5. The
+shipped value is **5** — 20e took it 3 → 4 and 20d took it 4 → 5, which is the order the plans
+predicted rather than the order the slices landed in. `PracticeLogView.edit()` is rewritten
 here **and** by `PLAN-PHASE20C.md` Task 2, whose anchor text therefore no longer matches; the
 behaviour 20c needs is intact, and its precondition already greps for the function. Both are the cost
 of doing a fix out of order and are recorded rather than discovered.
@@ -1780,7 +1793,7 @@ is still true of how the owner practises; it just does not need a rule.
 | 3 | real-library leave-one-out top-1 ≥94% | 96.8% |
 | 4 | auto precision ≥95% on both corpora, coverage ≥50% on the real library | 100% / 99.7%; 53.6% |
 | 5 | confirming a passage writes every member attempt; re-derivation is stable | `test_a_passage_confirmation_writes_every_member_attempt` |
-| 6 | no schema change; every route unchanged; the `passages` field additive | `SCHEMA_VERSION` untouched; 926 backend tests |
+| 6 | no schema change; every route unchanged; the `passages` field additive | `SCHEMA_VERSION` untouched; the suite has since grown well past the 926 tests it held then |
 | 7 | `./check.sh --full` green | green |
 
 The auto band was **not** re-tuned: the shipped band (0.85 / 0.55 / 0.10) is the only row of the
@@ -1896,9 +1909,8 @@ survey — the slice that came closest, 20a's `section` kind, records that secti
 happened without generating or looping anything. They remain the highest-value items on this
 list by my estimate, since they change what the app is *for* rather than what it shows.
 
-Also open: **retiring `practice-logger/`** — its code and history are ported and
-importable, so deleting the directory is the user's call — and the **courtesy time
-signature** at system breaks, which OSMD cannot be talked into.
+Also open: the **courtesy time signature** at system breaks, which OSMD cannot be talked into.
+("Retiring `practice-logger/`" was the other one; the directory is no longer in this repository.)
 
 **Two playback boundaries, recorded rather than changed (2026-09-22).** `within()` in
 `frontend/src/lib/playback.ts` includes a note whose onset falls exactly on a segment's end, so such

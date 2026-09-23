@@ -3,8 +3,9 @@
 **Parent spec:** [`ECOSYSTEM.md`](./ECOSYSTEM.md) § *Phase 20* § *20e — audio takes (D1, D2, D3)*,
 with decisions 20-D4 and 20e-D1…D8 below. That section owns what and why; this document owns the how.
 
-**Status:** planned.  **Phase 21 landed first and took `SCHEMA_VERSION` to 3, and 20d takes it to 4**, so the
-numbers below are two higher than when this plan was written.
+**Status: landed** (2026-09-17). Phase 21 landed first and took `SCHEMA_VERSION` to 3, then 20e took it
+to 4 and 20d to 5, so the numbers below are two higher than when this plan was written. See
+`ECOSYSTEM.md` § *Phase 20*.
 
 **Goal.** Record the piano through the machine the app already runs on, at a quality that is honest
 about being a convenience rather than an archive, attach each take to the segment it came from, and

@@ -51,7 +51,7 @@ notebook at the piano (authoritative)        main computer / phone
 │   uvicorn 0.0.0.0:8000 + SPA      │    viewing, uploads, playback,
 │   ~/.local/share/piano-ecosystem/ │    tagging — no MIDI, so plain HTTP
 │     piano.db (+ -wal/-shm), media/│
-│ piano-kiosk.service               │
+│ kiosk (autostart)                 │
 │   chromium --kiosk localhost:8000 │  ← the only thing that touches MIDI
 └───────────────────────────────────┘
 ```
@@ -150,8 +150,8 @@ MusicXML file is kilobytes next to a recording's megabytes — so they are not w
 makes a copy slow, and they are in no way separable from it: a media row without
 its file shows up as *missing* in both cases.
 
-Override with `SRT_DB_PATH` and `SRT_MEDIA_DIR` (see the README's configuration
-table). The legacy `~/.local/share/piano-progress/` directory is only ever read,
+Override with `SRT_DB_PATH` and `SRT_MEDIA_DIR` (see [`ENGINEERING.md`](ENGINEERING.md) §8,
+*Configuration*). The legacy `~/.local/share/piano-progress/` directory is only ever read,
 by the one-time importer, and is never written.
 
 ## Backup
@@ -180,6 +180,12 @@ routes, and one tempting one that is not safe.
 3. **Not safe:** copying `piano.db` while the app runs and ignoring `-wal`/`-shm`.
    That is a silently truncated backup — it restores, and it is missing the last
    session.
+
+**The notebook also backs itself up nightly.** `deploy/install.sh` installs and enables
+`piano-backup.timer`, which runs the same JSON export at 03:10 with `Persistent=true`, so a machine
+that was off at that hour still backs up on the next boot. `SRT_BACKUP_DIR` says where and
+`SRT_BACKUP_KEEP` (14) bounds how many days are kept. It is a convenience, not a substitute for
+copying an export somewhere else: it lives on the same disk as the database it protects.
 
 A useful habit: the JSON export is small (no audio), so it can go somewhere
 versioned or synced. The recordings are the heavy part and almost never change;
@@ -220,7 +226,7 @@ re-run while you still use the old apps.
 | Capture shows "Not reaching the API — retrying" | The backend is down or on another port. Batches are held and resent; nothing is lost until the tab closes. |
 | A recording reads *pending* | Its row came across but the file has not been copied. Import with copying on, or copy `media/`. |
 | The waveform says the recording is too large to decode | Over 64 MB. It plays normally; only the picture is declined, because decoding expands the whole file into raw samples in the browser. |
-| A sitting does not appear on the dashboard straight away | It appears when it closes: eight seconds of silence for a segment, five minutes for the sitting itself, or *at once* if the piano is switched off. If it never appears, check the capture tile's "last note" — a heartbeat that has gone quiet means the kiosk stopped capturing. |
+| A sitting does not appear on the dashboard straight away | It appears when it closes: a segment boundary follows the passage's own pulse — a 2 s floor, 2.5× that pulse, a 30 s ceiling (`SRT_SEGMENT_*`) — while the sitting itself closes after five minutes of silence, or *at once* if the piano is switched off. If it never appears, check the capture tile's "last note" — a heartbeat that has gone quiet means the kiosk stopped capturing. |
 | Playback comes out of the wrong thing | The device bar's *Playback* chooses between the piano itself (MIDI out), the sampled piano and the synthesiser. *Through the piano* appears only when an output is present and is chosen by device fingerprint, not by port order. |
 | The synthesiser *and* the sampled piano are silent, but the piano plays | The machine's own audio, not the app. The device bar shows `audio ok` when the browser's audio context is running, which puts the problem below the browser: a machine with no sound card, or with no sound server running for that user (common on a server-class box), gives a context that runs happily and plays into nothing. Check `pactl info` and `aplay -l`, then use *Through the piano*, which needs no speakers at all. |
 | Everything from the browser is silent, piano included | The site may be muted: right-click the tab → *Unmute site*. The kiosk profile remembers it across restarts, which is why it survives a reboot and looks like a broken app. |

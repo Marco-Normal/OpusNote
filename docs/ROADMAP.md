@@ -3,18 +3,20 @@
 Incremental expansion of the sight-reading trainer. Each slice is independently
 shippable, independently verifiable, and small enough to review in one sitting.
 
-This document is the plan of record. Update it in place as slices land; do not
-create sibling roadmaps.
+This document **was** the plan of record until the ecosystem plan took over; the banner below
+records when and why. It is kept for its reasoning, not as a source of current status, and no new
+slice should be added here.
 
 > **Superseded, and delivered.** The ecosystem plan in
 > [`ECOSYSTEM.md`](./ECOSYSTEM.md) took over as the plan of record once the web app
 > reached parity with the Rust app (its Phase 4), and it has since carried the work
-> behind slices A-E. In particular
-> **Slice E is delivered**: workouts (the `workouts` table, start/current/finish
-> routes, the app-shell banner, attempt attribution, and the streak) landed as
-> ecosystem Phase 6, along with the rename this document called for —
-> `SRT_SESSION_LENGTH` is now `SRT_WORKOUT_LENGTH`. What follows is kept for its
-> history and its reasoning, which are still accurate.
+> behind slices A-G. **Slice E** (workouts: the `workouts` table, start/current/finish routes, the
+> app-shell banner, attempt attribution and the streak) landed as ecosystem Phase 6, along with the
+> rename this document called for — `SRT_SESSION_LENGTH` became `SRT_WORKOUT_LENGTH`. **Slice F**
+> (playback and the sustain pedal) landed as ecosystem Phases 10 and 13, and **slice G**'s deploy
+> half — the LAN server, kiosk, upload cap and concurrent-write hardening — landed as Phase 9; its
+> *auth* and Postgres ideas are decided non-goals (ECOSYSTEM D8), not pending work. What follows is
+> kept for its history and its reasoning, which are still accurate.
 
 ---
 
@@ -31,18 +33,21 @@ These do not change per slice.
    "It looked right when I ran it" is not verification. **Superseded in detail by
    [`TEST-STRATEGY.md`](./TEST-STRATEGY.md)**, which owns what each kind of change owes;
    this rule stands as the history of why.
-3. **Nothing regresses the 173 existing tests.** A slice that needs an existing
+3. **Nothing regresses the existing tests.** (The count was 173 when this was written; run
+   `./check.sh --fast` for the current one.) A slice that needs an existing
    assertion changed must say so in its PR description and explain why.
 4. **Notation legibility wins ties.** Where a UI preference fights how music is
    actually read, the notation wins.
 5. **No dead configurability.** A setting that nothing reads gets deleted or
-   wired up. (`SRT_SESSION_LENGTH` is currently dead — see Slice E.)
+   wired up. (`SRT_SESSION_LENGTH` was the example; it became `SRT_WORKOUT_LENGTH` when Slice E
+   landed.)
 
 ---
 
 ## Slice overview
 
-**Landed: A, B, C, D.** Decisions recorded below. E–G remain planned.
+**Landed: A-D in this document's own round; E, F and the deploy half of G later, as ecosystem
+phases.** The per-slice statuses below are historical — see `ECOSYSTEM.md` for the current plan.
 
 | # | Slice | Effort | Risk | Depends on | Status |
 | --- | --- | --- | --- | --- | --- |
@@ -50,9 +55,9 @@ These do not change per slice.
 | B | Theming + dark mode | M | Low | — | **done** |
 | C | Layout that scales to longer scores | M–L | Medium | — | **done** |
 | D | Real two-hand material | M–L | Medium | C | **done** |
-| E | Sessions (the daily loop) | M | Low | — | planned |
-| F | Musical depth (pedal, playback, looping) | M–L | Medium | — | planned |
-| G | Platform (auth, Postgres, deploy) | L | High | E | planned |
+| E | Sessions (the daily loop) | M | Low | — | **done** (ecosystem Phase 6) |
+| F | Musical depth (pedal, playback, looping) | M–L | Medium | — | **done** (playback Phase 10, pedal Phase 13) |
+| G | Platform (auth, Postgres, deploy) | L | High | E | **partly done** — the deploy/LAN work landed as Phase 9; auth and Postgres are non-goals |
 
 Recommended order: **A → B → C → D → E → F → G**, with F1 (hear your
 performance) as a cheap win that can slot in anywhere.
@@ -485,9 +490,9 @@ Tone.js is already a dependency. High perceived value, small change, and it make
 the "wrong note" list meaningful by ear.
 
 **F2. Sustain pedal awareness** *(S)*
-`MidiInput` already parses CC64 and nothing consumes it. Realistic use: stop
-penalising re-struck or overlapping notes as "extra" when the pedal is down, so
-pedalled playing is not scored as an error. A pedal *skill* is a later question.
+`MidiInput` parses CC64, and the app now stores those events and plays them back. This slice's
+proposal was to stop penalising re-struck or overlapping notes as "extra" when the pedal is down, so
+pedalled playing is not scored as an error. That landed: see `ECOSYSTEM.md` § *Phase 13a*.
 
 **F3. Slow-down and loop** *(L)*
 Scale the exercise tempo to 60/80/100% and loop a single bar or phrase. The
@@ -569,7 +574,9 @@ which tier a change owes, and how a new check is proven able to fail are owned b
   piano.
 - Ear training, theory drills, or anything not driven by reading notation at the
   keyboard.
-- Replacing Elo before a session model exists to attach better data to.
+- Replacing Elo before a session model exists to attach better data to. (The session model arrived
+  with workouts in ecosystem Phase 6, so this non-goal's stated premise no longer holds — though no
+  replacement has been proposed either.)
 
 ---
 
@@ -580,4 +587,4 @@ which tier a change owes, and how a new check is proven able to fail are owned b
 | B1 | How far does dark mode reach into the notation? | Follow the theme, user-overridable via a "score paper" setting |
 | C1 | Is exercise length a preference or part of difficulty? | User preference (4/8/12/16); difficulty stays skill-based |
 | D1 | What does "expand to two hands" mean? | Traditional two-staff material: a free, genuinely-read left hand *and* named common patterns (waltz, Alberti, canon). Per-hand practice deferred to its own slice |
-| — | Approved for the current round | A + B |
+| — | Approved for that round (historical) | A + B |

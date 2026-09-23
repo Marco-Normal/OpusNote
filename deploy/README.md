@@ -10,7 +10,11 @@ The reasoning behind each choice is in
 ## One-time, on the notebook
 
 ```bash
-sudo apt install -y python3-venv nodejs
+sudo apt install -y python3-venv
+# Node 23.6+ is required: the frontend tests are TypeScript, which older Node cannot
+# load, and `npm run build` needs it. Distro `nodejs` predates that on Mint and
+# Ubuntu — install from nodejs.org, nvm or a tarball, and check `node --version`.
+# `install.sh` only checks that `node` exists, not its version.
 # put the repository somewhere it can stay, e.g. /opt/piano-ecosystem
 bash ./deploy/install.sh --check      # no root, writes nothing: says what it found
 sudo SERVICE_USER=$USER ./deploy/install.sh
@@ -60,6 +64,7 @@ Then:
 | audio-capture permission | the same managed policy | `AudioCaptureAllowedUrls` auto-grants the microphone to `localhost`/`127.0.0.1`, and `AudioCaptureAllowed: false` turns every other origin into a silent refusal instead of a prompt — which is what makes it an allow-list rather than a question asked on a machine nobody is sitting at. The name is `AudioCaptureAllowedUrls` and **not** `AudioCaptureAllowedForUrls`: capture policies have no `...ForUrls` form, and a key Chromium does not define is not ignored with a warning — it is not read at all. That misspelling beside `AudioCaptureAllowed: false` is a policy that refuses the microphone to *every* origin, the notebook's own included, without saying so. `deploy/browser.test.sh` pins the name |
 | `snd_seq` | `modules-load.d` | without it Web MIDI finds *no* devices at all |
 | kiosk autostart | `~/.config/autostart/` | **not** a systemd user unit: `sudo -u user systemctl --user` has no user bus to talk to — that is what `Failed to connect to bus: No medium found` means — and XDG autostart works on Cinnamon, MATE and XFCE alike |
+| nightly backup | `piano-backup.timer` | a JSON export at 03:10 with `Persistent=true`, so a machine that was off still backs up on the next boot; `SRT_BACKUP_KEEP` (14) bounds the count |
 
 ## If you are coming from an earlier attempt
 
@@ -104,7 +109,8 @@ of them race.
   (JSON; recording files are not inside it), and copy `media/` separately with
   `rsync -a`. See [`../docs/DEPLOYMENT.md`](../docs/DEPLOYMENT.md) for the WAL caveat
   that makes a bare copy of `piano.db` a silently truncated backup.
-- **The kiosk died:** `tail ~/.local/state/piano-kiosk.log`, and `pgrep -af kiosk-run`.
+- **The kiosk died:** `tail ~/.local/state/piano-kiosk.log`, and `pgrep -af piano-kiosk.sh`
+  (the installed wrapper is `~/.local/bin/piano-kiosk.sh`, not `kiosk-run`).
   The wrapper restarts the browser if it exits, so a crash self-heals; if the wrapper
   itself is gone the capture tile goes quiet, which is the point of the heartbeat.
 - **Browsing the notebook normally:** `touch ~/.config/piano-kiosk.disabled` and log

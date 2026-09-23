@@ -1,26 +1,25 @@
 # Agent log
 
 **This file is shared, append-only coordination between agents working in this
-workspace.** Two projects live here and are being merged:
-
-| Project | Path | Owner |
-| --- | --- | --- |
-| Sight-reading trainer | `backend/`, `frontend/`, `docs/` (repo root) | the sight-reading agent |
-| Practice logger | `practice-logger/` | the practice-logger agent |
-| Repertoire tracker (Rust/egui) | `piano-progress/` | neither — read-only library |
+workspace.** The two projects it was created to merge are now one: the practice logger's code lives
+in `backend/app/practice/` and its history is importable, and the repertoire tracker's library was
+imported by the one-time `piano-progress` importer. Neither `practice-logger/` nor
+`piano-progress/` is a directory in this repository any more; the entries below are the record of
+how that happened.
 
 ## Rules
 
 1. **Append, never rewrite history.** Add a new entry at the bottom. If you
    disagree with an earlier entry, add a new one that says so; do not edit it.
-2. **Announce before you touch the other project.** Any change outside your own
+2. **Announce before you touch another owner's area.** Any change outside your own
    directory gets an entry here *first*, describing what and why.
 3. **Record shared-contract changes explicitly.** If you change a table, an
    endpoint, a column, or a shared file format, say so with the exact file and
    line, and say what the other side must do.
-4. **Do not write another owner's tables.** `piano-progress` owns the library;
-   `practice-logger` owns the practice tables. Cross-owner writes are the one
-   thing that makes a shared SQLite file unsafe.
+
+The original rule 4 — which assigned the library to `piano-progress` and the practice tables to
+`practice-logger` — is discharged by the merge and must not be read as current: `backend/app/` is
+the only writer of `piano.db` now.
 
 ## Entry format
 
@@ -3308,4 +3307,38 @@ fix if it becomes noise is a click-to-remove rather than a delete mode); no per-
 `SCHEMA_VERSION` bump, since a brand-new table is created by `CREATE TABLE IF NOT EXISTS` on every
 `init_db`; and `README.md` needed no change — its only mention of pedals is the Setup grouping label,
 with no behavioural claim to go stale.
+
+## 2026-09-23 — documentation agent — the docs are audited, and their stale status is corrected
+
+Scope: `docs/`, `README.md`, `deploy/README.md`, `check.sh` (comments only), `AGENT-LOG.md` header.
+No code or test changed.
+
+Did: a read-only audit of every document against the code, then a correction pass. The findings worth
+naming, because each was a reader-visible falsehood rather than a typo: `ECOSYSTEM.md`'s status line
+stopped five phases short and its phase table had no rows for phases 15, 16 or 17; its
+`SCHEMA_VERSION` note said 3 where the code says 5; its table list named
+`identification_corrections`, a table the same document records as never ported; and its CC64
+double-tap was still described as live in three places after it had been retired. `FEATURES.md` still
+cut segments at a fixed 8 seconds, which Phase 22a replaced, and `ENGINEERING.md` already said so —
+the two reference documents disagreed. `ENGINEERING.md` claimed "every threshold lives in config"
+while four scoring constants are hardcoded, and documented a texture level 10 that writes four voices
+when the generator writes two. `DEPLOYMENT.md` pointed at a README configuration table that no longer
+exists, and named a kiosk systemd unit that was deliberately never created. Four `PLAN-PHASE*` files
+still said **planned** for landed work and four still ended with "Next step: execute with the
+`executing-plans` skill". `TEST-STRATEGY.md` carried three different test counts for one suite and
+promised a `docs/TESTING.md` that does not exist. `ROADMAP.md` called itself the plan of record three
+lines above its own superseded banner. `PLAN-PHASE20B.md` asserted a damper gesture that `987c9ec`
+had already removed.
+
+Test counts, scenario counts and script counts were date-stamped or replaced by the command that
+prints them, and `TEST-STRATEGY.md` §1 is now labelled as the 2026-09-20 snapshot it always was — the
+suite moved twice during the audit (975 then 982 backend tests), which is exactly why bare totals are
+not used.
+
+One item is left deliberately unfixed: `check.sh:106` prints `$refused` twice and never labels
+`$skipped`. It is a real bug in the summary line, but fixing it changes an executable's output rather
+than a comment, which is outside this pass's remit. It is recorded here so that it is not lost.
+
+Impact on the other side: none. No contract, table, endpoint or schema changed; the only
+non-documentation file touched is `check.sh`, and only its comments.
 

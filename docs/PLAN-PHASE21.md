@@ -3,7 +3,8 @@
 **Parent spec:** [`ECOSYSTEM.md`](./ECOSYSTEM.md) § *Phase 21*. That section owns what and why; this
 document owns the how.
 
-**Status:** planned. **Execute before `PLAN-PHASE20B.md`–`PLAN-PHASE20E.md`**, at the user's request.
+**Status: landed** (2026-09-16). **The requested ordering was not followed** — 20e landed first, then
+20b, 20d and 20c. See `ECOSYSTEM.md` § *Phase 21*.
 
 **Goal.** Two things that make the practice log hard to use on real data:
 

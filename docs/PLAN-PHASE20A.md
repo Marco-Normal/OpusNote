@@ -1854,5 +1854,6 @@ Execution Route:
   boundary is crossed by writing this plan
 ```
 
-**Next step:** execute with the `executing-plans` skill, batching at the two review gates above. The
-first action is the Precondition: the working tree must be clean before any falsification runs.
+**Landed.** All five tasks are implemented and verified; see `ECOSYSTEM.md` § *Phase 20* and
+`AGENT-LOG.md` (2026-09-16). Nothing here remains to execute. The two review gates above are kept
+as the record of how it was executed.

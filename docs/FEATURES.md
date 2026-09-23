@@ -87,6 +87,7 @@ together. The left hand is drawn from a library of **18 named accompaniment figu
 | Pulse | root-fifth "boom-chick", march bass, waltz bass, stride bass, tenths |
 | Broken chord | Alberti bass, compound (6/8) form, ascending broken chords, wide arpeggios, broken octaves |
 | Independent | walking bass, free left-hand line, countermelody, canon |
+| Shared rhythm | hands in similar rhythm (mirror) |
 
 The figure is chosen from the meter and the texture level — a waltz bass never appears in
 4/4 — and every figure is unit-tested for exact bar fill, register and diatonicism. The
@@ -198,20 +199,33 @@ curl -X POST http://127.0.0.1:8000/api/repertoire/import \
 Recordings are copied into the ecosystem media directory by default; `"copy_media": false` skips
 that step when the copy would be large.
 
+The same button also imports **practice history**, which is a separate endpoint because it is a
+separate application's data with its own shape:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/practice/import-legacy
+```
+
+It reports the sittings, note events and segments imported, and either import can be re-run alone.
+
 ## 6. Practice log
 
 Everything played is logged without any action, once a MIDI device is connected: capture is a
 standing switch rather than a per-sitting button. Notes are sent every two seconds, and whatever the
 page is still holding when it goes away is handed to the browser to deliver after the document is
 gone, so a reload, a kiosk restart or a power cut does not take the tail of the sitting with it. The server groups notes into **sittings** by
-silence and into **segments** by shorter silence, which is normally one piece per segment.
+silence and into **segments** at the pauses the passage itself calls for, which is normally one piece
+per segment.
 Nothing is recomputed behind the user's back: a boundary moved by hand stays moved.
 
-- **Segments** are cut at 8 seconds of silence, chosen by measuring a real 42-minute session.
-  In that session the piece changes sat on gaps of 9.5 s and 11.7 s, while pauses *within* a
-  piece sat at 15 s. No threshold is perfect, and this one errs toward more segments because
-  merging one is a click while splitting one requires typing a position.
-- **The Log view** shows today, the streak, a twelve-week calendar, time per piece, neglected
+- **Segments are cut where the playing turns over, not at one fixed silence.** A pause becomes a
+  boundary when it is long *for what was being played*: at least `SRT_SEGMENT_FLOOR_MS` (2 s) and
+  `SRT_SEGMENT_PULSE_MULTIPLIER` (2.5) times the passage's own pulse, with `SRT_SEGMENT_CEILING_MS`
+  (30 s) as the ceiling. A group too short to be worth keeping is absorbed into its neighbour, and
+  one too long is split at its largest internal pauses. Measured on the owner's own ten hours, the
+  fixed 8-second rule it replaced fired only 60 times across 238,648 note transitions.
+- **The Log view** shows today, the streak, a calendar (30 days by default, with 7, 30 and 90-day
+  choices), time per piece, neglected
   pieces, and the sitting timeline. A segment can be tagged with a piece, split at a typed
   position (a clock value such as `1:30:12`, or seconds), merged with a neighbour, or
   re-segmented. Re-segmenting is the only destructive action and asks first when segments
@@ -259,7 +273,8 @@ reading.
 ## 7. Progress
 
 - **Rating over time.** Every rating change is recorded, so each skill has a curve rather than a
-  single number. The Elo engine adjusts all nine dimensions on every attempt, so each point
+  single number. The Elo engine adjusts all nine dimensions on every attempt — except a pinned
+  exercise, which is deliberately unrated — so each point
   records whether its skill was that attempt's *focus*; the chart draws the whole line and
   reports how many points were focus attempts.
 - **Recent exercises.** Selecting a row opens that attempt: its sub-scores, its counts, and the
@@ -374,3 +389,25 @@ which are otherwise indistinguishable symptoms with different causes.
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for the loopback boundary and the kiosk configuration that
 implements it.
+
+## 12. Calibration
+
+A first run has no rating to select from, so calibration asks a short, fixed ladder of one exercise
+per dimension and uses the answers to seed the Elo ratings. The ladder is **eight steps**, walking
+up in level so a few attempts locate a starting point rather than thirty (`adaptive/selector.py`):
+
+| Step | Skill | Level |
+| --- | --- | --- |
+| 1 | Rhythm | 1 |
+| 2 | Key signatures | 2 |
+| 3 | Intervals | 2 |
+| 4 | Hand position | 2 |
+| 5 | Texture | 2 |
+| 6 | Meter | 3 |
+| 7 | Accidentals | 3 |
+| 8 | Articulation | 3 |
+
+`GET /api/calibration/next` serves each step, `SRT_CALIBRATION_LENGTH` sets how many, and
+`SRT_ELO_K_CALIBRATION` (56, larger than the steady-state 32) makes the seeded ratings move fast on
+little evidence. `CalibrationView.svelte` is the interface, and a calibrated player can run it again
+to re-seed.
