@@ -603,12 +603,15 @@ hand-write badly.
 
 ## 8. The standing rule
 
-> **A slice is not done until `check.sh --full` passes, and no assertion is trusted until
-> it has been seen to fail.**
+> **A slice is not done until `check.sh --full` passes, no assertion is trusted until it has
+> been seen to fail, and the documents it invalidates are updated in the same commit.**
 
-The second half is the part that matters. It is the Phase 19 lesson written down: the pedal
-re-strike assertion was correct by luck until the fix was removed and the failure observed.
-Every check added from here is falsified before it is kept.
+The second clause is the part that matters most for tests. It is the Phase 19 lesson written down:
+the pedal re-strike assertion was correct by luck until the fix was removed and the failure
+observed. Every check added from here is falsified before it is kept.
+
+The third clause is owned by [`ECOSYSTEM.md`](./ECOSYSTEM.md) § *The standing rule for
+documentation*, which lists what each kind of change owes, in which document, and when.
 
 ### How the rule is executed, and what the tool promises
 

@@ -241,7 +241,9 @@ backend/tools/run_e2e.sh playback     # one scenario, by name
 backend/tools/run_e2e.sh              # every scenario
 ```
 
-What each tier must cover is owned by [docs/TEST-STRATEGY.md](docs/TEST-STRATEGY.md).
+What each tier must cover is owned by [docs/TEST-STRATEGY.md](docs/TEST-STRATEGY.md). What a change
+owes the *documentation* — which file, and in which commit — is owned by
+[docs/ECOSYSTEM.md](docs/ECOSYSTEM.md) § *The standing rule for documentation*.
 
 ## Project layout
 

@@ -2007,13 +2007,73 @@ this project's decision record *is* this document plus its decisions tables — 
 directory exists, and inventing one now would create a second authority for the same
 facts.
 
-### Update the owning docs, not new siblings
+### The standing rule for documentation: the docs move with the code
 
-The deployment chapter in [`DEPLOYMENT.md`](./DEPLOYMENT.md) is extended when Phase
-9 lands, so it describes files that exist; this section is the plan until then.
+> **A change is not done until the documents it invalidates are updated, in the same commit
+> that lands the change.**
 
-Phase 20 follows the same rule rather than adding documents. The audio-capture permission
-lands in `deploy/chromium-policy.json` and is described in `DEPLOYMENT.md` and
-`deploy/README.md` when 20e ships, not before. `README.md` gains a line for each slice that
-a player can see, and what a slice owes the suite is owned by
-[`TEST-STRATEGY.md`](./TEST-STRATEGY.md) as it already is for every other change.
+This is the documentation half of [`TEST-STRATEGY.md`](./TEST-STRATEGY.md) §8, and it exists
+because the failure is silent and has already happened here. Phase 23's implementation landed in
+`b03a181` and its documentation two commits later in `4a28465`, so `ECOSYSTEM.md` described a
+shipped phase as **Planned** in between. Four landed plans still said `planned`, and four still
+ended *"Next step: execute with the `executing-plans` skill"*. `FEATURES.md` kept cutting segments
+at a fixed 8 seconds for two phases after `ENGINEERING.md` recorded the rule that replaced it.
+**Not one of those broke a test**, which is why no tier can catch them.
+
+Extend the document that already owns the fact; do not add a sibling. A new document is a new
+authority for the same facts, and the second authority is always the one that goes stale.
+
+#### What to update, and when
+
+The trigger is the *change*, not the phase, and the update lands with it — before the work is
+called done, not after:
+
+| If the change… | …then update |
+| --- | --- |
+| lands or unlands a phase or a slice | the status line at the top of this document, its phase-table row **and** its heading, and the plan's own `**Status:**` header |
+| adds or alters a table, column or migration | this document's data-model list and the phase's decisions table; say whether `SCHEMA_VERSION` moved, and why |
+| adds or changes a route, or a request/response field | `ENGINEERING.md` §2, and `FEATURES.md` when a player can see the difference |
+| adds or changes a tunable | `ENGINEERING.md` §8 — name, default, and what actually reads it (say plainly when nothing does) |
+| changes behaviour a player can see | `FEATURES.md`, in the section that already owns that behaviour |
+| changes scoring, timing or a threshold | `ENGINEERING.md` §5 and §8, and state whether it is a config knob or hardcoded |
+| changes a deploy mechanism, unit or file | `DEPLOYMENT.md` **and** `deploy/README.md` together — they are read as a pair |
+| removes or adds a limitation | `ENGINEERING.md` §9; a non-goal belongs in this document's *Non-goals* |
+| is something a player would notice | `README.md`'s capability list |
+| finishes or supersedes a plan | its own status header, plus a supersede note naming the successor |
+| changes a contract another agent depends on | an `AGENT-LOG.md` entry with the exact file and line (its rule 3) |
+| is any commit at all | an `AGENT-LOG.md` entry |
+
+#### Measurements rot faster than prose
+
+Never write a bare total. A count is true only at the moment it is taken, and this repository's
+suite moved twice *during a single documentation pass* (975 → 982 backend tests). Either date-stamp
+it — *"811 passing (2026-09-16)"* — or replace it with the command that prints it. The same applies
+to a status word: a claim about *now* must be re-read at the moment it is written, because a
+document drafted before a merge is stale the moment the merge lands. The audit that produced this
+rule found three separate stale claims inside its own drafted fixes.
+
+#### Supersede, never rewrite
+
+`AGENT-LOG.md` and the landed `PLAN-*.md` files are history. When something in one of them becomes
+wrong, add a note that says so and names the successor — `PLAN-PHASE20B.md`'s pedal mapping is
+superseded by `PLAN-PHASE23.md`, and it says exactly that. Deleting the old text destroys the reason
+the new text exists.
+
+#### The check before you commit
+
+Nothing enforces this rule yet, so it is a habit — and a habit needs a step:
+
+```bash
+grep -rn '\*\*Status:.*planned' docs/PLAN-*.md   # a plan you just landed?
+grep -rn 'Next step: execute' docs/PLAN-*.md     # a footer you just invalidated?
+grep -rnE 'SCHEMA_VERSION (is|was) now' docs/    # a "current version" claim to re-read
+```
+
+(Each is scoped so that it cannot match this section — the first draft of these commands did, and a
+check that always reports a hit is worse than no check.)
+
+Then the three questions a grep cannot answer: does the status line name the phases that are
+actually landed, does the document you edited still agree with the one beside it, and did you write
+any bare count. A link-and-status checker in `backend/tools/` wired into `check.sh --fast` would be
+the honest enforcement of this rule; it does not exist yet, and until it does the rule is only as
+good as the agent reading it.

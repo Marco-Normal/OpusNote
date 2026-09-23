@@ -16,10 +16,13 @@ how that happened.
 3. **Record shared-contract changes explicitly.** If you change a table, an
    endpoint, a column, or a shared file format, say so with the exact file and
    line, and say what the other side must do.
+4. **Move the docs with the code.** A change is not done until the documents it invalidates
+   are updated, in the same commit that lands it. The trigger table — which file, for which
+   kind of change — is
+   [`docs/ECOSYSTEM.md`](docs/ECOSYSTEM.md) § *The standing rule for documentation*.
 
-The original rule 4 — which assigned the library to `piano-progress` and the practice tables to
-`practice-logger` — is discharged by the merge and must not be read as current: `backend/app/` is
-the only writer of `piano.db` now.
+The rule this list used to carry about table ownership is discharged by the merge, and must not be
+read as current: `backend/app/` is the only writer of `piano.db` now.
 
 ## Entry format
 
@@ -3341,4 +3344,31 @@ than a comment, which is outside this pass's remit. It is recorded here so that 
 
 Impact on the other side: none. No contract, table, endpoint or schema changed; the only
 non-documentation file touched is `check.sh`, and only its comments.
+
+## 2026-09-23 — documentation agent — the docs gain a standing rule, and a trigger table
+
+Scope: `docs/ECOSYSTEM.md`, `docs/TEST-STRATEGY.md`, `README.md`, `AGENT-LOG.md` (rules). No code
+changed.
+
+Did: **a change is now not done until the documents it invalidates are updated, in the same commit
+that lands it.** That is the documentation half of the test strategy's standing rule. It is written
+into the section that already owned "update the owning docs, not new siblings" rather than as a new
+document, because a second authority for the same facts is always the one that goes stale.
+
+The rule is a trigger table: what to update for a landed phase, a schema change, a route, a tunable,
+player-visible behaviour, a scoring constant, a deploy mechanism, a limitation, a plan that
+finishes, and a contract change. It also carries the two habits whose absence the clean-up commit
+exposed — never write a bare count (this suite moved 975 → 982 *during* that pass, and three stale
+claims were found inside the clean-up's own drafts), and supersede a landed plan rather than
+rewriting it.
+
+`TEST-STRATEGY.md` §8's definition of done gained the third clause and points at the table, because
+plans already cite that blockquote as their authority; `AGENT-LOG.md` gained it as rule 4; and
+`README.md`'s verification section points at it for a human reader.
+
+The honest part, stated in the rule itself: nothing enforces it yet. The three greps that catch the
+common cases are in the document, and a link-and-status checker wired into `check.sh --fast` is the
+real enforcement — it is not built.
+
+Impact on the other side: none. No contract, table, endpoint or schema changed.
 
