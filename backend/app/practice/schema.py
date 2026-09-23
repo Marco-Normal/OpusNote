@@ -74,6 +74,24 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_pedals_dedupe
     ON pedal_events(sitting_id, onset_ms, value);
 CREATE INDEX IF NOT EXISTS idx_pedals_sitting ON pedal_events(sitting_id, onset_ms);
 
+-- Places the player asked to come back to, pressed on the sostenuto.
+--
+-- Its own stream rather than a column on `pedal_events`: that table is CC64 by contract, and
+-- routing CC66 into it would record the middle pedal as sustain and corrupt `pedal_blur` and
+-- `pedal_basis`. Raw like the pedal stream rather than derived, because nothing in the notes
+-- records that a person asked to come back — but *only* deliberate marks, so an unbound pedal
+-- writes nothing here.
+CREATE TABLE IF NOT EXISTS sitting_marks (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    sitting_id   INTEGER NOT NULL REFERENCES sittings(id) ON DELETE CASCADE,
+    onset_ms     INTEGER NOT NULL,       -- ms since the sitting start
+    epoch_ms     INTEGER NOT NULL        -- what the piano's clock said, for debugging
+);
+-- The same idempotence as note_events and pedal_events: a retried batch must not double a mark,
+-- and two deliberate marks in one millisecond are not physically playable.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_marks_dedupe ON sitting_marks(sitting_id, onset_ms);
+CREATE INDEX IF NOT EXISTS idx_marks_sitting ON sitting_marks(sitting_id, onset_ms);
+
 -- Every machine guess that was acted on. Without it, "how often is the matcher
 -- right?" is answerable only from memory, and the accept/reject buttons would be
 -- advice the app forgets the moment it is taken.

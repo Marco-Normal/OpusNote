@@ -11,7 +11,7 @@ import pytest
 from app.config import settings
 from app.db import connect
 from app.practice import store
-from app.practice.models import EventBatch, WireNote, WirePedal
+from app.practice.models import EventBatch, WireMark, WireNote, WirePedal
 from tests.conftest import phrase_offsets
 
 # 2023-11-15 01:30:00 UTC: safely in the past, so sittings read as "closed".
@@ -887,3 +887,70 @@ def test_a_sitting_from_before_the_column_gets_its_places_on_the_first_read(fres
     assert metrics is not None
     assert metrics.pedal_blur == 2, "the count was there all along"
     assert metrics.pedal_blur_ms == [1_000, 1_600], "and the first read supplied the places"
+
+
+# --- review marks ---------------------------------------------------------
+
+
+def test_a_mark_is_stored_relative_to_its_sitting(fresh_db) -> None:
+    payload = EventBatch(
+        tz_offset_minutes=0,
+        events=[
+            WireNote(epoch_ms=BASE_MS, pitch=60, velocity=70, duration_ms=300, channel=0),
+            WireNote(epoch_ms=BASE_MS + 4_000, pitch=62, velocity=70, duration_ms=300, channel=0),
+        ],
+        marks=[WireMark(epoch_ms=BASE_MS + 1_500, channel=0)],
+    )
+    result = store.ingest(payload)
+
+    assert (result.marks_accepted, result.marks_ignored) == (1, 0)
+    detail = store.sitting_detail(result.sitting_id, now_ms=LATER_MS)
+    assert detail.review_marks_ms == [1_500], "relative to the sitting, not absolute"
+
+
+def test_reposting_a_batch_does_not_double_a_mark(fresh_db) -> None:
+    payload = EventBatch(
+        tz_offset_minutes=0,
+        events=[WireNote(epoch_ms=BASE_MS, pitch=60, velocity=70, duration_ms=300, channel=0)],
+        marks=[WireMark(epoch_ms=BASE_MS + 500, channel=0)],
+    )
+    first = store.ingest(payload)
+    second = store.ingest(payload)
+
+    assert first.marks_accepted == 1
+    assert second.marks_accepted == 0, "the second pass is a duplicate, not a second flag"
+    assert store.sitting_detail(first.sitting_id, now_ms=LATER_MS).review_marks_ms == [500]
+
+
+def test_a_mark_with_no_music_around_it_is_ignored(fresh_db) -> None:
+    # The rule a pedal press already follows: a foot on a pedal is not practice, so a flag must
+    # not invent a sitting or extend one.
+    result = store.ingest(
+        EventBatch(tz_offset_minutes=0, marks=[WireMark(epoch_ms=BASE_MS, channel=0)])
+    )
+
+    assert result.sitting_id is None
+    assert (result.marks_accepted, result.marks_ignored) == (0, 1)
+
+
+def test_marks_survive_a_resegment(fresh_db) -> None:
+    # A mark is a fact about the sitting, not about a boundary, so rebuilding the segments must
+    # not touch it.
+    payload = EventBatch(
+        tz_offset_minutes=0,
+        events=[
+            WireNote(
+                epoch_ms=BASE_MS + offset,
+                pitch=pitch,
+                velocity=70,
+                duration_ms=300,
+                channel=0,
+            )
+            for offset, pitch in ((0, 60), (1_000, 62), (20_000, 64), (21_000, 65))
+        ],
+        marks=[WireMark(epoch_ms=BASE_MS + 1_500, channel=0)],
+    )
+    sitting_id = store.ingest(payload).sitting_id
+    store.resegment_sitting(sitting_id, confirm=True)
+
+    assert store.sitting_detail(sitting_id, now_ms=LATER_MS).review_marks_ms == [1_500]

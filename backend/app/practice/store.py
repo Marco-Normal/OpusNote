@@ -175,13 +175,16 @@ def ingest(batch: EventBatch, db_path: Path | None = None) -> IngestResult:
         key=lambda note: (note.epoch_ms, note.pitch),
     )
     pedals = sorted(batch.pedals, key=lambda pedal: pedal.epoch_ms)
-    if not notes and not pedals:
+    marks = sorted(batch.marks, key=lambda mark: mark.epoch_ms)
+    if not notes and not pedals and not marks:
         raise InvalidRequest("cannot ingest an empty batch")
 
     accepted = 0
     duplicates = 0
     pedals_accepted = 0
     pedals_ignored = 0
+    marks_accepted = 0
+    marks_ignored = 0
     sitting_id: int | None = None
     # `immediate`: every one of these reads a row and then writes what it read, and the app's
     # own design has two machines writing this file. A deferred transaction would fix its snapshot
@@ -263,6 +266,28 @@ def ingest(batch: EventBatch, db_path: Path | None = None) -> IngestResult:
                 pedals_accepted += 1
                 sitting_id = pedal_sitting
 
+        # Marks last, for the same reason the pedals are second: a batch that opens a sitting must
+        # attach its mark to that sitting. Nothing here opens or extends one either — a flag with
+        # no music around it is not practice, so it is counted and dropped.
+        for mark in marks:
+            row = _find_sitting(conn, mark.epoch_ms, gap_ms)
+            if row is None:
+                marks_ignored += 1
+                continue
+            mark_sitting = int(row["id"])
+            cursor = conn.execute(
+                "INSERT OR IGNORE INTO sitting_marks"
+                " (sitting_id, onset_ms, epoch_ms) VALUES (?1, ?2, ?3)",
+                (
+                    mark_sitting,
+                    mark.epoch_ms - int(row["started_ms"]),
+                    mark.epoch_ms,
+                ),
+            )
+            if cursor.rowcount:
+                marks_accepted += 1
+                sitting_id = mark_sitting
+
         final = (
             conn.execute(
                 "SELECT started_at, ended_at FROM sittings WHERE id = ?", (sitting_id,)
@@ -279,6 +304,8 @@ def ingest(batch: EventBatch, db_path: Path | None = None) -> IngestResult:
         ended_at=final["ended_at"] if final is not None else None,
         pedals_accepted=pedals_accepted,
         pedals_ignored=pedals_ignored,
+        marks_accepted=marks_accepted,
+        marks_ignored=marks_ignored,
     )
 
 
@@ -867,6 +894,13 @@ def sitting_detail(
         note_count = conn.execute(
             "SELECT COUNT(*) FROM note_events WHERE sitting_id = ?", (sitting_id,)
         ).fetchone()[0]
+        review_marks_ms = [
+            int(mark["onset_ms"])
+            for mark in conn.execute(
+                "SELECT onset_ms FROM sitting_marks WHERE sitting_id = ? ORDER BY onset_ms",
+                (sitting_id,),
+            )
+        ]
         # What the undecided segments might be. Computed here rather than inside
         # `_segment_rows`, which every edit path calls: a suggestion is a read-time
         # question, and re-running the matcher after every split would put it in the
@@ -891,6 +925,7 @@ def sitting_detail(
             or int(row["ended_ms"]) + settings.sitting_gap_s * 1000 < now,
             segments=segments,
             passages=_passage_rows(conn, sitting_id),
+            review_marks_ms=review_marks_ms,
         )
     finally:
         conn.close()

@@ -77,7 +77,11 @@ def post_events(batch: EventBatch) -> IngestResult:
     # Pedals alone are a legitimate batch. The client flushes every two seconds
     # and keeps a failed batch queued, so refusing a pedal-only flush would block
     # every note behind it until the player happened to play again.
-    if not batch.events and not batch.pedals:
+    #
+    # A mark alone is the *ordinary* case, not an edge one: the flag is pressed between
+    # phrases, so the flush carrying it usually has nothing else in it. Refusing it would
+    # leave the client retrying the same batch forever — the same trap, one gesture later.
+    if not batch.events and not batch.pedals and not batch.marks:
         raise HTTPException(status_code=422, detail="events must not be empty")
     return _handle(store.ingest, batch)
 

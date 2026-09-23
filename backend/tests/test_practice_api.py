@@ -1176,3 +1176,43 @@ def test_a_sitting_detail_without_passages_still_validates() -> None:
         segments=[],
     )
     assert detail.passages == []
+
+
+def test_the_detail_payload_carries_the_review_marks(client) -> None:
+    # Additive, so every reader written before Phase 23 still holds; asserted here because the
+    # field is the whole user-visible point of the mark stream.
+    payload = batch_payload([0, 500, 1_000])
+    payload["marks"] = [{"epoch_ms": BASE_MS + 800, "channel": 0}]
+    sitting_id = client.post("/api/practice/events", json=payload).json()["sitting_id"]
+
+    body = client.get(f"/api/practice/sittings/{sitting_id}").json()
+    assert body["review_marks_ms"] == [800]
+
+
+def test_a_mark_pressed_between_phrases_is_a_batch_of_its_own(client) -> None:
+    # The ordinary case rather than an edge one: the flag is pressed between phrases, so the
+    # flush carrying it usually has nothing else in it. Refusing it leaves the client retrying
+    # the same batch forever, exactly as a pedal-only flush would.
+    record([0, 500, 1_000])
+
+    response = client.post(
+        "/api/practice/events",
+        json={
+            "tz_offset_minutes": 0,
+            "source": "web_midi",
+            "events": [],
+            "marks": [{"epoch_ms": BASE_MS + 2_000, "channel": 0}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["marks_accepted"] == 1
+
+
+def test_a_genuinely_empty_batch_is_still_refused(client) -> None:
+    response = client.post(
+        "/api/practice/events",
+        json={"tz_offset_minutes": 0, "source": "web_midi", "events": [], "marks": []},
+    )
+
+    assert response.status_code == 422

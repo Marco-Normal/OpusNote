@@ -696,6 +696,12 @@ export interface SittingDetail {
    * every reader can treat it as an empty list.
    */
   passages?: PracticePassage[];
+  /**
+   * Where the player asked to come back to, in ms relative to the sitting, ascending.
+   * Optional with a default for the same reason `passages` is: a server that predates Phase 23
+   * still satisfies this type, and every reader can treat it as an empty list.
+   */
+  review_marks_ms?: number[];
 }
 
 export interface CalendarDay {

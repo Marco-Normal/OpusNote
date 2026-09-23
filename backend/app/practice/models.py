@@ -57,6 +57,18 @@ class WirePedal(BaseModel):
     channel: int | None = Field(default=None, ge=0, le=15)
 
 
+class WireMark(BaseModel):
+    """A place the player asked to come back to.
+
+    A deliberate act rather than a measurement, which is why it travels as its own stream: nothing
+    in the notes records that a person pressed a pedal to say "review this". It carries no value
+    because there is nothing to carry — the fact is the instant.
+    """
+
+    epoch_ms: int = Field(description="Absolute event time, ms since the Unix epoch")
+    channel: int | None = Field(default=None, ge=0, le=15)
+
+
 class EventBatch(BaseModel):
     """A batch of played notes, and the pedal moves that went with them.
 
@@ -68,6 +80,9 @@ class EventBatch(BaseModel):
     keyboard with no pedal — keeps working unchanged. That is also why an empty
     ``events`` list is allowed when pedals are present: a client should not have
     to know which of the two the server would rather receive.
+
+    ``marks`` is optional on the wire for the same reason: a client that predates
+    it keeps working unchanged.
     """
 
     tz_offset_minutes: int = Field(
@@ -76,6 +91,7 @@ class EventBatch(BaseModel):
     source: PracticeSource = "web_midi"
     events: list[WireNote] = Field(default_factory=list)
     pedals: list[WirePedal] = Field(default_factory=list)
+    marks: list[WireMark] = Field(default_factory=list)
 
 
 class IngestResult(BaseModel):
@@ -92,6 +108,10 @@ class IngestResult(BaseModel):
     #: so it is dropped rather than allowed to open or extend a sitting.
     pedals_accepted: int = 0
     pedals_ignored: int = 0
+    #: Marks stored in this batch, and those dropped because no sitting was open. A flag pressed
+    #: with no music around it is not practice, so it is dropped rather than allowed to open one.
+    marks_accepted: int = 0
+    marks_ignored: int = 0
 
 
 class SittingSummary(BaseModel):
@@ -340,6 +360,9 @@ class SittingDetail(BaseModel):
     segments: list[SegmentSummary]
     #: Additive, with a default, so every pre-existing reader of a sitting still holds.
     passages: list[PracticePassageOut] = Field(default_factory=list)
+    #: Where the player asked to come back to, in ms relative to the sitting, ascending. Additive
+    #: with a default, so every pre-existing reader of a sitting still holds.
+    review_marks_ms: list[int] = Field(default_factory=list)
 
 
 class AssignRequest(BaseModel):

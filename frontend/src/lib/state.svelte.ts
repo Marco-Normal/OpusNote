@@ -10,7 +10,15 @@ import { AudioCaptureClient } from './audioCapture';
 import { CaptureClient, type CaptureStatus } from './capture';
 import { MidiInput, type MidiDeviceInfo, type MidiOutputInfo } from './midi';
 import { fingerprint, type PortSnapshot } from './midiDevice';
-import { PedalGesture, type ControllerMove } from './pedalGesture';
+import {
+  PedalGesture,
+  type ControllerMove,
+  type HandsfreeAction,
+  type PedalBindings,
+  type PedalFire,
+  type PedalGestureKind,
+} from './pedalGesture';
+import { assignBinding, loadBindings, saveBindings } from './pedalBindings';
 import { parseRoute, routeHash, type Route, type RouteEntity } from './route';
 import { PianoPlayer, sharedPlayer, unlockOnFirstGesture, type Instrument } from './pianoPlayer';
 import type { AppView, HandChoice, HostInfo, PianoStatus, Profile, Workout } from './types';
@@ -25,6 +33,14 @@ const CLICK_VOLUME_STORAGE_KEY = 'srt.clickVolume';
 const WEEKLY_TARGET_STORAGE_KEY = 'srt.weeklyTargetDays';
 const PINNED_LEVEL_STORAGE_KEY = 'srt.pinnedLevel';
 const PINNED_HAND_STORAGE_KEY = 'srt.pinnedHand';
+
+/**
+ * How often a pending gesture is asked whether its clock has run out.
+ *
+ * Short enough that a hold feels immediate and a single tap is not perceptibly late; it runs
+ * only while something is pending, so an idle pedal costs nothing.
+ */
+const GESTURE_TICK_MS = 40;
 
 /** Exercise lengths offered in the UI. Length is a preference, not difficulty. */
 export const BAR_CHOICES = [4, 8, 12, 16] as const;
@@ -368,6 +384,7 @@ class AppState {
     enabled: false,
     buffered: 0,
     pedals: 0,
+    marks: 0,
     sent: 0,
     failed: 0,
     lastError: null,
@@ -477,7 +494,20 @@ class AppState {
     return name;
   }
 
-  private readonly pedalGesture = new PedalGesture();
+  /** Which action each gesture on the sostenuto carries. A preference, not a discovery. */
+  pedalBindings = $state<PedalBindings>(loadBindings());
+
+  private readonly pedalGesture = new PedalGesture(loadBindings());
+
+  /** The timer that resolves a hold or an expired double window, or null when idle. */
+  private gestureTimer: ReturnType<typeof setInterval> | null = null;
+
+  /** Rebind one gesture. One action occupies one gesture, so an action moves rather than copies. */
+  setPedalBinding(kind: PedalGestureKind, action: HandsfreeAction | null): void {
+    this.pedalBindings = assignBinding(this.pedalBindings, kind, action);
+    saveBindings(this.pedalBindings);
+    this.pedalGesture.setBindings(this.pedalBindings);
+  }
 
   setExerciseActive(active: boolean): void {
     this.exerciseActive = active;
@@ -485,28 +515,79 @@ class AppState {
 
   /** Feed one controller move to the recogniser, then act on what it decided. */
   handleController(move: ControllerMove): void {
-    const action = this.pedalGesture.accept(move);
+    const fires = this.pedalGesture.accept(move);
     this.seenControllers = [...this.pedalGesture.seen].sort((a, b) => a - b);
-    if (action === null || this.exerciseActive) return;
-    void this.runHandsfree();
+    if (this.pedalGesture.pending) this.startGestureClock();
+    for (const fire of fires) this.dispatchHandsfree(fire);
+  }
+
+  /**
+   * Ask the recogniser whether the clock has decided anything.
+   *
+   * A single tap cannot be told from the first half of a double until the window closes, and a
+   * hold fires while the pedal is still down, so both need time to pass with no event arriving.
+   * The timer runs only while something is pending and stops itself when nothing is.
+   */
+  private startGestureClock(): void {
+    if (this.gestureTimer !== null) return;
+    this.gestureTimer = setInterval(() => {
+      for (const fire of this.pedalGesture.tick(Date.now())) this.dispatchHandsfree(fire);
+      if (!this.pedalGesture.pending && this.gestureTimer !== null) {
+        clearInterval(this.gestureTimer);
+        this.gestureTimer = null;
+      }
+    }, GESTURE_TICK_MS);
+  }
+
+  /**
+   * The one place a hands-free action is allowed to happen.
+   *
+   * The gate is here rather than in the recogniser so every action is covered by one rule: the
+   * gesture is inert during a scored attempt, the flag included. Exempting the flag because it is
+   * harmless would turn a tested invariant into a per-action judgement about what counts as
+   * harmless, which is how the damper's double tap got retired.
+   */
+  private dispatchHandsfree(fire: PedalFire): void {
+    if (this.exerciseActive) return;
+    void this.runHandsfree(fire);
   }
 
   /**
    * What the pedals do.
    *
-   * One action: the sostenuto arms and stops capture. It goes through the same
-   * `toggleAudioCapture` the button uses, so the pedal inherits its guards (the log must be
-   * running, the server must report its gap) rather than bypassing them.
-   *
-   * The `accept` null check above is the trigger, so there is no action left to branch on.
-   * A second pedal action would come back as a parameter here, and the compiler would point
-   * at every caller rather than letting a silent no-op through.
+   * Every branch goes through the same method the button uses, so a pedal inherits that method's
+   * guards — the log must be running, the server must report its gap — rather than bypassing them.
+   * The note is set here rather than in each action so a bound action that refuses is visible
+   * instead of silent.
    */
-  async runHandsfree(): Promise<void> {
-    await this.toggleAudioCapture();
-    this.pedalActionNote = this.audioArmed
-      ? 'Recording takes from the pedal'
-      : 'Take recording stopped from the pedal';
+  async runHandsfree(fire: PedalFire): Promise<void> {
+    switch (fire.action) {
+      case 'mark_review':
+        // Stamped at the press, not at the dispatch: a tap resolved 300 ms late still records
+        // where the player actually was.
+        this.capture.mark(fire.atMs);
+        this.pedalActionNote = 'Flagged — review near here';
+        return;
+      case 'toggle_workout':
+        if (this.workout?.running) {
+          await this.finishWorkout();
+          this.pedalActionNote = 'Workout finished from the pedal';
+        } else {
+          await this.startWorkout();
+          this.pedalActionNote = 'Workout started from the pedal';
+        }
+        return;
+      case 'finish_sitting':
+        await this.finishSitting();
+        this.pedalActionNote = 'Sitting finished from the pedal';
+        return;
+      case 'toggle_audio_capture':
+        await this.toggleAudioCapture();
+        this.pedalActionNote = this.audioArmed
+          ? 'Recording takes from the pedal'
+          : 'Take recording stopped from the pedal';
+        return;
+    }
   }
 
   /** What the server can tell us about this machine and this request. */

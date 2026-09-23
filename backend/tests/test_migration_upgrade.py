@@ -85,6 +85,7 @@ EXPECTED_COLUMNS: dict[str, set[str]] = {
         "id", "sitting_id", "start_ms", "end_ms", "piece_id", "source", "workout_id",
         "confidence", "identified_by", "practice_kind", "practice_kind_basis",
     },
+    "sitting_marks": {"id", "sitting_id", "onset_ms", "epoch_ms"},
     "sittings": {
         "id", "started_ms", "ended_ms", "started_at", "ended_at", "local_date",
         "source", "closed_ms", "legacy_id",
@@ -120,6 +121,7 @@ EXPECTED_INDEXES: dict[str, set[str]] = {
     "pieces": {"idx_pieces_composer", "idx_pieces_legacy", "idx_pieces_status"},
     "rating_events": {"idx_rating_events_skill"},
     "segments": {"idx_segments_piece", "idx_segments_sitting"},
+    "sitting_marks": {"idx_marks_dedupe", "idx_marks_sitting"},
     "sittings": {"idx_sittings_date", "idx_sittings_legacy"},
     "workouts": {"idx_workouts_date", "idx_workouts_open"},
 }

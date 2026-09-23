@@ -65,11 +65,24 @@ interface CapturedPedal {
   channel: number | null;
 }
 
+/**
+ * A place the player asked to come back to.
+ *
+ * Kept apart from the notes and the pedals because it has neither a duration to wait for nor a
+ * value: it is complete the moment it is pressed, and there is exactly one per deliberate press.
+ */
+interface CapturedMark {
+  epoch_ms: number;
+  channel: number | null;
+}
+
 export interface CaptureStatus {
   enabled: boolean;
   buffered: number;
   /** Pedal moves waiting to be sent, counted apart from notes. */
   pedals: number;
+  /** Deliberate marks waiting to be sent, counted apart from the pedals they were pressed on. */
+  marks: number;
   sent: number;
   failed: number;
   lastError: string | null;
@@ -88,6 +101,8 @@ export class CaptureClient {
   private buffer: CapturedNote[] = [];
   /** Pedal moves ready to send. Nothing is ever held back here. */
   private pedals: CapturedPedal[] = [];
+  /** Deliberate marks ready to send. Nothing is ever held back here either. */
+  private marks: CapturedMark[] = [];
 
   private enabled = false;
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -131,6 +146,18 @@ export class CaptureClient {
   }
 
   /**
+   * Record a place to come back to.
+   *
+   * Deliberately not a subscription to CC66 like the pedal listener: a mark is recorded only
+   * when the flag action is bound *and* fired, so an unbound pedal writes nothing. The stream is
+   * a player's decision, not a raw controller log.
+   */
+  mark(epochMs: number): void {
+    this.marks.push({ epoch_ms: epochMs, channel: null });
+    this.publish();
+  }
+
+  /**
    * Send whatever is ready right now.
    *
    * Asynchronous, so it is the right call for the deliberate exits — finishing a sitting,
@@ -155,7 +182,7 @@ export class CaptureClient {
       else this.open.delete(pitch);
     }
 
-    if (this.buffer.length === 0 && this.pedals.length === 0) {
+    if (this.buffer.length === 0 && this.pedals.length === 0 && this.marks.length === 0) {
       this.publish();
       return;
     }
@@ -169,6 +196,8 @@ export class CaptureClient {
     if (this.pedals.length > MAX_BUFFERED) {
       this.pedals = this.pedals.slice(-MAX_BUFFERED);
     }
+    this.marks.sort((a, b) => a.epoch_ms - b.epoch_ms);
+    if (this.marks.length > MAX_BUFFERED) this.marks = this.marks.slice(-MAX_BUFFERED);
 
     // Copied, not aliased. Notes and pedal moves keep arriving while the request is
     // in flight and are pushed onto these same arrays, so slicing by the *aliased*
@@ -176,16 +205,19 @@ export class CaptureClient {
     // away — silently, and by however much was played during the round trip.
     const batch = this.buffer.slice();
     const pedals = this.pedals.slice();
+    const marks = this.marks.slice();
     this.flushing = true;
     try {
       await api.practice.ingest({
         source: this.source(),
         events: batch,
         pedals,
+        marks,
       });
       // Only now are they gone: a failure below leaves the whole batch queued.
       this.buffer = this.buffer.slice(batch.length);
       this.pedals = this.pedals.slice(pedals.length);
+      this.marks = this.marks.slice(marks.length);
       this.sent += batch.length;
       this.lastSentAt = batch[batch.length - 1]?.epoch_ms ?? this.lastSentAt;
       this.lastError = null;
@@ -224,22 +256,26 @@ export class CaptureClient {
     }
     this.open.clear();
 
-    if (this.buffer.length === 0 && this.pedals.length === 0) return;
+    if (this.buffer.length === 0 && this.pedals.length === 0 && this.marks.length === 0) return;
 
     this.buffer.sort((a, b) => a.epoch_ms - b.epoch_ms || a.pitch - b.pitch);
     if (this.buffer.length > MAX_BUFFERED) this.buffer = this.buffer.slice(-MAX_BUFFERED);
     this.pedals.sort((a, b) => a.epoch_ms - b.epoch_ms);
     if (this.pedals.length > MAX_BUFFERED) this.pedals = this.pedals.slice(-MAX_BUFFERED);
+    this.marks.sort((a, b) => a.epoch_ms - b.epoch_ms);
+    if (this.marks.length > MAX_BUFFERED) this.marks = this.marks.slice(-MAX_BUFFERED);
 
     const batch = this.buffer.slice();
     const pedals = this.pedals.slice();
+    const marks = this.marks.slice();
     // Synchronous by necessity: the answer decides whether these are still ours to keep. If
     // the browser refuses to queue them the batch stays in the buffer, so a page that turns
     // out not to be going away — `pagehide` also fires for a bfcache entry — loses nothing.
-    if (!api.practice.ingestOnHide({ source: this.source(), events: batch, pedals })) return;
+    if (!api.practice.ingestOnHide({ source: this.source(), events: batch, pedals, marks })) return;
 
     this.buffer = this.buffer.slice(batch.length);
     this.pedals = this.pedals.slice(pedals.length);
+    this.marks = this.marks.slice(marks.length);
     this.sent += batch.length;
     this.lastSentAt = batch[batch.length - 1]?.epoch_ms ?? this.lastSentAt;
     this.lastError = null;
@@ -287,6 +323,7 @@ export class CaptureClient {
       enabled: this.enabled,
       buffered: this.buffer.length,
       pedals: this.pedals.length,
+      marks: this.marks.length,
       sent: this.sent,
       failed: this.failed,
       lastError: this.lastError,

@@ -14,23 +14,45 @@
   import { onMount } from 'svelte';
   import { app } from '../lib/state.svelte';
   import { HAND_CHOICES, HAND_LABELS, type HandChoice } from '../lib/types';
+  import {
+    ACTION_LABELS,
+    ACTION_SHORT,
+    GESTURE_LABELS,
+    HANDSFREE_ACTIONS,
+    PEDAL_GESTURE_KINDS,
+  } from '../lib/pedalBindings';
+  import type { HandsfreeAction } from '../lib/pedalGesture';
 
   let { onclose }: { onclose: () => void } = $props();
 
   let draftLatency = $state(app.latencyMs);
 
   /**
-   * The three pedals a piano may send, what this app binds to each, and whether this one has.
+   * The three pedals a piano may send, and whether this one has.
    *
    * The binding is printed beside the discovery for one reason: two of the three pedals are
    * deliberately bound to nothing, because they are played — and a pedal that silently does
    * nothing is indistinguishable from a broken feature unless the panel says which it is.
+   * CC66's line is read from the live preference, so what it prints is what the pedal does.
    */
-  const PEDALS: { cc: number; label: string; binding: string }[] = [
-    { cc: 64, label: 'Damper (right)', binding: 'deliberately not bound' },
-    { cc: 66, label: 'Sostenuto (middle)', binding: 'press: arm or stop a take' },
-    { cc: 67, label: 'Soft (left)', binding: 'deliberately not bound' },
+  const PEDALS: { cc: number; label: string }[] = [
+    { cc: 64, label: 'Damper (right)' },
+    { cc: 66, label: 'Sostenuto (middle)' },
+    { cc: 67, label: 'Soft (left)' },
   ];
+
+  /** What CC66's gestures carry, in the few words that fit beside the discovery report. */
+  function bindingSummary(cc: number): string {
+    if (cc !== 66) return 'deliberately not bound';
+    const parts: string[] = [];
+    for (const kind of PEDAL_GESTURE_KINDS) {
+      const action = app.pedalBindings[kind];
+      if (action !== null) parts.push(`${GESTURE_LABELS[kind]}: ${ACTION_SHORT[action]}`);
+    }
+    // A pedal with nothing bound must say so rather than read as broken: this is the sentence
+    // that makes "the pedal does nothing" answerable by looking.
+    return parts.length === 0 ? 'nothing bound' : parts.join(' · ');
+  }
 
   function pedalState(cc: number): string {
     return app.seenControllers.includes(cc) ? 'sends this' : 'not seen yet';
@@ -125,11 +147,12 @@
   <div class="group" data-pedals>
     <h3>Pedals</h3>
     <p class="muted small">
-      Press each pedal once. A pedal the piano does not send cannot be bound to anything, so
-      this is a report rather than a promise. One press of the sostenuto arms the recording and
-      another stops it. The damper and the soft pedal are bound to nothing: both are played, and
-      a press mid-phrase must never end a take — which is also why the damper's double tap no
-      longer starts a workout.
+      Press each pedal once. A pedal the piano does not send cannot be bound to anything, so this
+      is a report rather than a promise. The sostenuto carries three gestures, each bound to one
+      action or to nothing. Left as shipped: a single press flags the place for review, a double
+      press starts or finishes a workout, and a press and hold arms or stops take recording — so
+      stopping a take needs a deliberate hold rather than a tap. The damper and the soft pedal are
+      bound to nothing at all: both are played, and a press mid-phrase must never end a take.
     </p>
     <div class="row wrap">
       {#each PEDALS as pedal (pedal.cc)}
@@ -138,8 +161,27 @@
           class:good={app.seenControllers.includes(pedal.cc)}
           data-pedal={pedal.cc}
         >
-          {pedal.label} · CC{pedal.cc} · {pedal.binding} · {pedalState(pedal.cc)}
+          {pedal.label} · CC{pedal.cc} · {bindingSummary(pedal.cc)} · {pedalState(pedal.cc)}
         </span>
+      {/each}
+    </div>
+    <div class="row wrap" data-pedal-bindings>
+      {#each PEDAL_GESTURE_KINDS as kind (kind)}
+        <label class="muted small" for="pedal-{kind}">{GESTURE_LABELS[kind]}</label>
+        <select
+          id="pedal-{kind}"
+          data-pedal-binding={kind}
+          value={app.pedalBindings[kind] ?? ''}
+          onchange={(event) => {
+            const raw = (event.currentTarget as HTMLSelectElement).value;
+            app.setPedalBinding(kind, raw === '' ? null : (raw as HandsfreeAction));
+          }}
+        >
+          <option value="">nothing</option>
+          {#each HANDSFREE_ACTIONS as action (action)}
+            <option value={action}>{ACTION_LABELS[action]}</option>
+          {/each}
+        </select>
       {/each}
     </div>
     {#if app.pedalActionNote}

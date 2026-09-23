@@ -76,6 +76,11 @@ interface PracticeBatch {
    * ordinary case, and a server that predates the field ignores it.
    */
   pedals?: { epoch_ms: number; value: number; channel: number | null }[];
+  /**
+   * Deliberate "review this" marks. Optional on the wire, like `pedals`: a server that predates
+   * the field ignores it, and a batch with none is the ordinary case.
+   */
+  marks?: { epoch_ms: number; channel: number | null }[];
 }
 
 /** The wire body for a batch: the same fields, plus the player's calendar offset. */

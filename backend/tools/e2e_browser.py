@@ -2234,6 +2234,7 @@ def clear_practice() -> None:
         for table in (
             "identification_outcomes",
             "pedal_events",
+            "sitting_marks",
             "segment_metrics",
             "segments",
             "note_events",
@@ -2262,6 +2263,7 @@ DATA_TABLES = (
     "sittings",
     "note_events",
     "pedal_events",
+    "sitting_marks",
     "segments",
     "segment_metrics",
     "identification_outcomes",
@@ -2274,7 +2276,15 @@ DATA_TABLES = (
 
 #: Tables that must survive between scenarios, named so the check above can tell "deliberately
 #: kept" apart from "forgotten". Seeded once by `init_workspace`, and `user_skills` links them.
-REFERENCE_TABLES = frozenset({"users", "skills", "user_skills"})
+#:
+#: `reference_state` is here for a different reason: it is a seeded singleton, not learner data.
+#: Its one row is written by `init_db` and advanced from then on by triggers on `segments`, so
+#: deleting it between scenarios would leave it absent for the rest of the process — the triggers
+#: would update nothing, and the matcher's in-process reference cache would stop invalidating,
+#: letting each scenario read the one before it. Kept, the delete of `segments` bumps it the way
+#: it is meant to. Named here rather than in `DATA_TABLES` so the refusal above keeps telling
+#: "deliberately kept" apart from "forgotten".
+REFERENCE_TABLES = frozenset({"users", "skills", "user_skills", "reference_state"})
 
 
 def reset_all() -> None:
@@ -2602,19 +2612,53 @@ def scenario_bench(browser) -> None:
         "the sostenuto reads as unseen before it is pressed",
     )
 
-    def press_sostenuto() -> None:
-        # The fake device drives the real decoder: the same path the piano's bytes take.
+    # --- the sostenuto carries three gestures: a press, a double press, and a hold ---
+    # Phase 23 moved take recording from the single press to the hold, so that the gesture that
+    # is easiest to fire by accident carries the action that costs nothing. Every assertion below
+    # is written against that partition.
+    def tap_sostenuto() -> None:
+        # One press and release, short enough not to trip the hold threshold: the review flag.
         page.evaluate("() => window.__fakeMidi.send([0xb0, 66, 127])")
+        page.wait_for_timeout(60)
         page.evaluate("() => window.__fakeMidi.send([0xb0, 66, 0])")
+        # Longer than the double window, so a deferred single has resolved by the time we look.
         page.wait_for_timeout(700)
 
-    press_sostenuto()
+    def hold_sostenuto() -> None:
+        # Past the hold threshold: take recording. The action a stray tap must never reach.
+        page.evaluate("() => window.__fakeMidi.send([0xb0, 66, 127])")
+        page.wait_for_timeout(900)
+        page.evaluate("() => window.__fakeMidi.send([0xb0, 66, 0])")
+        page.wait_for_timeout(400)
+
+    def double_tap_sostenuto() -> None:
+        # Two taps inside the double window: the workout.
+        for _ in range(2):
+            page.evaluate("() => window.__fakeMidi.send([0xb0, 66, 127])")
+            page.wait_for_timeout(60)
+            page.evaluate("() => window.__fakeMidi.send([0xb0, 66, 0])")
+            page.wait_for_timeout(120)
+        page.wait_for_timeout(800)
+
+    def newest_review_marks() -> list[int]:
+        """The marks on the newest sitting, read back over HTTP.
+
+        Waits out the capture flush: a mark is buffered like a pedal move and travels with the
+        next batch, so reading immediately would always see the sitting without it.
+        """
+        page.wait_for_timeout(2_600)
+        sittings = api("/api/practice/sittings")
+        if not sittings:
+            return []
+        return api(f"/api/practice/sittings/{sittings[0]['id']}")["review_marks_ms"]
+
+    hold_sostenuto()
     check(
         "sends this" in page.inner_text("[data-pedal='66']"),
         "pressing the sostenuto is offered as a pedal the piano sends",
     )
     page.wait_for_selector('[data-audio-capture="armed"]', timeout=15_000)
-    check(True, "and one press arms the recording")
+    check(True, "and a press and hold arms the recording")
 
     # --- the soft pedal is played, so it must leave an armed take alone ---
     def press_soft() -> None:
@@ -2633,9 +2677,36 @@ def scenario_bench(browser) -> None:
         "the panel says the soft pedal is unbound rather than broken",
     )
 
-    press_sostenuto()
+    hold_sostenuto()
     page.wait_for_selector('[data-audio-capture="off"]', timeout=10_000)
-    check(True, "while a second press stops it")
+    check(True, "while a second hold stops it")
+
+    # --- the easy gesture is the harmless one ---
+    # Play first, so there is a sitting for the flag to attach to: a mark with no music around it
+    # is dropped by the same rule that drops a pedal press with no practice.
+    play_phrase(page, [60, 62, 64, 65], spacing_ms=120)
+    marks_before = newest_review_marks()
+    tap_sostenuto()
+    marks_after = newest_review_marks()
+    check(
+        page.locator('[data-audio-capture="off"]').count() == 1,
+        "a single tap leaves take recording alone, because stopping a take needs a hold",
+    )
+    check(
+        len(marks_after) == len(marks_before) + 1,
+        f"and a single tap flags the place instead ({len(marks_before)} -> {len(marks_after)} marks)",
+    )
+    check(
+        marks_after == sorted(marks_after),
+        "and the marks come back in order",
+    )
+
+    # --- the double press works a workout ---
+    check(api("/api/workout/current") is None, "no workout is running before the double press")
+    double_tap_sostenuto()
+    check(api("/api/workout/current") is not None, "a double press starts a workout")
+    double_tap_sostenuto()
+    check(api("/api/workout/current") is None, "and a second double press finishes it")
 
     # --- the damper is inert: a played pedal must never carry a gesture ---
     # The double tap used to toggle a workout, and was retired deliberately because it fired
@@ -2660,13 +2731,19 @@ def scenario_bench(browser) -> None:
     )
 
     # --- the gesture is inert during a scored attempt: the failure that matters most ---
-    # The sostenuto is now the only live gesture, so it is the one that has to be proved inert.
+    # The sostenuto is now the only live gesture, so it is the one that has to be proved inert —
+    # including the flag, which is benign but must not be exempt from the rule.
     load_first_exercise(page)
     start_run(page)
-    press_sostenuto()
+    marks_before_run = len(newest_review_marks())
+    tap_sostenuto()
     check(
         page.locator('[data-audio-capture="off"]').count() == 1,
         "and the sostenuto arms nothing while a run is in progress",
+    )
+    check(
+        len(newest_review_marks()) == marks_before_run,
+        "nor does it leave a flag while a run is in progress",
     )
 
     # --- a link opens the thing it names, and Back comes home ---

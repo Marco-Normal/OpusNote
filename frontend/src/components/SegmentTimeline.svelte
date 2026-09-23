@@ -464,6 +464,16 @@
           ></span>
         {/each}
       {/each}
+      {#each detail.review_marks_ms ?? [] as markMs (markMs)}
+        <!-- A flag you put there yourself, as against the blur hairline the app measured: the
+             same layer, a different fact, so it must not look like one. -->
+        <span
+          class="review"
+          data-review-mark={markMs}
+          style="left: {(markMs / total) * 100}%"
+          title="You flagged this for review at {formatClock(markMs / 1000)}"
+        ></span>
+      {/each}
       {#if soundingRange}
         <span
           class="sounding"
@@ -834,6 +844,30 @@
     background: var(--warn);
     opacity: 0.85;
     pointer-events: none;
+  }
+
+  /* A review flag is a hairline with a pennant: findable on a long sitting, and unmistakably not
+     the warn-coloured blur hairline beside it. It takes no pointer events either, so clicking it
+     still seeks. */
+  .strip .review {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    margin-left: -1px;
+    background: var(--good);
+    pointer-events: none;
+  }
+
+  .strip .review::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 2px;
+    width: 7px;
+    height: 7px;
+    background: var(--good);
+    clip-path: polygon(0 0, 100% 50%, 0 100%);
   }
 
   .playhead {
