@@ -5,6 +5,9 @@
 #   ./check.sh --fast    everything that must pass after every edit (budget: 180 s)
 #   ./check.sh --full    the above plus the browser, mutation and scale tiers
 #   ./check.sh --falsify [filter]   every break script, run against the check it declares
+#   ./check.sh --falsify-quick [filter]   the same, minus the scripts whose check is the whole
+#                                   fast tier: about 10 minutes instead of 40, and it says
+#                                   which ones it deferred
 #
 # The tiers exist because a suite nobody runs is decorative. `--fast` is a hard ceiling:
 # if something cannot fit, it moves to `--full` by naming the risk it covers, rather than
@@ -20,10 +23,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TIER="${1:---fast}"
 FALSIFY_FILTER="${2:-}"
 
-if [ "$TIER" != "--fast" ] && [ "$TIER" != "--full" ] && [ "$TIER" != "--falsify" ]; then
-  echo "usage: $0 [--fast|--full|--falsify [filter]]" >&2
-  exit 2
-fi
+case "$TIER" in
+  --fast|--full|--falsify|--falsify-quick) ;;
+  *) echo "usage: $0 [--fast|--full|--falsify [filter]|--falsify-quick [filter]]" >&2; exit 2 ;;
+esac
 
 backend() { (cd "$ROOT/backend" && .venv/bin/python -m "$@"); }
 frontend() { (cd "$ROOT/frontend" && "$@"); }
@@ -53,9 +56,9 @@ step() {
 # it guards cannot fail. `refused` is the tool declining to answer — a check that is already red,
 # a break that stops the build, a timeout — which is a gap to investigate rather than a defect.
 # --------------------------------------------------------------------------------------------
-if [ "$TIER" = "--falsify" ]; then
-  falsified=0; failed=0; refused=0; skipped=0
-  failures=(); refusals=()
+if [ "$TIER" = "--falsify" ] || [ "$TIER" = "--falsify-quick" ]; then
+  falsified=0; failed=0; refused=0; skipped=0; deferred=0
+  failures=(); refusals=(); deferred_names=()
   # Each distinct check is proven green once, not once per break script. Nineteen scripts declare
   # `./check.sh --fast`, and repeating its 74 s positive control for each of them was 23 minutes of
   # identical work against byte-identical source — the difference between this tier taking an hour
@@ -74,6 +77,14 @@ if [ "$TIER" = "--falsify" ]; then
       continue
     fi
     check="$(sed -n 's/^# CHECK: //p' "$script" | head -1)"
+    # The broad ones are not skipped because they are unimportant — they are the assertions the
+    # author could not pin to a single test file, which is worth knowing. They are deferred because
+    # each costs a full 74 s fast tier twice over, and a pass that takes 40 minutes is one nobody
+    # runs while working. They are named in the summary rather than silently dropped.
+    if [ "$TIER" = "--falsify-quick" ] && [ "$check" = "./check.sh --fast" ]; then
+      deferred=$((deferred + 1)); deferred_names+=("$name")
+      continue
+    fi
     trust=()
     if [ -n "${CONTROL_PASSED[$check]:-}" ]; then trust=(--control-already-passed); fi
     printf '  running             %s\n' "$name"
@@ -92,6 +103,10 @@ if [ "$TIER" = "--falsify" ]; then
   done
   echo
   echo "falsify: $falsified falsified, $failed failed, $refused refused, $skipped undeclared"
+  if [ "$deferred" -gt 0 ]; then
+    echo "$deferred deferred to the full pass (their check is the whole fast tier):"
+    printf '  %s\n' "${deferred_names[@]}"
+  fi
   if [ "${#failures[@]}" -gt 0 ]; then
     echo "these assertions could not fail when their break was applied:" >&2
     printf '  %s\n' "${failures[@]}" >&2
