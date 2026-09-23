@@ -16,6 +16,14 @@
 
 import * as Tone from 'tone';
 
+import {
+  buildSchedule,
+  DEFAULT_CLICK_VOLUME,
+  toneDbFor,
+  type MetronomePlan,
+  type ScheduledClick,
+} from './beatGrid';
+
 export interface BeatInfo {
   /** 1-based beat index within the current bar. */
   beat: number;
@@ -30,48 +38,9 @@ export interface BeatInfo {
   inCountIn: boolean;
 }
 
-export interface MetronomePlan {
-  /** Bar lengths (in notated beats) for the exercise itself, one per bar. */
-  barsBeats: number[];
-  /**
-   * The beat unit per bar, in quarter lengths: 1 for a quarter-note beat, 1.5
-   * for the dotted-quarter beat of 6/8, 2 for cut time.
-   *
-   * This is what makes the metronome correct in compound meter. A beat is not
-   * a quarter note, so a single "seconds per beat" derived from the tempo is
-   * only right when the meter's beat happens to be a quarter.
-   */
-  barBeatUnits: number[];
-  /** Seconds per quarter note, which is what a tempo marking actually means. */
-  secondsPerQuarter: number;
-  /** How many beats of count-in to play before beat 1. */
-  countInBeats: number;
-  /**
-   * Click volume, 0..127.
-   *
-   * On the same scale as a MIDI velocity because the app already has one, and because
-   * "60 is quieter than 96" needs no explanation. Absent means the historical default.
-   */
-  clickVolume?: number;
-}
-
 export type BeatListener = (info: BeatInfo) => void;
 
 const LOOKAHEAD_S = 0.1;
-
-/** The default click volume, where 96/127 is a comfortable practice click. */
-export const DEFAULT_CLICK_VOLUME = 96;
-
-/**
- * A 0..127 controller value as the decibels Tone expects.
- *
- * 127 maps to -6 dB rather than 0: a metronome that can clip is not a metronome. The
- * curve is the square of the fraction, which is approximately how loudness is heard.
- */
-export function toneDbFor(value: number): number {
-  const fraction = Math.max(0, Math.min(127, value)) / 127;
-  return fraction <= 0 ? -Infinity : -6 + 20 * Math.log10(fraction * fraction);
-}
 
 export class Metronome {
   private synth: Tone.Synth | null = null;
@@ -84,7 +53,7 @@ export class Metronome {
   private scheduledUntil = 0;
 
   /** Every click, with its offset in seconds from the first count-in click. */
-  private clicks: { at: number; accent: boolean; bar: number; beat: number; inCountIn: boolean }[] = [];
+  private clicks: ScheduledClick[] = [];
   private downbeatSeconds = 0;
   private scheduledSeconds = 0;
 
@@ -119,7 +88,7 @@ export class Metronome {
     // Applied on every start as well as in `unlock`, because `unlock()` runs on the first
     // user gesture and may happen *after* the first `start()`.
     if (this.synth) this.synth.volume.value = toneDbFor(plan.clickVolume ?? DEFAULT_CLICK_VOLUME);
-    this.buildSchedule(plan);
+    this.applySchedule(plan);
     this.startMs = performance.now();
     this.scheduledUntil = 0;
     this.scheduleAhead();
@@ -127,43 +96,14 @@ export class Metronome {
   }
 
   /**
-   * Lay out every click up front, in seconds from the first count-in click.
-   *
-   * Precomputing removes the previous assumption that all beats last the same
-   * amount of time, which is false for compound and mixed meters.
+   * Apply a precomputed grid. The arithmetic lives in `beatGrid.ts`, where it imports nothing
+   * and can therefore be tested; everything below this line needs Tone and a clock.
    */
-  private buildSchedule(plan: MetronomePlan): void {
-    const beatsInFirstBar = plan.barsBeats[0] ?? 4;
-    const countInUnit = plan.barBeatUnits[0] ?? 1;
-    this.clicks = [];
-    let elapsed = 0;
-
-    for (let index = 0; index < plan.countInBeats; index += 1) {
-      this.clicks.push({
-        at: elapsed,
-        accent: index % beatsInFirstBar === 0,
-        bar: 0,
-        beat: index + 1,
-        inCountIn: true,
-      });
-      elapsed += countInUnit * plan.secondsPerQuarter;
-    }
-    this.downbeatSeconds = elapsed;
-
-    plan.barsBeats.forEach((beats, barIndex) => {
-      const unit = plan.barBeatUnits[barIndex] ?? 1;
-      for (let beat = 0; beat < beats; beat += 1) {
-        this.clicks.push({
-          at: elapsed,
-          accent: beat === 0,
-          bar: barIndex + 1,
-          beat: beat + 1,
-          inCountIn: false,
-        });
-        elapsed += unit * plan.secondsPerQuarter;
-      }
-    });
-    this.scheduledSeconds = elapsed;
+  private applySchedule(plan: MetronomePlan): void {
+    const schedule = buildSchedule(plan);
+    this.clicks = schedule.clicks;
+    this.downbeatSeconds = schedule.downbeatSeconds;
+    this.scheduledSeconds = schedule.scheduledSeconds;
   }
 
   stop(): void {
