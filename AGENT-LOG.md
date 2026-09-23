@@ -3646,3 +3646,42 @@ starts playing is one control behaving as two, and the key is the one pressed by
 Next: falsify the six new break scripts against this commit (`colour_a_piece_by_appearance`,
 `let_two_pieces_share_a_colour`, `let_a_gap_click_take_the_later_segment`, `play_on_a_strip_click`,
 `scroll_the_page_to_the_card`, `let_the_arrow_keys_play`), then `./check.sh --fast` and `--full`.
+
+## 2026-09-23 — sight-reading agent — the six new falsifications, and the full tier
+
+Scope: `AGENT-LOG.md` only; the falsification runs and `check.sh` read the commit before it.
+
+Did: **recorded the verification of the change above.** All six break scripts caught their break
+**by name**, each with the mandatory positive control passing on the unbroken tree first:
+
+| Break | The assertion that caught it |
+| --- | --- |
+| `colour_a_piece_by_appearance.sh` | `the answer does not depend on the order the sitting lists its pieces` — `Map(2) { 1 => 6, 5 => 0 }` against `Map(2) { 5 => 6, 1 => 0 }` |
+| `let_two_pieces_share_a_colour.sh` | `a clash moves the later piece, and leaves the earlier one where it was` — `actual: 6, expected: 6` |
+| `let_a_gap_click_take_the_later_segment.sh` | `a click in the silence between two segments means the nearer one` — `actual: 'b', expected: 'a'` |
+| `play_on_a_strip_click.sh` | `clicking the strip plays nothing at all (1 of 16 notes)` |
+| `scroll_the_page_to_the_card.sh` | `and the page does not move at all (2568 -> 1324)` |
+| `let_the_arrow_keys_play.sh` | `and the arrow keys move without playing either (1 notes)` |
+
+The two browser ones are the ones worth the minutes they cost. `scroll_the_page_to_the_card`
+replaces the list's own `scrollTop` with `card.scrollIntoView()` — the one-liner the feature was
+asked *not* to do — and the page moved by exactly 1244 px, which is the defect measured rather
+than argued. `play_on_a_strip_click` puts the old `play(...)` call back behind the new gesture and
+one note of sixteen arrived. Both use the same fixture and the same setup as the positive
+assertions, so the passes and the failures are measuring the same thing.
+
+The first one also shows why the order-independence test had to be built on a clashing pair: with
+no clash in the fixture, every order gives the same answer and the assertion could not fail — the
+same trap the harness caught on Phase 21's unreachable range assertion, avoided by construction
+this time rather than after the fact.
+
+`./check.sh --fast` green in **83 s**; `./check.sh --full` green in **608 s**, browser scenarios,
+coverage and mutation report included (`2026-09-23`).
+
+Impact on the other side: none. No break script touches anything but the two files added above.
+
+The next agent should know: `frontend/src/lib/timelineStrip.ts` now owns *two* strip decisions —
+the colour a piece owns and the segment a click means — so a third belongs there too, beside its
+test, rather than in the component. And any future break to the strip should carry a browser
+check, not a unit one: the two defects that actually matter here (a page that scrolls, a gesture
+that makes a sound) are invisible to `npm test`.
