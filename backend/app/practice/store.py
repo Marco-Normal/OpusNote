@@ -1910,14 +1910,17 @@ def segment_identification(
     *,
     examples: list[Example] | None = None,
     signatures: dict[int, collections.Counter] | None = None,
+    notes: list[Note] | None = None,
     context_piece_id: int | None = None,
     weights: Weights = DEFAULT_WEIGHTS,
 ) -> Identification:
     """Match one segment against your labelled practice.
 
-    ``examples`` and ``signatures`` are passed in by callers that identify several segments
-    at once — both are the same for all of them, and rebuilding either per segment would
-    re-derive every reference's fingerprint and features for every row.
+    ``examples``, ``signatures`` and ``notes`` are all passed in by callers that identify several
+    segments of one sitting, and for the same reason: each is a thing the caller already holds, and
+    rebuilding it per segment re-derives work that does not vary between them. The notes are the
+    expensive one, because the query is by *sitting* — it returns every note in the sitting however
+    few the segment holds — so a sitting with n undecided sections read its own notes n times over.
     """
     row = conn.execute(
         f"SELECT {_SEGMENT_COLUMNS} FROM segments g WHERE g.id = ?", (segment_id,)
@@ -1927,7 +1930,8 @@ def segment_identification(
     if examples is None:
         examples = examples_from(conn, _labelled_rows(conn, exclude_segment_id=segment_id))
 
-    notes = _notes_for_segments(conn, [row]).get(segment_id, [])
+    if notes is None:
+        notes = _notes_for_segments(conn, [row]).get(segment_id, [])
     segment_print = fingerprint(notes, attack_window_ms=settings.attack_window_ms)
     # Pooled once per call unless the caller already has them: a caller identifying several
     # segments of one sitting would otherwise re-derive every reference's features per row.
@@ -2033,6 +2037,14 @@ def candidates_for_sitting(conn: sqlite3.Connection, sitting_id: int) -> dict[in
     # changes it: signatures are pooled per piece, so it is one answer for the whole library
     # rather than one per sitting, and rebuilding it here was the page's second-long stall.
     examples, _local, signatures = cached_references(conn)
+    # This sitting's notes, read once for every segment that is about to be asked about. The
+    # query is by *sitting*, so asking per segment returned the whole note list each time and
+    # kept one segment's share of it: the cost of an edit grew with how many unlabelled
+    # sections were still open, and vanished the moment the last one was labelled.
+    wanted = set(undecided)
+    notes_by_segment = _notes_for_segments(
+        conn, [row for row in rows if int(row["id"]) in wanted]
+    )
 
     out: dict[int, list[SegmentCandidate]] = {}
     context: int | None = None
@@ -2043,10 +2055,15 @@ def candidates_for_sitting(conn: sqlite3.Connection, sitting_id: int) -> dict[in
         segment_id = int(row["id"])
         if row["piece_id"] is not None:
             context = int(row["piece_id"])
-        if segment_id not in undecided:
+        if segment_id not in wanted:
             continue
         identification = segment_identification(
-            conn, segment_id, examples=examples, signatures=signatures, context_piece_id=context
+            conn,
+            segment_id,
+            examples=examples,
+            signatures=signatures,
+            notes=notes_by_segment.get(segment_id, []),
+            context_piece_id=context,
         )
         if identification.candidates:
             out[segment_id] = _candidate_out(
@@ -2097,8 +2114,10 @@ def _autotag_rows(conn: sqlite3.Connection, rows: list[sqlite3.Row]) -> AutotagR
     way the sitting is already going.
     """
     report = AutotagReport(considered=len(rows))
-    references = _labelled_rows(conn)
-    examples = examples_from(conn, references)
+    # The same reference material, and the same cache, as the timeline's suggestions. This pass
+    # runs when a sitting is first segmented, which made it the other place a freshly finished
+    # sitting rebuilt the whole training set before showing anything.
+    examples, _local, signatures = cached_references(conn)
     if not examples:
         report.notes.append(
             "No labelled segments yet, so there is nothing to compare with. Tag a few "
@@ -2106,7 +2125,8 @@ def _autotag_rows(conn: sqlite3.Connection, rows: list[sqlite3.Row]) -> AutotagR
         )
         report.unresolved = len(rows)
         return report
-    signatures = _pooled_signatures(conn)
+    # This sitting's notes, read once for the whole run rather than once per segment.
+    notes_by_segment = _notes_for_segments(conn, rows)
 
     # Context starts from whatever this sitting already has, so re-running over an
     # old sitting does not lose what the earlier segments say.
@@ -2117,6 +2137,7 @@ def _autotag_rows(conn: sqlite3.Connection, rows: list[sqlite3.Row]) -> AutotagR
             continue
         identification = segment_identification(
             conn, int(row["id"]), examples=examples, signatures=signatures,
+            notes=notes_by_segment.get(int(row["id"]), []),
             context_piece_id=context,
         )
         if identification.band == "auto" and identification.best is not None:

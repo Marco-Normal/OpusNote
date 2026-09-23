@@ -712,3 +712,75 @@ def test_every_label_is_a_reference_however_lopsided_the_library(fresh_db) -> No
     assert {example.piece_id for example in examples} == {piece_a, piece_b}, (
         "a cap would evict the quiet piece and leave the busy one as its own runner-up"
     )
+
+
+def _unlabelled_sitting(index: int, segments: int) -> int:
+    """One sitting whose notes are cut into `segments` unlabelled pieces."""
+    sitting_id = make_drill(index, PIECE_A * 3)
+    conn = db.connect(settings.db_path)
+    try:
+        span = int(
+            conn.execute(
+                "SELECT MAX(onset_ms + duration_ms) FROM note_events WHERE sitting_id = ?",
+                (sitting_id,),
+            ).fetchone()[0]
+        )
+        conn.execute("DELETE FROM segments WHERE sitting_id = ?", (sitting_id,))
+        for position in range(segments):
+            conn.execute(
+                "INSERT INTO segments (sitting_id, start_ms, end_ms, piece_id, identified_by)"
+                " VALUES (?, ?, ?, NULL, NULL)",
+                (sitting_id, span * position // segments, span * (position + 1) // segments),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    return sitting_id
+
+
+def test_reading_a_sitting_does_not_read_its_notes_once_per_open_section(
+    fresh_db, monkeypatch
+) -> None:
+    """The cost that made an edit slow exactly while an unlabelled section remained.
+
+    Each suggestion asked about a segment by *sitting*, so the query returned every note in the
+    sitting and kept one segment's share — meaning a sitting read its own notes once for every
+    open section, on every edit's re-read of the detail. Once the last section was labelled the
+    pass returned early and the slowness vanished, which is the report this guards.
+
+    Counted rather than timed, so the assertion cannot pass by running on a quiet machine: the
+    number of note reads must not depend on how many sections are still open.
+    """
+    piece_a, _piece_b = two_pieces()
+    for index in range(4):
+        labelled_drill(index, PIECE_A, piece_a)
+
+    small = _unlabelled_sitting(50, 2)
+    large = _unlabelled_sitting(60, 8)
+
+    calls = {"n": 0}
+    original = store._notes_for_segments
+
+    def counted(conn, rows):
+        calls["n"] += 1
+        return original(conn, rows)
+
+    # Warm the reference cache first. A cold first read legitimately costs one extra note read
+    # to build the references, and this test is about the per-open-section cost, not that one.
+    conn = db.connect(settings.db_path)
+    try:
+        store.cached_references(conn)
+    finally:
+        conn.close()
+
+    monkeypatch.setattr(store, "_notes_for_segments", counted)
+
+    store.sitting_detail(small)
+    after_small = calls["n"]
+    store.sitting_detail(large)
+    after_large = calls["n"] - after_small
+
+    assert after_small == after_large, (
+        "the note read must not grow with how many sections are open: "
+        f"2 sections cost {after_small} reads, 8 cost {after_large}"
+    )
