@@ -3077,3 +3077,16 @@ of that entry's "not done" list stands unchanged — `_labelled_rows`'s unused c
 scoring in `identification_quality`, `journal_mode = WAL` on every connection, and `_find_sitting`'s
 unindexed scan per event.
 
+## 2026-09-22 — sight-reading agent — the invalidation break script, and what the tier said
+
+Scope: `backend/tools/falsifications/drop_reference_invalidation.sh` (new). Commit `3898100`.
+
+The reference-cache entry named a falsification that was done by hand; the standing rule wants it to be
+a command, so the break is now a script. `./falsify.sh backend/tools/falsifications/drop_reference_invalidation.sh`
+runs the fast tier on the clean tree first (it passed), removes `trg_segments_reference_update` from
+`schema.py`, rebuilds, and runs it again: **`falsified`**, with the failure attributed to
+`test_relabelling_a_segment_invalidates_the_cached_references` — `1 failed, 972 passed`, and nothing
+else red. That is the narrowest possible catch: the insert and delete triggers, the kind-does-not-evict
+assertion and `init_db`'s clear all still pass with the update trigger gone, so the script proves the
+update path specifically rather than "some test noticed something".
+
