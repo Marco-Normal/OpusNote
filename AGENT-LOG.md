@@ -3429,3 +3429,31 @@ the tool built to enforce the documentation half of §8.
 
 Impact on the other side: none.
 
+## 2026-09-23 — documentation agent — the four docs gates re-run, and a filter that tests nothing
+
+Scope: `docs/ECOSYSTEM.md`, `AGENT-LOG.md`.
+
+Did: re-ran all four documentation break scripts after the reachability fix. **Four breaks, four
+catches, each naming what it was expected to name, and the tree clean after every run:**
+
+| Break | Caught with |
+| --- | --- |
+| `break_a_document_link.sh` | `link does not resolve` |
+| `make_a_document_unreachable.sh` | `no link to docs/TEST-DATA.md` |
+| `stale_phase_status.sh` | `one of them is stale` |
+| `restore_the_execute_footer.sh` | `Next step` |
+
+Corrected a false claim in the rule while recording this: it suggested `./check.sh --falsify
+check_docs`, and no break script's name contains `check_docs`, so that filter matches nothing. The
+document now names a filter that does exist.
+
+**And that exposes a real defect in the falsify tier, left unfixed because it is outside this
+change.** `./check.sh --falsify <filter>` skips every script whose name does not contain the filter
+and then passes on `failed == 0` — so a filter that matches nothing reports a clean run having
+tested nothing, and a typo reads as a green light. It belongs to the same family as the reachability
+gate fixed above, and as the unfailable assertions §8 exists to prevent. It is recorded here rather
+than fixed here: it is one condition in `check.sh`'s `--falsify` branch, and it wants a
+falsification of its own.
+
+Impact on the other side: none.
+

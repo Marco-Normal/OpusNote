@@ -2073,8 +2073,10 @@ four things that are objective and always the author's to fix:
 
 Each gate has a break script in `backend/tools/falsifications/` — `break_a_document_link.sh`,
 `make_a_document_unreachable.sh`, `stale_phase_status.sh`, `restore_the_execute_footer.sh` — so
-none of them is trusted until it has been seen to fail (`TEST-STRATEGY.md` §8). Run them with
-`./check.sh --falsify check_docs` or one at a time through `falsify.sh`.
+none of them is trusted until it has been seen to fail (`TEST-STRATEGY.md` §8). All four were run
+and all four caught their break by name. Run one with
+`./check.sh --falsify stale_phase_status` (the filter matches the script's name), or every break
+script in the repository with `./check.sh --falsify`.
 
 It also *reports* a short list of exact phrases whose return would mean a bug this repository
 already fixed has come back. Those are canaries, not gates: a heuristic that can be wrong must
