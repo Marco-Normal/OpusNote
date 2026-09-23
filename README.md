@@ -103,7 +103,7 @@ cheerfully produce code and tests that agree with each other and are both wrong.
 
 So the discipline that made this work is verification, and it is the part worth looking at:
 
-- **[37 falsification scripts](backend/tools/falsifications)** each break the production code
+- **[51 falsification scripts](backend/tools/falsifications)** each break the production code
   deliberately, to prove that an assertion can actually fail. A test that cannot fail is not a
   test, and a suite of them is a green light over nothing.
 - **[docs/TEST-STRATEGY.md](docs/TEST-STRATEGY.md)** records the suite being graded rather than

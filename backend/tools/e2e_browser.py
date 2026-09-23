@@ -2984,6 +2984,42 @@ def scenario_practice_log(browser) -> None:
     # response here would wait for ever, and an assertion that is never reached is the kind that
     # passes by accident.
     page.wait_for_selector("[data-undo]", timeout=10_000)
+
+    # The notice and the card are one column, and that column is the wide one beside the
+    # sitting list. This is asserted as geometry rather than as markup because the defect was
+    # the geometry: the notice was a third child of the two-column grid, and a grid child is a
+    # *column*, so the timeline was moved into the list's cell — under it, at the list's width,
+    # with the column it vacated holding nothing but the notice. Every selector here resolved
+    # correctly while that was on screen.
+    geometry = page.evaluate(
+        """() => {
+             const box = (el) => {
+               const r = el.getBoundingClientRect();
+               return {
+                 left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width,
+               };
+             };
+             return {
+               list: box(document.querySelector('[data-sittings]')),
+               undo: box(document.querySelector('[data-undo]')),
+               timeline: box(document.querySelector('section.timeline')),
+             };
+           }"""
+    )
+    check(
+        geometry["timeline"]["left"] >= geometry["list"]["right"],
+        "the sitting detail stays in the wide column beside the list "
+        f"(timeline left {round(geometry['timeline']['left'])}, "
+        f"list right {round(geometry['list']['right'])})",
+    )
+    check(
+        abs(geometry["undo"]["left"] - geometry["timeline"]["left"]) <= 1
+        and geometry["undo"]["bottom"] <= geometry["timeline"]["top"],
+        "and the undo offer sits above the card in that same column "
+        f"(notice left {round(geometry['undo']['left'])}, "
+        f"timeline left {round(geometry['timeline']['left'])})",
+    )
+
     before = page.locator(".segment").count()
     click_button(page, "Undo merge")
     page.wait_for_selector(f'section.timeline[data-segments="{before + 1}"]', timeout=20_000)

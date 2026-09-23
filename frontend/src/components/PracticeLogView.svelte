@@ -502,43 +502,52 @@
   </section>
 
   {#if detail}
-    {#if undo}
-      <div class="row wrap" data-undo>
-        <span class="muted small">
-          Changed the timeline. This offer lasts until the page is reloaded.
-        </span>
-        <button class="ghost tiny" disabled={busy} onclick={() => void undoLast()}>
-          {undo.action.label}
-        </button>
-      </div>
-    {/if}
-    <SegmentTimeline
-      {detail}
-      {pieces}
-      {busy}
-      onassign={(segmentId, pieceId) =>
-        void edit(() => api.practice.assignSegment(segmentId, pieceId))}
-      onkinds={(segmentId, body) =>
-        void edit(() => api.practice.setSegmentKind(segmentId, body))}
-      onsplit={(segmentId, atMs) => void edit(() => api.practice.splitSegment(segmentId, atMs))}
-      onmerge={(segmentId, otherId) =>
-        void edit(() => api.practice.mergeSegments(segmentId, otherId))}
-      onlabelpassage={(attemptIds, pieceId) => void labelPassage(attemptIds, pieceId)}
-      onresegment={async (confirm) => {
-        await edit(() => api.practice.resegment(detail!.id, confirm));
-        // Re-segmenting rebuilds the rows the matcher was measured against, so its panel is
-        // the one thing here that a refresh can legitimately move.
-        quality = await api.practice.identificationQuality().catch(() => quality);
-      }}
-      onidentify={(segmentId, action) =>
-        // Answering the matcher has no inverse. The label does come back, but the
-        // `identification_outcomes` row recording the guess does not — a merge nulls it and nothing
-        // writes it again — so offering "Undo label" here would leave the accuracy figure claiming
-        // a decision that had been taken back. `inverseOf` cannot tell this apart from an ordinary
-        // assignment, because the segments look identical either way, so the suppression lives at
-        // the call site that knows which route it is.
-        void edit(() => api.practice.identify(segmentId, action), { undoable: false })}
-    />
+    <!--
+      The notice and the card are one grid column between them. `.columns` is a grid, and a grid
+      child is a *column*, not a banner: as a sibling, the notice took the second column for
+      itself and pushed the timeline into the sitting list's cell, so the detail rendered under
+      the list in the narrow column while the wide one held nothing but the notice. The wrapper
+      is what keeps the pair in the column they are laid out for.
+    -->
+    <div class="stack">
+      {#if undo}
+        <div class="row wrap" data-undo>
+          <span class="muted small">
+            Changed the timeline. This offer lasts until the page is reloaded.
+          </span>
+          <button class="ghost tiny" disabled={busy} onclick={() => void undoLast()}>
+            {undo.action.label}
+          </button>
+        </div>
+      {/if}
+      <SegmentTimeline
+        {detail}
+        {pieces}
+        {busy}
+        onassign={(segmentId, pieceId) =>
+          void edit(() => api.practice.assignSegment(segmentId, pieceId))}
+        onkinds={(segmentId, body) =>
+          void edit(() => api.practice.setSegmentKind(segmentId, body))}
+        onsplit={(segmentId, atMs) => void edit(() => api.practice.splitSegment(segmentId, atMs))}
+        onmerge={(segmentId, otherId) =>
+          void edit(() => api.practice.mergeSegments(segmentId, otherId))}
+        onlabelpassage={(attemptIds, pieceId) => void labelPassage(attemptIds, pieceId)}
+        onresegment={async (confirm) => {
+          await edit(() => api.practice.resegment(detail!.id, confirm));
+          // Re-segmenting rebuilds the rows the matcher was measured against, so its panel is
+          // the one thing here that a refresh can legitimately move.
+          quality = await api.practice.identificationQuality().catch(() => quality);
+        }}
+        onidentify={(segmentId, action) =>
+          // Answering the matcher has no inverse. The label does come back, but the
+          // `identification_outcomes` row recording the guess does not — a merge nulls it and nothing
+          // writes it again — so offering "Undo label" here would leave the accuracy figure claiming
+          // a decision that had been taken back. `inverseOf` cannot tell this apart from an ordinary
+          // assignment, because the segments look identical either way, so the suppression lives at
+          // the call site that knows which route it is.
+          void edit(() => api.practice.identify(segmentId, action), { undoable: false })}
+      />
+    </div>
   {:else}
     <section class="card empty">
       <p class="muted small">Select a sitting to see what it contained.</p>
