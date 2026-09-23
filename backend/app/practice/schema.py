@@ -165,6 +165,41 @@ CREATE TABLE IF NOT EXISTS segment_metrics (
     mean_velocity_low  REAL,
     mean_velocity_high REAL
 );
+
+-- The version of the matcher's training material, maintained by the triggers below.
+--
+-- A fingerprint and a content feature per labelled segment are derived from the notes on
+-- every read, and on a real library that is about a second of work over a quarter of a
+-- million notes producing an answer that only changes when a label or a boundary does. This
+-- row is what lets a process keep that answer: the triggers make invalidation the database's
+-- job, so no write path — this build's, an older one's, or the other machine's over the LAN
+-- — can change the references without the version saying so.
+CREATE TABLE IF NOT EXISTS reference_state (
+    id      INTEGER PRIMARY KEY CHECK (id = 1),
+    version INTEGER NOT NULL DEFAULT 0
+);
+INSERT OR IGNORE INTO reference_state (id, version) VALUES (1, 0);
+
+CREATE TRIGGER IF NOT EXISTS trg_segments_reference_insert
+AFTER INSERT ON segments
+BEGIN
+    UPDATE reference_state SET version = version + 1 WHERE id = 1;
+END;
+
+-- Only the columns the derived material is a function of. A practice kind or a confidence
+-- is not part of a fingerprint or a content feature, and invalidating on those would throw
+-- the cache away for a whole sitting every time an offer was answered.
+CREATE TRIGGER IF NOT EXISTS trg_segments_reference_update
+AFTER UPDATE OF piece_id, identified_by, start_ms, end_ms ON segments
+BEGIN
+    UPDATE reference_state SET version = version + 1 WHERE id = 1;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_segments_reference_delete
+AFTER DELETE ON segments
+BEGIN
+    UPDATE reference_state SET version = version + 1 WHERE id = 1;
+END;
 """
 
 

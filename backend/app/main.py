@@ -14,6 +14,7 @@ from typing import Iterator
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlite3 import Connection
@@ -69,6 +70,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# A sitting's notes and pedalling are one JSON object per event, and the longest sitting in
+# the owner's library is 4.6 MB of it — sent every time playback opens, over whatever link
+# the notebook is on. The compression is the cheap half of that: the payload is highly
+# repetitive text, so it costs a few milliseconds of CPU to take most of it off the wire.
+# `minimum_size` keeps the many small responses (a label's segment list, the status
+# heartbeat) from paying for a header they do not need.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
 @app.exception_handler(CorruptJSON)

@@ -608,3 +608,80 @@ def test_the_quality_report_says_how_much_it_left_out(fresh_db, monkeypatch):
     assert quality.evaluated == 2, "the work is bounded by the evaluation cap"
     assert quality.skipped == 2
     assert any("newest 2" in note for note in quality.notes)
+
+
+# --------------------------------------------------------------------------
+# The reference material is cached, and the database owns the invalidation
+#
+# Deriving it is a pass over every labelled segment's notes — about a second on the
+# owner's library — producing an answer that changes only when a label or a boundary
+# does. The tests below are the invalidation contract: a label written by *any* path
+# must be visible to the next read, and a write that is not an input to the derived
+# material must not throw it away.
+# --------------------------------------------------------------------------
+
+
+def _references():
+    """The cached material, read on its own connection the way a request would."""
+    conn = db.connect(settings.db_path)
+    try:
+        return store.cached_references(conn)
+    finally:
+        conn.close()
+
+
+def test_reading_the_references_twice_rebuilds_them_once(fresh_db) -> None:
+    distinct_library()
+    first = _references()
+    second = _references()
+    assert second[0] is first[0], "the examples were rebuilt with nothing changed"
+    assert second[2] is first[2], "and so were the pooled signatures"
+
+
+def test_labelling_a_segment_adds_it_to_the_cached_references(fresh_db) -> None:
+    piece_a, _piece_b = distinct_library()
+    before = _references()
+
+    labelled_drill(9, PIECE_A, piece_a)
+
+    after = _references()
+    assert len(after[0]) == len(before[0]) + 1, "the new label must reach the training set"
+    assert after[0] is not before[0], "and must not be served from the stale list"
+
+
+def test_relabelling_a_segment_invalidates_the_cached_references(fresh_db) -> None:
+    """The case a count- or id-keyed cache misses: the rows are the same, the label is not."""
+    piece_a, piece_b = two_pieces()
+    segment_id = labelled_drill(0, PIECE_A, piece_a)
+    before = _references()
+
+    store.assign_piece(segment_id, piece_b)
+
+    after = _references()
+    assert {example.piece_id for example in before[0]} == {piece_a}
+    assert {example.piece_id for example in after[0]} == {piece_b}
+
+
+def test_answering_a_practice_kind_keeps_the_cached_references(fresh_db) -> None:
+    """A kind is not an input to a fingerprint or a content feature, so it may not evict."""
+    piece_a, _piece_b = two_pieces()
+    segment_id = labelled_drill(0, PIECE_A, piece_a)
+    before = _references()
+
+    store.set_practice_kind(segment_id, "set", "slow")
+
+    after = _references()
+    assert after[0] is before[0], "a practice kind must not throw the references away"
+
+
+def test_init_db_forgets_the_cached_references(fresh_db) -> None:
+    """The path may hold a different database afterwards, so nothing may survive it."""
+    distinct_library()
+    conn = db.connect(settings.db_path)
+    try:
+        before = store.cached_references(conn)
+        db.init_db(settings.db_path)
+        after = store.cached_references(conn)
+    finally:
+        conn.close()
+    assert after[0] is not before[0]

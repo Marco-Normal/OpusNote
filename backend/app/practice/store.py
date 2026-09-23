@@ -1823,6 +1823,75 @@ def _pooled_signatures(
     return _pool_features(rows, _segment_features(conn, rows))
 
 
+#: Derived reference material, per database file, validated by `reference_state.version`.
+#:
+#: The entries hold only what `cached_references` returns, and every consumer reads them —
+#: `rank` and `compare` build their own lists and Counters — so one copy can be shared.
+_REFERENCES: dict[
+    str,
+    tuple[
+        int,
+        list[Example],
+        dict[int, collections.Counter],
+        dict[int, collections.Counter],
+    ],
+] = {}
+
+
+def forget_references() -> None:
+    """Drop every cached reference set.
+
+    Called by ``init_db``: it may have just created or replaced the file a cache entry was
+    built from, and a version of zero in a brand-new database must not match an entry left
+    over from the one that was there before.
+    """
+    _REFERENCES.clear()
+
+
+def _database_name(conn: sqlite3.Connection) -> str:
+    """The file this connection is reading, so two databases cannot share an entry."""
+    for _seq, name, file in conn.execute("PRAGMA database_list"):
+        if name == "main":
+            return str(file or ":memory:")
+    return ":memory:"
+
+
+def _reference_version(conn: sqlite3.Connection) -> int:
+    """The segments triggers' counter, or -1 when the table is not there to ask."""
+    row = conn.execute("SELECT version FROM reference_state WHERE id = 1").fetchone()
+    return int(row["version"]) if row is not None else -1
+
+
+def cached_references(
+    conn: sqlite3.Connection,
+) -> tuple[list[Example], dict[int, collections.Counter], dict[int, collections.Counter]]:
+    """The matcher's training material: examples, local features, pooled signatures.
+
+    The same three things `references_from` and `_pool_features` produce, kept until the
+    database says a label or a boundary changed. Deriving them is a pass over every labelled
+    segment's notes — about a second on the owner's library, and a quarter of a million Note
+    objects — and every sitting open, page load and quality report was paying it to get an
+    answer that had not moved since the last one.
+
+    Invalidation is the database's, not the caller's: ``reference_state.version`` is bumped
+    by triggers on ``segments``, so a label written by any code path, by an older build, or
+    by the second machine over the LAN invalidates it. A database without the table (one
+    built outside ``init_db``) reports -1 and is never cached.
+    """
+    name = _database_name(conn)
+    version = _reference_version(conn)
+    if version >= 0:
+        cached = _REFERENCES.get(name)
+        if cached is not None and cached[0] == version:
+            return cached[1], cached[2], cached[3]
+    rows = _labelled_rows(conn)
+    examples, local = references_from(conn, rows)
+    pooled = _pool_features(rows, local)
+    if version >= 0:
+        _REFERENCES[name] = (version, examples, local, pooled)
+    return examples, local, pooled
+
+
 def _shares(
     query: collections.Counter, signatures: dict[int, collections.Counter]
 ) -> dict[int, float]:
@@ -1961,13 +2030,10 @@ def candidates_for_sitting(conn: sqlite3.Connection, sitting_id: int) -> dict[in
     labelled = _labelled_rows(conn)
     if not labelled:
         return {}
-    # One read of the references for both projections: the fingerprints the matcher scores
-    # against and the per-piece signatures it compares content with. They are derived from
-    # the same notes, and fetching those twice was half of every sitting open.
-    examples, local = references_from(conn, labelled)
-    # Pooled once for the whole sitting: the reference set is the same for every segment in
-    # it, and Phase 22b's whole point is that its size is O(pieces) rather than O(labels).
-    signatures = _pool_features(labelled, local)
+    # The same reference material for every sitting, kept until a label or a boundary
+    # changes it: signatures are pooled per piece, so it is one answer for the whole library
+    # rather than one per sitting, and rebuilding it here was the page's second-long stall.
+    examples, _local, signatures = cached_references(conn)
 
     out: dict[int, list[SegmentCandidate]] = {}
     context: int | None = None
@@ -2156,9 +2222,8 @@ def identification_quality(db_path: Path | None = None) -> IdentificationQuality
         considered = labelled[-settings.autotag_quality_limit :]
         quality.evaluated = len(considered)
         quality.skipped = len(labelled) - len(considered)
-        examples, local = references_from(conn, labelled)
+        examples, local, pooled = cached_references(conn)
         prints = {example.segment_id: example.fingerprint for example in examples}
-        pooled = _pool_features(labelled, local)
 
         if quality.skipped:
             quality.notes.append(

@@ -213,6 +213,14 @@ def init_db(db_path: Path | None = None) -> None:
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     finally:
         conn.close()
+    # The path may now hold a different database than it did (a wipe before a test, a
+    # restored backup), and a version counter that restarts at zero would happily match an
+    # entry left over from the file that was there before. Imported here rather than at
+    # module scope: the practice store imports this module, so this is the only direction
+    # that is not a cycle.
+    from .practice.store import forget_references
+
+    forget_references()
 
 
 def row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:

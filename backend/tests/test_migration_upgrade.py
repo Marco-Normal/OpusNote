@@ -74,6 +74,7 @@ EXPECTED_COLUMNS: dict[str, set[str]] = {
         "id", "user_id", "skill_id", "before", "after", "score", "performance_id",
         "created_at",
     },
+    "reference_state": {"id", "version"},
     "segment_metrics": {
         "segment_id", "duration_s", "note_count", "median_tempo", "mean_velocity",
         "velocity_stddev", "restarts", "pedal_changes", "pedal_down_ratio",
