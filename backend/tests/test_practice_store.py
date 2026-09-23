@@ -954,3 +954,69 @@ def test_marks_survive_a_resegment(fresh_db) -> None:
     store.resegment_sitting(sitting_id, confirm=True)
 
     assert store.sitting_detail(sitting_id, now_ms=LATER_MS).review_marks_ms == [1_500]
+
+
+# --- where a blur position is measured from -------------------------------
+
+
+def _blurred_second_segment() -> int:
+    """Two phrases far enough apart to segment separately, with the blur in the second.
+
+    The older blur fixture is a single segment beginning at offset 0 — and at offset 0,
+    "relative to the sitting" and "relative to the segment" are the same number. This one makes
+    them differ by the first segment's length, which is the only way a test can state which
+    convention `pedal_blur_ms` uses. The second phrase's pitches are chosen so the pedal is
+    holding C and A when the triad at 71.5 s arrives with three classes neither of them shares.
+    """
+    first = [0, 1_000, 2_000, 3_000, 7_000, 8_000, 9_000, 10_000]
+    second = [70_000 + step * 1_000 for step in range(8)]
+    events = [
+        WireNote(epoch_ms=BASE_MS + offset, pitch=pitch, velocity=70, duration_ms=300, channel=0)
+        for offset, pitch in list(zip(first, [60, 62, 64, 65, 67, 69, 71, 72]))
+        + list(zip(second, [45, 48, 52, 55, 57, 60, 48, 52]))
+    ]
+    events += [
+        WireNote(epoch_ms=BASE_MS + 71_500, pitch=pitch, velocity=70, duration_ms=200, channel=0)
+        for pitch in (61, 63, 66)
+    ]
+    return store.ingest(
+        EventBatch(
+            tz_offset_minutes=0,
+            events=events,
+            pedals=[
+                WirePedal(epoch_ms=BASE_MS + 70_000, value=127, channel=0),
+                WirePedal(epoch_ms=BASE_MS + 76_000, value=0, channel=0),
+            ],
+        )
+    ).sitting_id
+
+
+def test_a_blur_position_is_measured_from_the_sitting_not_its_segment(fresh_db) -> None:
+    """The convention the timeline depends on, pinned where the value is produced.
+
+    The timeline divides a position by the sitting's length and draws it on the strip's own axis,
+    so a position that were segment-relative would be drawn one segment-length too early; and a
+    renderer that added the segment's start to a position that is already sitting-relative draws it
+    one segment-length too late. Both are the same ambiguity, and neither can be caught by a
+    fixture whose segment starts at zero.
+    """
+    sitting_id = _blurred_second_segment()
+    detail = store.sitting_detail(sitting_id, now_ms=LATER_MS)
+
+    assert len(detail.segments) == 2, "the fixture must split, or this test asserts nothing"
+    second = detail.segments[1]
+    assert second.start_ms > 0, "and the blur must be in the segment that does not start at zero"
+    assert second.metrics is not None
+    assert second.metrics.pedal_blur >= 1, "the fixture must produce a blur"
+
+    for at in second.metrics.pedal_blur_ms:
+        # The range *is* the convention on this fixture: a position measured from the sitting's
+        # start lands inside the second segment, while a segment-relative one is near that
+        # segment's start and so falls below it. At offset 0 the same assertion holds either way,
+        # which is exactly why this fixture has to exist. (A second assertion that the position is
+        # greater than the segment's start was removed: it can never be the one that fails, because
+        # a segment-relative value already violates the range.)
+        assert second.start_ms <= at <= second.end_ms, (
+            "a position must lie inside its own segment, which is only true if it is measured"
+            f" from the sitting's start ({at} not in {second.start_ms}..{second.end_ms})"
+        )

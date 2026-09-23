@@ -3496,3 +3496,72 @@ which is what the four fixes above each got. The three known-open costs are name
 than implied fixed: `journal_mode = WAL` re-issued on every connection, no index on
 `sittings(started_ms)`, and the edit-path detail re-read that only a contract change removes.
 
+## 2026-09-23 — sight-reading agent — the blur was drawn one segment too late
+
+Scope: `frontend/src/components/SegmentTimeline.svelte` (four render sites),
+`backend/tests/test_practice_store.py`, `backend/tools/e2e_browser.py`
+(`seed_two_segment_blurred_sitting` and three assertions in `scenario_practice_log`),
+`backend/tools/falsifications/double_count_the_segment_offset.sh` (new),
+`backend/tools/falsifications/store_blur_positions_per_segment.sh` (new), `docs/FEATURES.md`,
+`docs/PLAN-PHASE21.md`.
+
+Did: **fixed a coordinate-convention mismatch that put every pedal-blur mark in the wrong place on
+any segment but the first.** `segment_metrics.pedal_blur_ms` is measured from the **start of the
+sitting** — `_refresh_metrics` builds `Note(epoch_ms=row["onset_ms"])` from a column the ingest
+wrote as `note.epoch_ms - start_ms`, and the pedal moves it compares against are on the same clock,
+so `blur_attacks` returns sitting-relative positions, exactly as its own docstring says.
+`SegmentTimeline.svelte` then added `segment.start_ms` on top, treating them as segment-relative.
+The error was therefore exactly the segment's own start offset.
+
+**Found by using it, not by reading it.** The owner sent a screenshot: a segment `1:44–2:55`
+reporting a blur `at 3:45`. The arithmetic names the cause — `3:45 − 1:44 = 2:01`, and 2:01 *is*
+inside 1:44–2:55 — so the mark was one segment-length late, not out of range. Both the strip hairline
+and the row's clock times were wrong, in four places (the marker's `left`, its `title`, the pill's
+`title`, and the visible "at …" readout).
+
+**This was the plan's defect, not the implementation's.** `PLAN-PHASE21.md` contradicts itself:
+**Step 3.1** declares the field *"in ms from the start of the sitting"*, and **Step 3.2**'s snippet
+renders `(segment.start_ms + blurMs)`. The backend followed the declaration and the timeline followed
+the snippet. Neither side was internally inconsistent, which is why review did not catch it — there
+was nothing to compare against until both existed.
+
+**Why every test was green.** The error term *is* `segment.start_ms`, and every fixture pinned that
+to zero, where `start + v == v`: `test_the_stored_blur_positions_are_where_the_stored_count_says`
+asserts on `_segment_rows(...)[0]`, and `scenario_practice_log` asserted `data-blur-where` startswith
+`"at 0:01"` on `seed_blurred_sitting`, a single segment at offset 0. Nothing asserted the marker's
+position at all — only that `[data-blur="1000"]` existed. Reproduced against a throwaway database
+before touching anything: a blur in a second segment starting at 70,000 ms is stored as `71500` and
+was rendered as `142 s = 2:21` against a true `72 s = 1:11`, overstated by exactly 70,000 ms.
+
+**The fix** removes the offset at all four sites, and the convention is now *stated* where the
+compromise used to be implicit, in the marker's comment and in `FEATURES.md`. It is presentation-only:
+the stored values were always correct and self-consistent with the count, so there is **no migration,
+no `SCHEMA_VERSION` change and no resegmentation** — and nothing else reads `pedal_blur_ms`
+(no analytics, no aggregation), so the blast radius was the display.
+
+**The review flag was checked, because it borrowed the blur's shape.** It is *not* affected:
+`review_marks_ms` is sitting-relative and `SegmentTimeline.svelte:480` renders `markMs / total` with no
+segment offset. That it happened to be right is luck of the same axis, not design — which is why the
+convention is now written down in both modules.
+
+**Guards, on the side each one is cheap.** `test_a_blur_position_is_measured_from_the_sitting_not_its_segment`
+pins the storage convention on a fixture whose blur is in the segment that does *not* start at zero
+(`second.start_ms <= at <= second.end_ms`, and `at > second.start_ms` — segment-relative storage would
+put it before the segment's start). Three assertions in `scenario_practice_log` pin the rendering:
+the marker's `left` matches `blurMs / total`, it stays inside its own segment's block, and the row
+names the true clock time.
+
+Verified: the browser assertion was watched **RED before the fix** — `183.05% rendered vs 92.50%
+expected`, i.e. past the end of the strip — and GREEN after (`92.50% vs 92.50%`). Backend 983 passed
+(2026-09-23; `cd backend && .venv/bin/python -m pytest -q` — 982 plus the one new invariant test) and
+frontend 145 passed (same date; `cd frontend && npm test`); `svelte-check` clean, build clean. Both
+falsifications caught their break **by name**: `double_count_the_segment_offset.sh`
+("not one segment later") and `store_blur_positions_per_segment.sh` (the invariant test) — the second
+one is the tempting wrong fix, making the stored value segment-relative instead, which would silently
+reinterpret every stored row.
+
+Docs in the same commit, per the standing rule: `FEATURES.md` § *Practice log* owns the behaviour and
+now names the axis; `PLAN-PHASE21.md` gets a correction note and its snippets are kept as written,
+because the contradiction is the thing worth remembering. `README.md` needed no change — its
+capability list makes no claim about blur positions, only a link to the plan.
+

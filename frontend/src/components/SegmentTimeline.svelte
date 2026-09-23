@@ -453,13 +453,20 @@
         ></span>
         {#each segment.metrics?.pedal_blur_ms ?? [] as blurMs (blurMs)}
           <!-- A hairline per blur, so a long sitting can be searched by eye. The count
-               says whether to look; these say where. -->
+               says whether to look; these say where.
+
+               The stored position is already **sitting-relative** — the same axis `.block`
+               and `.review` are laid out on, measured from the sitting's start — so it is
+               divided by the sitting's length directly. Adding `segment.start_ms` here
+               counted the segment's own offset a second time: a blur in the second segment
+               was drawn one segment-length too late, and could land outside its segment or
+               past the end of the strip altogether. -->
           <span
             class="blur"
             data-blur={blurMs}
-            style="left: {((segment.start_ms + blurMs) / total) * 100}%"
+            style="left: {(blurMs / total) * 100}%"
             title="Pedal blur at {formatClock(
-              (segment.start_ms + blurMs) / 1000,
+              blurMs / 1000,
             )} — new harmony arrived while the pedal was holding notes from before"
           ></span>
         {/each}
@@ -567,18 +574,19 @@
                   class="pill warn"
                   data-pedal-blur={segment.metrics.pedal_blur}
                   title="Attacks that brought new harmony over notes the pedal was already holding. Observed from the pitches, not from a score — it reports, it does not judge. At {segment.metrics.pedal_blur_ms
-                    .map((ms) => formatClock((segment.start_ms + ms) / 1000))
+                    .map((ms) => formatClock(ms / 1000))
                     .join(', ')}"
                 >
                   {segment.metrics.pedal_blur} pedal blur
                 </span>
                 <!-- The strip says where to look; this says what you are looking at. Capped at
                      four times because a segment can hold nine, and nine clock times in a row is
-                     a wall of digits rather than a hint. -->
+                     a wall of digits rather than a hint. The positions are sitting-relative, the
+                     same as the strip's axis — see the marker above for why that matters. -->
                 <span class="muted small" data-blur-where={segment.id}>
                   at {segment.metrics.pedal_blur_ms
                     .slice(0, 4)
-                    .map((ms) => formatClock((segment.start_ms + ms) / 1000))
+                    .map((ms) => formatClock(ms / 1000))
                     .join(', ')}{segment.metrics.pedal_blur_ms.length > 4 ? ' …' : ''}
                 </span>
               {/if}

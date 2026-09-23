@@ -255,7 +255,12 @@ Nothing is recomputed behind the user's back: a boundary moved by hand stays mov
   survived review. One-hand drilling is the case it finds hardest, and the panel says so.
 - **Pedal blur.** A blur is an attack that brought new harmony over notes the pedal was already
   holding. The count is reported with clock times, so "nine" is something that can be located
-  in a long sitting. The rule is observed from the pitches rather than from a score.
+  in a long sitting. The rule is observed from the pitches rather than from a score. A position is
+  measured **from the start of the sitting**, which is the axis the timeline strip is drawn on, so
+  the marker and the clock time name the moment the blur happened rather than that moment plus the
+  segment it is in. They used to do the latter: a blur in the second of three segments was drawn a
+  whole segment-length too late, which could put its hairline outside its own segment and, on a
+  short sitting, past the end of the strip altogether.
 
 Per piece, the Repertoire detail shows measured minutes from MIDI beside the minutes written in
 the journal. They are deliberately not summed, because a session can be both measured and

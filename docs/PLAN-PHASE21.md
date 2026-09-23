@@ -6,6 +6,22 @@ document owns the how.
 **Status: landed** (2026-09-16). **The requested ordering was not followed** — 20e landed first, then
 20b, 20d and 20c. See `ECOSYSTEM.md` § *Phase 21*.
 
+**Corrected 2026-09-23: Task 3 rendered the blur one segment too late.** This document contradicted
+itself and both halves were built faithfully. **Step 3.1** declares `pedal_blur_ms` *"in ms from the
+start of the sitting"* — which is what the backend does, and what
+[`FEATURES.md`](./FEATURES.md) § *Practice log* still says — while **Step 3.2**'s snippet renders
+`(segment.start_ms + blurMs)`, adding the segment's offset to a value that already contains it. The
+timeline followed the snippet, so a blur in the second segment was drawn a whole segment-length too
+late: outside its own segment, and past the end of the strip when the sitting was short enough that
+the doubled offset exceeded its length. The row's clock times were wrong the same way, in two more
+places. Nothing caught it because every fixture put its blur in the segment at offset 0, where the
+two conventions are the same number — so this is the plan's defect, not the implementation's. The
+four render sites no longer add the offset; the convention is now stated in
+`frontend/src/components/SegmentTimeline.svelte`, pinned by
+`test_a_blur_position_is_measured_from_the_sitting_not_its_segment` and by three assertions in
+`scenario_practice_log`, and the snippets below are kept as written rather than rewritten. See
+`AGENT-LOG.md` 2026-09-23.
+
 **Goal.** Two things that make the practice log hard to use on real data:
 
 1. **The pedal blur count tells you how many and not where.** The newest sitting on the real

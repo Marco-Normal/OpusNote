@@ -2432,6 +2432,58 @@ def seed_blurred_sitting() -> int:
     return api("/api/practice/events", "POST", payload)["sitting_id"]
 
 
+def seed_two_segment_blurred_sitting() -> tuple[int, int]:
+    """A sitting whose blur is in the SECOND segment. Returns the sitting and the blur's position.
+
+    `seed_blurred_sitting` is one segment beginning at offset 0, and at offset 0 a sitting-relative
+    position and a segment-relative one are the *same number* — so it cannot tell the two
+    conventions apart. That is how a renderer that added the segment's start to a value that was
+    already sitting-relative went unnoticed: every fixture pinned the difference to zero.
+
+    Two phrases far enough apart to segment separately, with the pedal and the blur in the second
+    one, so the two conventions differ by the first segment's length.
+    """
+    import time
+
+    base = int(time.time() * 1000) - 120 * 60_000
+    first_offsets = [0, 1_000, 2_000, 3_000, 7_000, 8_000, 9_000, 10_000]
+    second_offsets = [70_000 + step * 1_000 for step in range(8)]
+    events = [
+        {
+            "epoch_ms": base + offset,
+            "pitch": pitch,
+            "velocity": 70,
+            "duration_ms": 300,
+            "channel": 0,
+        }
+        for offset, pitch in list(zip(first_offsets, [60, 62, 64, 65, 67, 69, 71, 72]))
+        + list(zip(second_offsets, [45, 48, 52, 55, 57, 60, 48, 52]))
+    ]
+    # Three pitch classes (1, 3, 6) that nothing ringing under the pedal shares: the stretch is
+    # holding C and A by then, and this brings three new classes over them, so the rule counts it.
+    blur_at = 71_500
+    events += [
+        {
+            "epoch_ms": base + blur_at,
+            "pitch": pitch,
+            "velocity": 70,
+            "duration_ms": 200,
+            "channel": 0,
+        }
+        for pitch in (61, 63, 66)
+    ]
+    payload = {
+        "tz_offset_minutes": -180,
+        "source": "web_midi",
+        "events": events,
+        "pedals": [
+            {"epoch_ms": base + 70_000, "value": 127, "channel": 0},
+            {"epoch_ms": base + 76_000, "value": 0, "channel": 0},
+        ],
+    }
+    return api("/api/practice/events", "POST", payload)["sitting_id"], blur_at
+
+
 def scenario_takes(browser) -> None:
     print("\n[14] Takes: recording what was played, and hearing it slower")
     clear_practice()
@@ -3275,6 +3327,46 @@ def scenario_practice_log(browser) -> None:
     check(
         page.inner_text("[data-blur-where]").startswith("at 0:01"),
         f"and the row names the time ({page.inner_text('[data-blur-where]')!r})",
+    )
+
+    # --- a blur in a segment that does not start at zero ---
+    # The fixture above is one segment beginning at offset 0, where a sitting-relative position and
+    # a segment-relative one are the same number, so it cannot tell the two conventions apart. This
+    # one puts the blur in the second segment, so a renderer that adds the segment's start on top
+    # of an already-sitting-relative value is wrong by exactly that start — enough to put a mark
+    # outside its own segment, or past the end of the strip entirely.
+    offset_sitting, offset_blur = seed_two_segment_blurred_sitting()
+    offset_detail = api(f"/api/practice/sittings/{offset_sitting}")
+    total_ms = round(offset_detail["duration_s"] * 1000)
+    second = offset_detail["segments"][1]
+    check(
+        second["start_ms"] > 0 and second["start_ms"] <= offset_blur <= second["end_ms"],
+        f"the fixture puts its blur inside a segment starting at {second['start_ms']} ms",
+    )
+    with page.expect_response(lambda r: f"/api/practice/sittings/{offset_sitting}" in r.url):
+        page.click(f'[data-sitting="{offset_sitting}"]')
+    marker = f'[data-blur="{offset_blur}"]'
+    page.wait_for_selector(marker, timeout=20_000)
+
+    expected_left = offset_blur / total_ms * 100
+    style = page.get_attribute(marker, "style") or ""
+    rendered_left = float(style.split("left:")[1].split("%")[0].strip())
+    check(
+        abs(rendered_left - expected_left) < 0.5,
+        "the strip places the blur where it happened, not one segment later "
+        f"({rendered_left:.2f}% rendered vs {expected_left:.2f}% expected)",
+    )
+    # The property a person notices by eye: a mark must not sit outside the segment it belongs to.
+    end_left = second["end_ms"] / total_ms * 100
+    check(
+        rendered_left <= end_left,
+        f"and the mark stays inside its own segment ({rendered_left:.2f}% <= {end_left:.2f}%)",
+    )
+    expected_clock = f"{offset_blur // 60_000}:{(offset_blur // 1000) % 60:02d}"
+    where = page.inner_text("[data-blur-where]")
+    check(
+        where.startswith(f"at {expected_clock}"),
+        f"and the row names the true time ({where!r}, want 'at {expected_clock}')",
     )
 
     # --- an edit refreshes what an edit changed, and nothing else ---
