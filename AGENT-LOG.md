@@ -3404,3 +3404,28 @@ recorded in the next entry.
 
 Impact on the other side: none. `check.sh` gained a step; no application code changed.
 
+## 2026-09-23 — documentation agent — the docs gates falsified, and the one that could not fail
+
+Scope: `backend/tools/check_docs.py`, `AGENT-LOG.md`.
+
+Did: ran the four break scripts from the entry above through `falsify.sh`. **Three caught their break
+by name; one did not** — which is the entire reason this repository falsifies an assertion before
+trusting it.
+
+- `stale_phase_status.sh` → `docs/PLAN-PHASE22.md:7: says **planned**, but ECOSYSTEM.md marks phase 22 **landed** (table row, line 216) — one of them is stale`
+- `restore_the_execute_footer.sh` → `docs/PLAN-PHASE21.md:944: landed plan still carries a Next step`
+- `break_a_document_link.sh` → `README.md:297: link does not resolve: docs/FEATURES-MISSING.md`
+- `make_a_document_unreachable.sh` → **passed with the break applied**, so that gate could not fail.
+
+**The reachability check searched for the path *text*, not for a *link*.** The break replaces
+`[docs/TEST-DATA.md](docs/TEST-DATA.md)` with backticked prose, and the string `docs/TEST-DATA.md`
+was still in the README, so the check stayed green while the document was unreachable from the index
+— the exact condition it exists to catch. It now resolves the README's link targets and compares
+resolved paths, so prose that merely *mentions* a document no longer satisfies it.
+
+Worth stating plainly: that gate would have reported success forever while checking nothing. It is
+the same failure as the unfailable assertions `TEST-STRATEGY.md` §8 was written about, reproduced in
+the tool built to enforce the documentation half of §8.
+
+Impact on the other side: none.
+

@@ -104,19 +104,36 @@ def check_links(files: list[Path], failures: list[str]) -> int:
 
 
 def check_every_doc_is_reachable(files: list[Path], failures: list[str]) -> int:
-    """Each `docs/*.md` must be linked from the README.
+    """Each `docs/*.md` must be the target of a link from the README.
 
     A document nothing links to is a document nobody reads, and this repository proved what
     happens next: fifteen of its twenty-one documents were unreachable from the front page, and
     several of those were the stale ones.
+
+    It resolves the *links*, not the path text. The first version searched for the string
+    `docs/TEST-DATA.md` anywhere in the README, so replacing the link with backticked prose left
+    the check green — which its own falsification caught, and which is the whole reason
+    `backend/tools/falsifications/make_a_document_unreachable.sh` exists.
     """
-    readme = README.read_text(encoding="utf-8")
-    orphans = []
-    for f in sorted(DOCS.glob("*.md")):
-        if str(f.relative_to(ROOT)) not in readme:
-            orphans.append(str(f.relative_to(ROOT)))
-    for o in orphans:
-        failures.append(f"README.md: no link to {o} — a document nothing reaches goes stale")
+    text = README.read_text(encoding="utf-8")
+    skip = fenced_lines(text)
+    linked: set[Path] = set()
+    for m in re.finditer(r"\[[^\]]*\]\(([^)\s]+)\)", text):
+        line = text[: m.start()].count("\n") + 1
+        if line in skip:
+            continue
+        target = m.group(1)
+        if target.startswith(("http://", "https://", "mailto:")):
+            continue
+        path, _, _frag = target.partition("#")
+        if path:
+            linked.add((README.parent / path).resolve())
+    for doc in sorted(DOCS.glob("*.md")):
+        if doc.resolve() not in linked:
+            failures.append(
+                f"README.md: no link to {doc.relative_to(ROOT)} — a document nothing reaches "
+                f"goes stale"
+            )
     return len(list(DOCS.glob("*.md")))
 
 
