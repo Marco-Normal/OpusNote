@@ -56,6 +56,13 @@ step() {
 if [ "$TIER" = "--falsify" ]; then
   falsified=0; failed=0; refused=0; skipped=0
   failures=(); refusals=()
+  # Each distinct check is proven green once, not once per break script. Nineteen scripts declare
+  # `./check.sh --fast`, and repeating its 74 s positive control for each of them was 23 minutes of
+  # identical work against byte-identical source — the difference between this tier taking an hour
+  # and taking forty minutes. A check is remembered only once a script has reported `falsified` or
+  # `failed`, both of which prove the control passed; a refusal is never cached, because a refusal
+  # may *be* the control failing.
+  declare -A CONTROL_PASSED
   for script in "$ROOT"/backend/tools/falsifications/*.sh; do
     name="$(basename "$script")"
     if [ -n "$FALSIFY_FILTER" ] && [[ "$name" != *"$FALSIFY_FILTER"* ]]; then
@@ -66,16 +73,19 @@ if [ "$TIER" = "--falsify" ]; then
       skipped=$((skipped + 1))
       continue
     fi
+    check="$(sed -n 's/^# CHECK: //p' "$script" | head -1)"
+    trust=()
+    if [ -n "${CONTROL_PASSED[$check]:-}" ]; then trust=(--control-already-passed); fi
     printf '  running             %s\n' "$name"
     # `|| status=$?` rather than a bare assignment: `set -e` aborts the whole tier when a command
     # substitution in an assignment fails, so the first script that did not report `falsified`
     # ended the run before the summary. Measured — the first full pass died at script 28 of 50
     # with exit 2 and no table, which is the one thing a coverage tier must never do.
     status=0
-    out="$("$ROOT/backend/tools/falsify.sh" "$script" 2>&1)" || status=$?
+    out="$("$ROOT/backend/tools/falsify.sh" "$script" ${trust[@]+"${trust[@]}"} 2>&1)" || status=$?
     case "$status" in
-      0) echo "  falsified           $name"; falsified=$((falsified + 1)) ;;
-      1) echo "  FAILED              $name"; failed=$((failed + 1)); failures+=("$name") ;;
+      0) echo "  falsified           $name"; falsified=$((falsified + 1)); CONTROL_PASSED[$check]=1 ;;
+      1) echo "  FAILED              $name"; failed=$((failed + 1)); failures+=("$name"); CONTROL_PASSED[$check]=1 ;;
       *) echo "  refused             $name"; refused=$((refused + 1)); refusals+=("$name") ;;
     esac
     printf '%s\n' "$out" > "/tmp/falsify-$name.log" 2>/dev/null || true
