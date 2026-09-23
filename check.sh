@@ -67,8 +67,12 @@ if [ "$TIER" = "--falsify" ]; then
       continue
     fi
     printf '  running             %s\n' "$name"
-    out="$("$ROOT/backend/tools/falsify.sh" "$script" 2>&1)"
-    status=$?
+    # `|| status=$?` rather than a bare assignment: `set -e` aborts the whole tier when a command
+    # substitution in an assignment fails, so the first script that did not report `falsified`
+    # ended the run before the summary. Measured — the first full pass died at script 28 of 50
+    # with exit 2 and no table, which is the one thing a coverage tier must never do.
+    status=0
+    out="$("$ROOT/backend/tools/falsify.sh" "$script" 2>&1)" || status=$?
     case "$status" in
       0) echo "  falsified           $name"; falsified=$((falsified + 1)) ;;
       1) echo "  FAILED              $name"; failed=$((failed + 1)); failures+=("$name") ;;

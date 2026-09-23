@@ -20,7 +20,7 @@
 #
 # The checks that must catch it are "reuse never crosses a pinned hand" and "reuse never
 # crosses a pinned level" in `backend/tests/test_api.py`.
-# CHECK: reuse never crosses a pinned hand
+# CHECK: cd backend && .venv/bin/python -m pytest -q tests/test_api.py
 # EXPECT: reuse never crosses a pinned level
 #
 #   backend/tools/falsify.sh \
