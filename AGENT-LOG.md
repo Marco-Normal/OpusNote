@@ -3565,3 +3565,20 @@ now names the axis; `PLAN-PHASE21.md` gets a correction note and its snippets ar
 because the contradiction is the thing worth remembering. `README.md` needed no change — its
 capability list makes no claim about blur positions, only a link to the plan.
 
+**Falsified, and the harness found a flaw in one of the new tests.** Both break scripts caught their
+break **by name**, with the mandatory positive control passing first:
+`double_count_the_segment_offset.sh` → *"not one segment later"* (after a rebuild, because the browser
+tier is served `frontend/dist`), and `store_blur_positions_per_segment.sh` → the invariant test.
+
+The second one is worth recording because of how it first came back. The harness refused to attribute
+the failure: *"THE CHECK FAILED, BUT NOT FOR THE REASON NAMED."* The break was caught — but by the
+range assertion, not by a second one I had written after it (`at > second.start_ms`), because a
+segment-relative value already violates the range and so can never reach the second check. The extra
+assertion was unreachable and its message was the one I had named in `--expect`, so the harness
+correctly declined to certify a check it had not seen fail for the stated reason. It is deleted, and
+the single assertion now says which convention it is pinning and why the range *is* the convention on
+this fixture. That is the harness earning its keep: an assertion that cannot fail is exactly what a
+mutation-style break is for, and it was in the diff I had just written.
+
+`./check.sh --full` green in **620 s** (`2026-09-23`), mutation report included.
+
