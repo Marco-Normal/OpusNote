@@ -3457,3 +3457,42 @@ falsification of its own.
 
 Impact on the other side: none.
 
+## 2026-09-23 — sight-reading agent — the cost rules, written where the next agent will meet them
+
+Scope: `docs/PERFORMANCE.md` (new), `README.md` (index row), `docs/ENGINEERING.md` (pointer). Commit
+`1612fff`.
+
+Did: asked for a guide so that whoever changes the backend next makes it optimized rather than merely
+correct. Not general advice about fast code — the four shapes that have actually cost this project
+seconds, each with the measurement, because every one of them was found by measuring and none by
+reading:
+
+* **a scan of one list inside a loop over another** — `blur_attacks`, 81.7M `Note.end_ms` calls in one
+  split, 3.0–7.6 s per edit;
+* **a query by parent called once per child** — `segment_identification` fetched a sitting's whole note
+  list per open section, which is the "slow while unlabelled, snappy once labelled" report;
+* **derived-on-read material rebuilt on every read** — the matcher's references, ~1 s per sitting open;
+* **work gated on a pending state** — the early return in `candidates_for_sitting`, which is why that
+  report's boundary was so sharp.
+
+Each is written as symptom → cause → fix, with before/after numbers and the *shape* to recognise
+rather than the function to copy. Then nine rules distilled from them, a map of what must stay cheap
+and what guards it, how to measure (fixture, unprofiled timing, profile for attribution only, scale
+the input and watch the growth), how to guard (count work rather than seconds, prove equivalence, break
+script), and a short checklist to run before committing. R8 keeps the measured *non*-optimization as
+well — the piano roll's per-frame filter, 0.140 ms — so the next agent does not redo the work of
+deciding not to.
+
+It extends rather than duplicates, which is the rule this repo already enforces: the fixture's
+location and row counts stay `docs/TEST-DATA.md`'s, the standing falsification rule stays
+`docs/TEST-STRATEGY.md`'s, the phase history stays `ECOSYSTEM.md`'s. This document owns what a change
+is allowed to cost, which nothing owned. It is linked from the README index and from
+`ENGINEERING.md`, so the documentation agent's `check_docs` reaches it — 22 documents all reachable,
+136 links resolved — and `./check.sh --fast` is green in 83 s.
+
+Stated plainly: no test can check whether a new loop is quadratic, so the rules are only as good as
+the next reader's habit. The enforceable half is §5 — a guard that counts reads instead of seconds,
+which is what the four fixes above each got. The three known-open costs are named in the map rather
+than implied fixed: `journal_mode = WAL` re-issued on every connection, no index on
+`sittings(started_ms)`, and the edit-path detail re-read that only a contract change removes.
+
