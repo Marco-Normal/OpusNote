@@ -685,3 +685,30 @@ def test_init_db_forgets_the_cached_references(fresh_db) -> None:
     finally:
         conn.close()
     assert after[0] is not before[0]
+
+
+def test_every_label_is_a_reference_however_lopsided_the_library(fresh_db) -> None:
+    """Phase 22b retired the reference window as a *correctness* boundary, not a speed one.
+
+    A newest-N cap evicts a piece outright once another piece is practised more often, and a
+    piece that has fallen out cannot be recognised — nor can it be anyone's runner-up, which
+    is how the auto band stopped firing entirely on the owner's library. This pins the
+    decision through `cached_references`, the material every live path reads, so re-adding a
+    cap at `_labelled_rows` or at any caller fails here rather than silently trimming the
+    matcher's knowledge.
+    """
+    piece_a, piece_b = two_pieces()
+    labelled_drill(0, PIECE_C, piece_b)  # the quiet piece, and the older label
+    for index in range(1, 31):
+        labelled_drill(index, PIECE_A, piece_a)  # thirty newer labels of one piece
+
+    conn = db.connect(settings.db_path)
+    try:
+        examples, _local, _pooled = store.cached_references(conn)
+    finally:
+        conn.close()
+
+    assert len(examples) == 31, "every segment a person labelled is a reference"
+    assert {example.piece_id for example in examples} == {piece_a, piece_b}, (
+        "a cap would evict the quiet piece and leave the busy one as its own runner-up"
+    )

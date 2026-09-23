@@ -1681,7 +1681,6 @@ def _labelled_rows(
     conn: sqlite3.Connection,
     *,
     exclude_segment_id: int | None = None,
-    limit: int | None = None,
 ) -> list[sqlite3.Row]:
     """The training set: segments a *person* put a piece on, oldest first.
 
@@ -1690,10 +1689,15 @@ def _labelled_rows(
     segment would become evidence for the same mistake — and the design's promise
     is that every segment *you* tag becomes the reference.
 
-    ``limit`` keeps the newest that many, which is what every live path uses: a
-    fingerprint is derived per reference on every read, so an uncapped set would
-    make the log slower every month. Oldest-first is preserved after the cut, so
-    callers that walk the rows (the sitting context) still see them in order.
+    There is no cap, and that is Phase 22b's decision rather than an oversight. The matcher
+    compares against **every** labelled segment and pools the evidence per piece, so
+    matching costs O(pieces) rather than O(labels) and no piece can fall out of a window.
+    Truncating to the newest N was measured to evict pieces outright — on the owner's library
+    the old window held a single piece for 47 of 54 queries, left the runner-up undefined for
+    46 of them, and the auto band could not fire at all — so a cap here is a correctness
+    change wearing a performance one's clothes. Work that needs bounding is bounded at the
+    caller: `settings.autotag_quality_limit` caps how many segments the accuracy report
+    evaluates, and it says so in the report rather than sampling silently.
     """
     sql = (
         f"SELECT {_SEGMENT_COLUMNS} FROM segments g"
@@ -1704,17 +1708,12 @@ def _labelled_rows(
     if exclude_segment_id is not None:
         sql += " AND g.id <> ?"
         params.append(exclude_segment_id)
-    if limit is None:
-        sql += " ORDER BY g.sitting_id, g.start_ms"
-        return conn.execute(sql, params).fetchall()
-
-    sql += " ORDER BY g.sitting_id DESC, g.start_ms DESC LIMIT ?"
-    params.append(limit)
-    return list(reversed(conn.execute(sql, params).fetchall()))
+    sql += " ORDER BY g.sitting_id, g.start_ms"
+    return conn.execute(sql, params).fetchall()
 
 
 def labelled_count(conn: sqlite3.Connection) -> int:
-    """How many segments a person has labelled, ignoring the matcher's cap."""
+    """How many segments a person has labelled, which is the whole reference set."""
     return int(
         conn.execute(
             "SELECT COUNT(*) FROM segments"
