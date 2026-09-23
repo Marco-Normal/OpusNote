@@ -49,6 +49,23 @@
   --warn-soft: #fdf3e7;
   --warn-line: #eed6b4;
 
+  /*
+   * The piece colours the sitting strip paints its blocks with, as `--piece-1` … `--piece-7`;
+   * `PIECE_COLOR_COUNT` in `lib/timelineStrip.ts` is the same number, and which piece owns
+   * which slot is decided there, never here. The hues deliberately avoid the green and the
+   * amber above: those are facts the app measured — a review flag, a pedal blur — and they are
+   * drawn *on top of* the strip's blocks, so a block wearing one of them would swallow the
+   * marker it is supposed to sit behind. Ordered so that the next free slot a clash sends a
+   * piece to is a visibly different colour rather than a neighbouring shade.
+   */
+  --piece-1: #2563eb;
+  --piece-2: #dc2626;
+  --piece-3: #7c3aed;
+  --piece-4: #0891b2;
+  --piece-5: #c026d3;
+  --piece-6: #4f46e5;
+  --piece-7: #db2777;
+
   /* Reusable surfaces that are not semantic colours. */
   --track: #eae5da;
   --scrim: rgba(0, 0, 0, 0.05);
@@ -117,6 +134,16 @@
   --warn: #fbbf24;
   --warn-soft: #3a2c12;
   --warn-line: #7d5f24;
+
+  /* The piece palette again, lifted for a dark page; order and slot owners are the light
+     theme's, because the slot a piece owns must not change with the theme. */
+  --piece-1: #60a5fa;
+  --piece-2: #f87171;
+  --piece-3: #a78bfa;
+  --piece-4: #22d3ee;
+  --piece-5: #e879f9;
+  --piece-6: #818cf8;
+  --piece-7: #f472b6;
 
   --track: #2c3336;
   --scrim: rgba(255, 255, 255, 0.07);

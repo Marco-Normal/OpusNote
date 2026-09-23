@@ -2402,6 +2402,39 @@ def seed_closed_sitting(*, minutes_ago: int = 60) -> int:
     return api("/api/practice/events", "POST", payload)["sitting_id"]
 
 
+def seed_many_segment_sitting(count: int = 16) -> int:
+    """A sitting cut into more attempts than the timeline's list can show at once.
+
+    Setup, not an assertion. The list is capped at 26 rem, and "the card the strip sent you to
+    is on screen" is true of *every* card until there are more of them than fit — an assertion
+    that cannot fail is not evidence, so this fixture exists to make the list overflow.
+
+    The spacing is `seed_closed_sitting`'s, because that is the spacing the segmenter splits on:
+    phrases of eight notes in opposite registers, a minute of silence between them, so each
+    phrase becomes its own attempt instead of being absorbed into its neighbour.
+    """
+    import time
+
+    base = int(time.time() * 1000) - 3 * 60 * 60 * 1000
+    phrase = [60, 62, 64, 65, 67, 69, 71, 72]
+    low = [45, 48, 52, 55, 57, 60, 48, 52]
+    events = []
+    for index in range(count):
+        pitches = phrase if index % 2 == 0 else low
+        events.extend(
+            {
+                "epoch_ms": base + index * 70_000 + step * 1_000,
+                "pitch": pitch,
+                "velocity": 70,
+                "duration_ms": 300,
+                "channel": 0,
+            }
+            for step, pitch in enumerate(pitches)
+        )
+    payload = {"tz_offset_minutes": -180, "source": "web_midi", "events": events}
+    return api("/api/practice/events", "POST", payload)["sitting_id"]
+
+
 def seed_blurred_sitting() -> int:
     """A sitting with one pedal blur in it, so a marker has something to point at.
 
@@ -2876,6 +2909,9 @@ def scenario_practice_log(browser) -> None:
     print("\n[8] Practice log: passive capture, a workout, and the segment timeline")
     clear_practice()
     seeded = seed_closed_sitting()
+    # Seeded before the page exists, like the sitting above: the Log reads its sitting list when
+    # it mounts, so one created afterwards is not in the DOM to be clicked.
+    scroll_sitting = seed_many_segment_sitting()
     # A library to tag with. This scenario used to inherit one from `scenario_repertoire`,
     # which is why it could not be run on its own.
     if not api("/api/repertoire/pieces"):
@@ -3394,6 +3430,144 @@ def scenario_practice_log(browser) -> None:
         "nor the machine's health",
     )
 
+    # --- the strip colours each piece, and says which colour is which ---
+    #
+    # Three attempts of one sitting, labelled with two pieces: the first and the third the same,
+    # the second a different one. That is the whole claim in one fixture — a piece wears one
+    # colour wherever it sits, two pieces in a sitting are told apart by colour, and the swatch
+    # beside the name is the colour the block is drawn in.
+    with page.expect_response(lambda r: f"/api/practice/sittings/{scroll_sitting}" in r.url):
+        page.click(f'[data-sitting="{scroll_sitting}"]')
+    page.wait_for_selector("[data-strip]", timeout=20_000)
+    scroll_detail = api(f"/api/practice/sittings/{scroll_sitting}")
+    check(
+        len(scroll_detail["segments"]) >= 12,
+        f"the navigation fixture has more attempts than the list can show at once "
+        f"({len(scroll_detail['segments'])})",
+    )
+    others = [piece for piece in pieces if piece["id"] != target["id"]]
+    check(len(others) >= 1, "and the library has a second piece to tell the first one apart from")
+    other = others[0]
+    attempts = page.evaluate(
+        "() => [...document.querySelectorAll('[data-segment]')].slice(0, 3)"
+        ".map((element) => Number(element.dataset.segment))"
+    )
+    check(len(attempts) == 3, f"the sitting draws its attempts as cards ({attempts})")
+    # Each label is applied to the card it belongs to, by id rather than by position: a label can
+    # regroup the passages, and a row that moved would take the index with it.
+    for segment_id, piece in zip(attempts, [target, other, target]):
+        select = page.locator(
+            f'[data-segment="{segment_id}"] select[aria-label="Piece for this segment"]'
+        )
+        with page.expect_response(
+            lambda r: "/api/practice/segments/" in r.url and r.request.method == "PATCH"
+        ):
+            select.select_option(str(piece["id"]))
+        page.wait_for_timeout(400)
+    colours = page.evaluate(
+        """(ids) => ids.map((id) => {
+             const block = document.querySelector(`[data-segment-block="${id}"]`);
+             const swatch = document.querySelector(`[data-segment="${id}"] .swatch`);
+             return {
+               block: block === null ? null : getComputedStyle(block).backgroundColor,
+               swatch: swatch === null ? null : getComputedStyle(swatch).backgroundColor,
+             };
+           })""",
+        attempts,
+    )
+    check(
+        colours[0]["block"] is not None and colours[0]["block"] == colours[2]["block"],
+        f"one piece wears one colour wherever it sits in the sitting ({colours})",
+    )
+    check(
+        colours[0]["block"] != colours[1]["block"],
+        f"and two pieces in one sitting are told apart by colour ({colours})",
+    )
+    check(
+        all(item["block"] == item["swatch"] for item in colours),
+        f"the swatch beside each name is the colour its block is drawn in ({colours})",
+    )
+
+    # --- the strip sends you to an attempt, and the page stays where it is ---
+    #
+    # The setup is what makes these assertions able to fail. The list is scrolled to its end and
+    # the page to its bottom, so the first attempt's card is out of sight of both; a card that was
+    # already on screen could be "reached" by doing nothing at all, and `scrollIntoView` would pass
+    # a weaker check by moving the page to reach it. The click is dispatched by coordinate because
+    # the strip is off the page in this setup, and Playwright would scroll the page to reach it —
+    # the very movement being measured.
+    page.set_viewport_size({"width": 1280, "height": 500})
+    page.wait_for_timeout(200)
+    setup = page.evaluate(
+        """(id) => {
+             const list = document.querySelector('.segments');
+             list.scrollTop = list.scrollHeight;
+             window.scrollTo(0, document.body.scrollHeight);
+             const card = list.querySelector(`[data-segment="${id}"]`);
+             const box = card.getBoundingClientRect();
+             const listBox = list.getBoundingClientRect();
+             return {
+               scrollY: window.scrollY,
+               listScroll: list.scrollTop,
+               cardBottom: box.bottom,
+               listTop: listBox.top,
+               listBottom: listBox.bottom,
+             };
+           }""",
+        attempts[0],
+    )
+    check(
+        setup["listScroll"] > 0
+        and setup["cardBottom"] < 0
+        and setup["cardBottom"] < setup["listTop"],
+        f"the first attempt's card starts out of sight, above the list and the page ({setup})",
+    )
+    page.evaluate(
+        """(id) => {
+             const block = document.querySelector(`[data-segment-block="${id}"]`);
+             const box = block.getBoundingClientRect();
+             block.dispatchEvent(new MouseEvent('click', {
+               bubbles: true,
+               clientX: box.left + box.width / 2,
+               clientY: box.top + box.height / 2,
+             }));
+           }""",
+        attempts[0],
+    )
+    page.wait_for_timeout(300)
+    after = page.evaluate(
+        """(id) => {
+             const list = document.querySelector('.segments');
+             const card = list.querySelector(`[data-segment="${id}"]`);
+             const box = card.getBoundingClientRect();
+             const listBox = list.getBoundingClientRect();
+             return {
+               scrollY: window.scrollY,
+               listScroll: list.scrollTop,
+               inside: box.top >= listBox.top - 1 && box.bottom <= listBox.bottom + 1,
+               chosen: document.querySelectorAll('.segment.selected').length,
+             };
+           }""",
+        attempts[0],
+    )
+    check(
+        after["inside"],
+        f"clicking a block brings that attempt's card into the list's view ({after})",
+    )
+    check(
+        after["listScroll"] < setup["listScroll"],
+        f"by scrolling the list rather than leaving it where it was "
+        f"({setup['listScroll']} -> {after['listScroll']})",
+    )
+    check(
+        after["scrollY"] == setup["scrollY"],
+        f"and the page does not move at all ({setup['scrollY']} -> {after['scrollY']})",
+    )
+    check(
+        after["chosen"] == 1,
+        f"and the card it sent you to is the one marked as chosen ({after})",
+    )
+
     check(not errors, f"no console errors ({errors})")
     page.close()
 
@@ -3775,24 +3949,48 @@ def scenario_playback(browser) -> None:
         f"and nothing further is sent afterwards (0 expected, got {after_stop} then {still})",
     )
 
-    # --- seeking into a long sitting ---
+    # --- clicking the strip finds a place; it does not start one ---
+    #
+    # The strip used to be a transport: a click started the sitting from that point. It is now
+    # how you point at an attempt, so what has to be true is the opposite of what this asserted
+    # before — the readout moves and *nothing* is heard. Sound is still one control away, and the
+    # 30-second buttons below are what proves it, on the position this click left behind.
     total_notes = len(notes)
     page.evaluate("() => window.__fakeMidi.forget()")
     box = page.locator("[data-strip]").bounding_box()
     page.mouse.click(box["x"] + box["width"] * 0.85, box["y"] + box["height"] / 2)
     page.wait_for_timeout(900)
     sought = page.evaluate("() => window.__fakeMidi.noteOns()")
-    # `len(sought) < total_notes` was also true when seeking played *nothing*, which is the
-    # failure it was meant to catch.
     check(
-        0 < len(sought) < total_notes,
-        f"clicking the strip plays from there rather than from the beginning "
-        f"({len(sought)} of {total_notes} notes so far)",
+        sought == [],
+        f"clicking the strip plays nothing at all ({len(sought)} of {total_notes} notes)",
     )
     position = page.inner_text("[data-position]")
     check(
         not position.startswith("0:00"),
-        f"and the readout shows where the seek landed ({position!r})",
+        f"and the readout shows where the click landed ({position!r})",
+    )
+    check(
+        page.locator('[data-playing="true"]').count() == 0,
+        "with the transport left stopped",
+    )
+
+    # The arrow keys are the strip's other gesture, and they move it the same way: a slider whose
+    # click navigates and whose key starts playing would be one control behaving as two, and the
+    # key is the one that would be pressed by accident.
+    page.evaluate("() => window.__fakeMidi.forget()")
+    page.focus("[data-strip]")
+    page.keyboard.press("ArrowRight")
+    page.wait_for_timeout(400)
+    pressed = page.evaluate("() => window.__fakeMidi.noteOns()")
+    check(
+        pressed == [],
+        f"and the arrow keys move without playing either ({len(pressed)} notes)",
+    )
+    moved = page.inner_text("[data-position]")
+    check(
+        moved != position,
+        f"while the playhead moves by the step ({position!r} -> {moved!r})",
     )
 
     # Jumping back is the same mechanism in reverse.

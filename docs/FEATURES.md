@@ -230,6 +230,14 @@ Nothing is recomputed behind the user's back: a boundary moved by hand stays mov
   position (a clock value such as `1:30:12`, or seconds), merged with a neighbour, or
   re-segmented. Re-segmenting is the only destructive action and asks first when segments
   carry labels.
+- **The strip is read by colour, and clicked to find rather than to play.** Every labelled
+  segment is drawn in its piece's own colour, derived from the piece itself so that a piece is
+  the same colour in every sitting, and no two pieces of one sitting share one. A swatch beside
+  the name on the session, passage and attempt rows is the key to it, so the colour is a
+  shortcut to a name rather than a thing to memorise. Clicking the strip moves the playhead to
+  that point and scrolls the attempt list to the matching row; it plays nothing, the page does
+  not move, and the falling-notes view stays where it is. The transport controls — *Play the
+  sitting*, `« 30 s` / `30 s »` and an attempt's *▶ notes* — are what make a sound.
 - **How time was spent** is a second axis from what was played. Each segment can be marked
   run-through, slow, section, hands-separate, from memory, warm-up or other, and the split of
   logged minutes adds up because uncharacterised segments keep their own bucket. The
@@ -300,9 +308,12 @@ Two players exist because two different things are worth hearing.
   alone. Written notes are played at the tempo used for the count-in, and played notes carry the
   hands the scorer matched them to.
 - **In the Log**, a sitting or a single segment can be played back from the notes themselves.
-  Clicking anywhere on the timeline strip starts from there, and the transport moves the
-  playhead in 30-second steps without losing the selected range. Notes are fetched on demand,
-  because a long sitting contains thousands.
+  Clicking the timeline strip moves the playhead to that point and brings the matching attempt
+  into view without playing anything — the strip is how you find a passage, so it does not make a
+  sound, move the page or disturb the falling notes. The transport moves the playhead in
+  30-second steps without losing the selected range, and an attempt's *▶ notes* plays just that
+  attempt. Notes are fetched on demand, because a long sitting contains thousands, and a click
+  with the falling notes open fetches them so the view can show where it landed.
 
 Three instruments are available, chosen in the Setup panel:
 

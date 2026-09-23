@@ -3582,3 +3582,67 @@ mutation-style break is for, and it was in the diff I had just written.
 
 `./check.sh --full` green in **620 s** (`2026-09-23`), mutation report included.
 
+
+## 2026-09-23 — sight-reading agent — the strip colours each piece, and a click finds rather than plays
+
+Scope: `frontend/src/lib/timelineStrip.ts` and `timelineStrip.test.ts` (new),
+`frontend/src/components/SegmentTimeline.svelte`, `frontend/src/app.css`,
+`backend/tools/e2e_browser.py` (`seed_many_segment_sitting` and the timeline/playback
+assertions), six new scripts in `backend/tools/falsifications/`, `docs/FEATURES.md`,
+`docs/ECOSYSTEM.md`, `README.md`.
+
+Did: **two changes to the sitting strip, both asked for by the owner.** The first is colour:
+every labelled segment is now drawn in its piece's own colour instead of one fixed green, so a
+sitting with three pieces is read at a glance rather than hovered segment by segment. The colour
+is derived from the piece's id, not from where the piece appears in the sitting, so a piece is
+the same colour in every sitting; a clash inside one sitting is resolved by giving the higher id
+the next free slot, which keeps every piece in a sitting distinct without letting a new label
+recolour an old piece. A swatch beside the name on the session, passage and attempt rows is the
+key, because a colour on its own is not a label.
+
+The second is what a click on the strip *means*. It was a transport: a click started the sitting
+from that point, which put sound and a running playhead behind what is really a "show me that
+bit" gesture — and made the falling notes animate away from the block just clicked. A click now
+moves the playhead there and brings that attempt's row into view, and plays nothing. The row is
+scrolled by setting the list's own `scrollTop`, never `scrollIntoView`, which walks every
+scrollable ancestor and would move the page with it. The arrow keys move the same way, the
+`« 30 s` / `30 s »` buttons and *▶ notes* still play, and a click with the falling-notes view
+open fetches the notes so the view can show where it landed.
+
+Where the two decisions live: `timelineStrip.ts`, because both are easy to get subtly wrong and
+neither needs the DOM. `pieceColorSlots` sorts the ids before walking them, so the answer depends
+on *which* pieces are present and not on the arrangement a split or a re-segment left behind;
+`segmentAtMs` resolves a click in the silence between two segments to the nearer one, ties to the
+earlier, so the same click cannot mean different attempts depending on loop order.
+
+The palette is in `app.css` as `--piece-1` … `--piece-7`, seven hues that deliberately avoid the
+green and amber the app already spends on things it measured — a review flag, a pedal blur — and
+those are drawn *on top of* the blocks, so a block wearing one of them would swallow the marker
+it is supposed to sit behind.
+
+Verified on this commit: frontend 158 passed (`cd frontend && npm test`; 145 before, 13 new);
+`svelte-check` clean and `vite build` clean; `check_docs` passed; and both browser scenarios
+green — `scenario_practice_log`, where the same piece came back `rgb(220, 38, 38)` on the first
+and third attempt and a second piece `rgb(124, 58, 237)` on the second with every swatch
+matching its block, and `scenario_playback`, where the strip click produced **0 of 16** notes,
+moved the readout off `0:00`, and left the transport stopped.
+
+The navigation assertion is the one worth reading, because it had to be built so it *could* fail.
+Its fixture is a 16-attempt sitting — more than the 26 rem list can show — and the setup scrolls
+the list to its end and the page to its bottom, which put the target card 5177 px above the
+viewport. The precondition is asserted, not assumed: without the overflow, "the card is on
+screen" is true of every card before the click, and `scrollIntoView` would pass by doing nothing.
+The click is dispatched by coordinate because the strip is off the page in that setup and
+Playwright would scroll the page to reach it — the very movement being measured. Measured after:
+the list moved 4259 → 12, the card came inside the box, and `scrollY` stayed 2568 → 2568.
+
+Impact on the other side: none. No table, endpoint, column or file format changed; the work is
+frontend rendering plus browser assertions.
+
+The keys are asserted too, not just the pointer: a strip whose click navigates and whose `→`
+starts playing is one control behaving as two, and the key is the one pressed by accident. Both
+`scenario_playback` checks — no notes, and the playhead moved by the step.
+
+Next: falsify the six new break scripts against this commit (`colour_a_piece_by_appearance`,
+`let_two_pieces_share_a_colour`, `let_a_gap_click_take_the_later_segment`, `play_on_a_strip_click`,
+`scroll_the_page_to_the_card`, `let_the_arrow_keys_play`), then `./check.sh --fast` and `--full`.

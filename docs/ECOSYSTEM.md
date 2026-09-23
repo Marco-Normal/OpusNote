@@ -867,11 +867,15 @@ about a field nobody could identify.
   data, and serves them from this host at `/piano/…`. Attribution travels in the status
   payload and is shown next to the button, because a credit that lives only in a README
   is not really a credit.
-- **Seeking into a long sitting.** The timeline strip is a transport: click anywhere to
-  play from there, arrow keys move by five seconds, `« 30 s` / `30 s »` jump, and a
-  position readout shows where you are. Playing a range with a start position is a new
-  capability in the player — `fromTime()` rebases the notes and a note still sounding at
-  the seek point is kept, shortened, rather than dropped.
+- **Seeking into a long sitting.** The timeline strip is a way of pointing at an attempt:
+  clicking it moves the playhead there, brings the matching row of the list into view, and plays
+  nothing — the arrow keys move by five seconds the same way, `« 30 s` / `30 s »` jump *and*
+  play, and a position readout shows where you are. It began as a transport, where a click
+  started the sitting from that point; that put sound and a running playhead behind what is
+  really a "show me that bit" gesture, and animated the falling notes away from the block just
+  clicked. Playing a range with a start position is what the player gained — `fromTime()`
+  rebases the notes and a note still sounding at the seek point is kept, shortened, rather
+  than dropped.
 - **Falling notes.** `PianoRoll.svelte` draws a keyboard with the notes falling onto it,
   driven by the same playhead. The geometry is a pure module (`pianoRoll.ts`) because
   the direction notes fall is exactly the thing that is miserable to debug on a canvas —

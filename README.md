@@ -72,6 +72,11 @@ Selected capabilities:
   chords and melodic shapes themselves — not a whole-segment average, so a drill that is a snippet
   of a piece still matches it, a slower repeat is still the same passage, and the answer does not
   get worse as the library grows.
+- **The sitting strip is read by colour.** Every labelled segment wears its piece's own colour —
+  the same piece is the same colour in every sitting, and two pieces never share one — with a
+  swatch beside the name on each row as the key. Clicking the strip moves to that attempt and
+  scrolls the list to it without playing, moving the page or disturbing the falling notes; the
+  transport controls are what make a sound.
 - **An edit can be taken back.** Splitting, merging and re-tagging a segment are reversible: after
   any of them the timeline offers *Undo split*, *Undo merge* or *Undo label*, and it works by
   reversing that one change exactly. The offer lasts until the page is reloaded, and re-segmenting

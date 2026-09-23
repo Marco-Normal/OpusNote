@@ -17,6 +17,7 @@
   } from '../lib/playback';
   import { formatClock, parseClock } from '../lib/clock';
   import { PRACTICE_KINDS, kindCounts, practiceKindLabel } from '../lib/kinds';
+  import { pieceColorSlots, segmentAtMs } from '../lib/timelineStrip';
   import {
     type PieceSummary,
     type PracticeKind,
@@ -112,6 +113,28 @@
   const total = $derived(Math.max(detail.duration_s * 1000, 1));
 
   /**
+   * The colour slot each piece in this sitting owns.
+   *
+   * Built from the whole sitting rather than per block, so a clash between two of its pieces is
+   * resolved once. Two pieces wearing one colour is the ambiguity the colours exist to remove,
+   * and a coincidence of ids is not something the player can see.
+   */
+  const pieceSlots = $derived(
+    pieceColorSlots(
+      detail.segments
+        .map((segment) => segment.piece_id)
+        .filter((id): id is number => id !== null),
+    ),
+  );
+
+  /** The `--piece-N` token for a piece, or null when there is no piece to colour. */
+  function pieceColor(pieceId: number | null): string | null {
+    if (pieceId === null) return null;
+    const slot = pieceSlots.get(pieceId);
+    return slot === undefined ? null : `var(--piece-${slot + 1})`;
+  }
+
+  /**
    * The one shared player, so a Stop here also stops whatever else was sounding and
    * nothing can play over the top of anything else.
    */
@@ -122,6 +145,22 @@
   let position = $state(0);
   let playError = $state<string | null>(null);
   let showRoll = $state(false);
+  /**
+   * The segment list, so a click on the strip can bring one card into view without the page
+   * moving. Bound rather than looked up from the document, so the search stays inside this list.
+   */
+  let listElement = $state<HTMLElement | undefined>(undefined);
+  /**
+   * The segment the strip last sent you to, and the sitting it was in.
+   *
+   * Keyed on the sitting for the same reason the note cache is: this component is reused when
+   * you pick another sitting, and a bare segment id would leave the wrong card ringed — or, when
+   * the id belongs only to the sitting you left, none at all.
+   */
+  let chosen = $state<{ sittingId: number; segmentId: number } | null>(null);
+  const chosenSegment = $derived(
+    chosen !== null && chosen.sittingId === detail.id ? chosen.segmentId : null,
+  );
   // Notes are fetched on the first play rather than with the detail: a long sitting is
   // thousands of notes, and every segment edit re-reads the detail without needing one.
   /**
@@ -220,13 +259,61 @@
     }
   }
 
-  /** Start playing from a click anywhere on the strip. */
-  function seekTo(event: MouseEvent): void {
+  /**
+   * Move to a point on the strip: the playhead follows the click, the list follows the
+   * playhead, and nothing is played.
+   *
+   * The strip used to be a transport — a click started the sitting from that point — which put
+   * sound and a running playhead behind what is really a "show me that bit" gesture. Listening
+   * is still one press away, on the segment's own *▶ notes* control, and the falling notes stay
+   * still instead of animating away from the block that was just clicked.
+   */
+  function navigateTo(event: MouseEvent): void {
     const strip = event.currentTarget as HTMLElement;
     const bounds = strip.getBoundingClientRect();
     if (bounds.width <= 0) return;
     const ratio = Math.min(1, Math.max(0, (event.clientX - bounds.left) / bounds.width));
-    void play(0, total, null, ratio * total);
+    moveTo(ratio * total);
+  }
+
+  /** Put the playhead at `atMs`, and bring the segment it belongs to into view. */
+  function moveTo(atMs: number): void {
+    position = Math.min(total, Math.max(0, atMs));
+    const target = segmentAtMs(detail.segments, position);
+    if (target !== null) reveal(target.id);
+    // The falling notes draw a window around the playhead and the notes load on first use, so a
+    // seek before any playback has to fetch them or the roll would draw an empty window.
+    if (showRoll) {
+      void loadNotes().catch((cause) => {
+        playError = cause instanceof Error ? cause.message : String(cause);
+      });
+    }
+  }
+
+  /**
+   * Bring a segment's card into the list's view.
+   *
+   * `scrollTop` on the list itself, rather than `card.scrollIntoView()`: that walks *every*
+   * scrollable ancestor, so it moves the page too — which is the thing this must not do, because
+   * the falling notes sit above the list and a page that jumps under the pointer takes the strip
+   * away from where it was clicked.
+   */
+  function reveal(segmentId: number): void {
+    chosen = { sittingId: detail.id, segmentId };
+    const list = listElement;
+    if (list === undefined) return;
+    const card = list.querySelector<HTMLElement>(`[data-segment="${segmentId}"]`);
+    if (card === null) return;
+    const listBox = list.getBoundingClientRect();
+    const cardBox = card.getBoundingClientRect();
+    const centred =
+      list.scrollTop + (cardBox.top - listBox.top) - (list.clientHeight - cardBox.height) / 2;
+    list.scrollTop = Math.max(0, Math.min(centred, list.scrollHeight - list.clientHeight));
+  }
+
+  /** Move the playhead a step without playing: the keyboard's version of a click on the strip. */
+  function seekBy(seconds: number): void {
+    moveTo(position + seconds * 1000);
   }
 
   /** Move the playhead by a fixed step, keeping whatever range was being played. */
@@ -301,7 +388,7 @@
 
     const byId = new Map(detail.segments.map((segment) => [segment.id, segment]));
     const drawn: Array<
-      | { kind: 'session'; key: string; session: number; piece: string | null }
+      | { kind: 'session'; key: string; session: number; piece: string | null; pieceId: number | null }
       | { kind: 'passage'; key: string; passage: PracticePassage }
       | { kind: 'segment'; key: string; segment: SegmentSummary }
     > = [];
@@ -314,6 +401,7 @@
           key: `session-${passage.session}`,
           session: passage.session,
           piece: passage.piece_title,
+          pieceId: passage.piece_id,
         });
       }
       drawn.push({
@@ -393,7 +481,8 @@
     </label>
 
     <span class="muted small">
-      Click anywhere on the strip to start from there. Played through
+      Click the strip to jump to that segment below — it moves the playhead and plays nothing.
+      Played through
       {app.instrument === 'midi'
         ? 'the piano itself'
         : app.instrument === 'piano'
@@ -421,21 +510,22 @@
         : 'Boundaries appear once this sitting has been quiet for five minutes.'}
     </p>
   {:else}
-    <!-- A slider, not a picture: the strip is the sitting's transport, so it takes
-         focus and the arrow keys move the playhead the way the pointer does. -->
+    <!-- A slider, not a picture: the strip sets the position, so it takes focus and the arrow
+         keys move the playhead the way the pointer does. Neither plays — the transport buttons
+         below the strip are what make a sound. -->
     <div
       class="strip"
       role="slider"
       tabindex="0"
-      aria-label="Sitting timeline — click or press the arrow keys to play from a point"
+      aria-label="Sitting timeline — click or press the arrow keys to move to a point; the segment list below follows"
       aria-valuemin="0"
       aria-valuemax={Math.round(detail.duration_s)}
       aria-valuenow={Math.round(position / 1000)}
       data-strip
-      onclick={seekTo}
+      onclick={navigateTo}
       onkeydown={(event) => {
-        if (event.key === 'ArrowRight') jump(5);
-        if (event.key === 'ArrowLeft') jump(-5);
+        if (event.key === 'ArrowRight') seekBy(5);
+        if (event.key === 'ArrowLeft') seekBy(-5);
       }}
     >
       {#each detail.segments as segment (segment.id)}
@@ -443,13 +533,14 @@
           class="block"
           class:labelled={segment.piece_id !== null}
           class:sight={segment.source === 'sight_reading'}
+          data-segment-block={segment.id}
           style="left: {(segment.start_ms / total) * 100}%; width: {Math.max(
             0.6,
             ((segment.end_ms - segment.start_ms) / total) * 100,
-          )}%"
+          )}%; --piece: {pieceColor(segment.piece_id) ?? 'var(--good)'}"
           title="{segment.piece_title ?? 'unidentified'} · {formatClock(
             (segment.end_ms - segment.start_ms) / 1000,
-          )} · click to play from here"
+          )} · click to jump to this segment"
         ></span>
         {#each segment.metrics?.pedal_blur_ms ?? [] as blurMs (blurMs)}
           <!-- A hairline per blur, so a long sitting can be searched by eye. The count
@@ -496,14 +587,19 @@
       {/if}
     </div>
 
-    <ul class="segments">
+    <ul class="segments" bind:this={listElement}>
       {#each rows as row (row.key)}
         {#if row.kind === 'session'}
+          {@const tint = pieceColor(row.pieceId)}
           <li class="piece-session" data-piece-session={row.session}>
             <span class="muted small">about</span>
+            {#if tint}
+              <span class="swatch" style="background: {tint}" aria-hidden="true"></span>
+            {/if}
             <strong>{row.piece ?? 'unidentified'}</strong>
           </li>
         {:else if row.kind === 'passage'}
+          {@const tint = pieceColor(row.passage.piece_id)}
           <li class="passage" data-passage={row.passage.attempt_ids[0] ?? row.passage.start_ms}>
             <div class="head row wrap">
               <span class="pill mono">
@@ -513,6 +609,9 @@
               <span class="mono range">
                 {offset(row.passage.start_ms)}–{offset(row.passage.end_ms)}
               </span>
+              {#if tint}
+                <span class="swatch" style="background: {tint}" aria-hidden="true"></span>
+              {/if}
               <strong>{row.passage.piece_title ?? 'unidentified'}</strong>
               {#if row.passage.composer_name}
                 <span class="muted small">{row.passage.composer_name}</span>
@@ -549,7 +648,12 @@
         {:else}
           {@const segment = row.segment}
           {@const index = segmentIndex.get(segment.id) ?? 0}
-        <li class="segment">
+          {@const tint = pieceColor(segment.piece_id)}
+        <li
+          class="segment"
+          class:selected={chosenSegment === segment.id}
+          data-segment={segment.id}
+        >
           <div class="head row wrap">
             <span class="mono range">{offset(segment.start_ms)}–{offset(segment.end_ms)}</span>
             <span class="muted small">{segment.note_count} notes</span>
@@ -716,6 +820,11 @@
           {/if}
 
           <div class="row wrap controls">
+            {#if tint}
+              <!-- The key to the strip: the colour this segment's block is drawn in. Beside the
+                   control that names the piece, because a colour on its own is not a label. -->
+              <span class="swatch" style="background: {tint}" aria-hidden="true"></span>
+            {/if}
             <select
               aria-label="Piece for this segment"
               disabled={busy}
@@ -836,8 +945,12 @@
     border-right: 1px solid var(--surface);
   }
 
+  /* The piece's own colour, handed to the block as `--piece` by the script. Every piece in the
+     sitting owns a different slot, so the strip answers "which piece, and when" at a glance
+     rather than "labelled, somewhere". `--good` is the fallback for the impossible case of a
+     labelled block whose piece has no slot, which is what this drew before the palette. */
   .block.labelled {
-    background: var(--good);
+    background: var(--piece, var(--good));
     opacity: 0.8;
   }
 
@@ -915,6 +1028,23 @@
     border: 1px solid var(--line);
     border-radius: 8px;
     background: var(--surface-2);
+  }
+
+  /* Where the strip last sent you. Without it, a click whose card was already on screen would
+     look like it had done nothing at all. */
+  .segment.selected {
+    outline: 2px solid var(--accent);
+    outline-offset: -1px;
+  }
+
+  /* The key to the strip: the same colour the block is drawn in, beside the name it belongs to.
+     Decorative, because the name is the label — nothing here is signalled by colour alone. */
+  .swatch {
+    display: inline-block;
+    flex: none;
+    width: 0.7rem;
+    height: 0.7rem;
+    border-radius: 2px;
   }
 
   /* The heading above a run of passages about one piece: "what this sitting was about". */
