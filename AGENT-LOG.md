@@ -3810,3 +3810,17 @@ env-backed, neither appeared in `ENGINEERING.md` §8, and `git grep` over `app/`
 
 Impact on the other side: none. No tunable, route, request/response field or player-visible
 behaviour changed; neither name was part of a documented contract.
+
+## 2026-09-28 — sanitize-dead-code — remove an orphaned model, a constant and an exception
+
+Scope: `backend/app/models.py`, `backend/app/music/harmony.py`, `backend/app/repertoire/store.py`.
+
+Did: removed three symbols that `git grep` over `app/`, `tests/` and `tools/` found only at their
+definitions — `ExpectedNoteOut` (never served; the live path serialises `note.to_dict()` inline),
+the `SEVENTH = 6` member of the chord-tone tuple (only `ROOT`/`THIRD`/`FIFTH` are read, from
+`bass_patterns.py`), and `RepertoireConflict` (never raised or caught; the write helpers return row
+counts instead).
+
+Impact on the other side: none. No route, request/response field, tunable or player-visible
+behaviour changed. `ENGINEERING.md` §2 is unchanged because `ExpectedNoteOut` was not part of the
+contract.

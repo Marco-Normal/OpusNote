@@ -18,7 +18,7 @@ from typing import Sequence
 CHORD_STEPS: tuple[int, ...] = (0, 2, 4, 6)
 
 #: Chord-tone positions used when a pattern wants "the third" or "the fifth".
-ROOT, THIRD, FIFTH, SEVENTH = 0, 2, 4, 6
+ROOT, THIRD, FIFTH = 0, 2, 4
 
 #: Progressions by difficulty, as scale degrees of the chord root per bar:
 #: 0=I 1=ii 2=iii 3=IV 4=V 5=vi 6=vii.

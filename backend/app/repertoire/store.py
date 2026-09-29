@@ -337,10 +337,6 @@ def find_media_by_file_name(conn: sqlite3.Connection, file_name: str) -> dict[st
 # --------------------------------------------------------------------------
 
 
-class RepertoireConflict(RuntimeError):
-    """The write is refused because it would damage existing data."""
-
-
 def composer_exists(conn: sqlite3.Connection, composer_id: int) -> bool:
     return (
         conn.execute("SELECT 1 FROM composers WHERE id = ?", (composer_id,)).fetchone()

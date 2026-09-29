@@ -106,18 +106,6 @@ class ScoreRequest(BaseModel):
     calibration: bool = False
 
 
-class ExpectedNoteOut(BaseModel):
-    index: int
-    event_id: int
-    pitch: int
-    onset_q: float
-    duration_q: float
-    onset_s: float
-    hand: str
-    measure: int
-    beat: float
-
-
 class ExerciseOut(BaseModel):
     exercise_id: int
     musicxml: str
