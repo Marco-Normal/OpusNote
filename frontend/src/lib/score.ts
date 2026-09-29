@@ -56,6 +56,16 @@ const STATUS_COLORS: Record<'light' | 'dark', Record<NoteStatus, string>> = {
  */
 export const MIN_ZOOM = 0.55;
 
+/**
+ * How far inside the height budget each fit step aims.
+ *
+ * Two percent of the score's height is invisible, and it is what stops the fit from
+ * converging to a zoom whose height lands a fraction of a pixel over the budget — which
+ * `fitsInBudget` would report as "does not fit" and refuse a readable length. See
+ * `fitToBudget`.
+ */
+const FIT_MARGIN = 0.98;
+
 /** Must match `--score-bg` in app.css so the paper and its padding agree. */
 const PAGE_BACKGROUND: Record<'light' | 'dark', string> = {
   light: '#ffffff',
@@ -211,9 +221,16 @@ export class ScoreRenderer {
 
   /**
    * Change the height budget (focus mode, window resize) and re-fit if needed.
+   *
+   * `force` re-engraves even when the budget barely moved. The tolerance below is there so
+   * dragging a window edge does not re-render on every pixel, but it must not be what
+   * decides whether the score fits: a run measures its own room, and a 7 px change that
+   * was skipped would leave the app claiming a score is readable with its last system
+   * below the fold.
    */
-  async setMaxHeight(maxHeight: number): Promise<void> {
-    if (Math.abs(maxHeight - this.maxHeight) < 8 || !this.musicxml) return;
+  async setMaxHeight(maxHeight: number, force = false): Promise<void> {
+    if (!this.musicxml) return;
+    if (!force && Math.abs(maxHeight - this.maxHeight) < 8) return;
     this.maxHeight = maxHeight;
     await this.enqueueRender();
   }
@@ -423,6 +440,14 @@ export class ScoreRenderer {
    * per system, so the resulting height is not a linear function of the zoom. A
    * single pass consistently landed above budget for long exercises.
    *
+   * Each step aims *inside* the budget by `FIT_MARGIN` and the loop stops on the height,
+   * not on the zoom. Both matter: the exact ratio is not reachable at a 0.005 zoom
+   * granularity, so a loop that stopped when the zoom stopped moving could end a fraction
+   * of a pixel over budget — and a fraction of a pixel over budget is reported as "does
+   * not fit", which refuses a length that is in fact readable and shows the too-long
+   * warning, whose own height then pushes the score further down. Aiming inside the
+   * budget converges from above in one or two renders instead.
+   *
    * Safe to render repeatedly only because `clearRendered()` runs first — OSMD
    * appends rather than replaces.
    */
@@ -434,15 +459,17 @@ export class ScoreRenderer {
     const initialHeight = this.contentHeight();
     if (initialHeight <= 0 || initialHeight <= this.maxHeight) return;
 
-    for (let attempt = 0; attempt < 4; attempt += 1) {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
       const height = this.contentHeight();
       if (height <= this.maxHeight) break;
 
-      const zoom = Math.max(MIN_ZOOM, Math.min(1, (this.maxHeight / height) * this.appliedZoom));
-      if (Math.abs(zoom - this.appliedZoom) < 0.005) {
-        this.appliedZoom = zoom;
-        break;
-      }
+      const zoom = Math.max(
+        MIN_ZOOM,
+        Math.min(1, (this.maxHeight / height) * this.appliedZoom * FIT_MARGIN),
+      );
+      // A step this small cannot change the height usefully; the floor has been reached,
+      // or the iteration has converged as far as it can.
+      if (Math.abs(zoom - this.appliedZoom) < 0.002) break;
       this.appliedZoom = zoom;
       osmd.Zoom = zoom;
       this.clearRendered();

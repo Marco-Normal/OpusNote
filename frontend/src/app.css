@@ -479,10 +479,16 @@ th {
  * Reading music must not involve scrolling, so while an exercise is running the
  * surrounding chrome collapses and the score keeps the space. `data-playing` is
  * set on <html> by the practice view so these rules can reach across components.
+ *
+ * `.fit-note` is here for a measured reason rather than tidiness: it appears *because* the
+ * score was scaled to fit, so leaving it up takes the room back — measured at 1280x600 with
+ * focus mode on, it moved the score 56 px down and the fit that created it overflowed the
+ * window by 47 px. Chrome that exists only because of the fit must not compete with the fit.
  */
 [data-playing='true'] .practice-chrome,
 [data-playing='true'] .rationale,
 [data-playing='true'] .exercise-meta,
+[data-playing='true'] .fit-note,
 [data-playing='true'] .strip,
 [data-playing='true'] .chips,
 [data-playing='true'] .footer {

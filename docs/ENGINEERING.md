@@ -207,6 +207,19 @@ rediscovered.
 - **Layout can oscillate.** Growing content can toggle the page scrollbar, which changes the
   available width, which re-wraps the music. `scrollbar-gutter: stable` plus a coarse resize
   threshold breaks the loop.
+- **The height budget must be measured in the layout that has to fit, and the fit must not create
+  the chrome it fits around.** Two measured traps, both at `focus` mode on a 1280x600 window:
+  `heightBudget()` subtracted a constant (150 px) from the viewport while the score actually
+  started 290 px down, so the app fitted 16 bars to 450 px, reported `fits`, and drew its last
+  system 45 px below the fold — the failure the whole mechanism exists to prevent. It is now
+  measured from the score's own position at the start of a run, the only moment the performance
+  layout exists and there are no note colours to lose; `setMaxHeight(..., force)` bypasses the 8 px
+  resize tolerance, because a tolerance for drag jitter must not decide whether the score fits.
+  And the fit loop stopped when its *zoom* converged while reporting a *height* verdict, so it could
+  finish a fraction of a pixel over budget and refuse a length it had just rendered: it now aims 2%
+  inside the budget (`FIT_MARGIN`) and stops on the height. The "scaled to N%" note is collapsed
+  during a run for the same reason — it appears because the score was scaled, so it was taking back
+  the room it had been given.
 - **A tempo marking is not a beat.** Tempo is quarter notes per minute; the beat is whatever the
   meter says — a dotted quarter in 6/8, a half note in cut time. Treating seconds-per-quarter as
   seconds-per-beat made the metronome, the count-in and the end-of-run timer wrong in every

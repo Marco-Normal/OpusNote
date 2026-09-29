@@ -110,8 +110,13 @@ mechanisms enforce it:
 - The engraving scales down, to a floor of 55%, until the whole exercise fits.
 - While a run is in progress the surrounding chrome collapses, so nothing competes with the
   score for height.
-- **Focus** hides the header, device bar and note strip outright, which is the correct choice
-  in a small window.
+- **Focus** hides the header and the device bar outright, which is the correct choice in a small
+  window. The note strip and the "scaled to N%" note are hidden by the *run* rather than by Focus,
+  for the same reason — and the second one had to be, because it appears precisely because the
+  score was scaled, so leaving it up took back the room the scale had just been given.
+
+What "fits" means is measured rather than assumed: at the start of a run the room above the score
+is read from the score's own position, so a length the application says is readable is readable.
 
 If a length cannot fit even at minimum zoom, the application says so and offers a shorter one
 rather than presenting a score that scrolls.

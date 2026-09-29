@@ -4197,3 +4197,45 @@ verified individually against a server started for the purpose: `practice_log`, 
 assertions. `--fast` is green (89 s), the backend suite is **1010 passed** on its own, frontend 178.
 
 Totals here are dated 2026-09-29 and true only of this tree.
+
+## 2026-09-29 — score-layout — the height budget is measured, not guessed (the `--full` red)
+
+Scope: `frontend/src/components/PracticeView.svelte`, `frontend/src/lib/score.ts`,
+`frontend/src/app.css`, `backend/tools/falsifications/guess_the_score_height_budget.sh` (new),
+`docs/{FEATURES.md,ENGINEERING.md}`.
+
+`./check.sh --full` had been stopping at `scenario_long_exercises` — `16 bars fits at 1280x600 once
+focus mode is on`, top 290 + height 356 = bottom 645 against a 600 px viewport, `tooLong=False` —
+which the two entries above record as pre-existing. It was reproduced on an untouched file first,
+then measured, and it was three defects rather than one.
+
+**The budget was a guess.** `heightBudget()` returned `window.innerHeight - 150` in focus mode. The
+score actually starts **290 px** down at 1280x600 with focus on — the app-level `.topbar` and
+`.device-bar` are hidden, but the practice card's own rows and the host banner are not — so the app
+fitted a 16-bar score to 450 px, reported `fits`, and drew its last system 45 px below the fold.
+Measured with a throwaway probe (ready vs playing, focus vs not, four window sizes): the *ready*
+layout is always the smaller box, so the estimate is used until a run exists, and the run now
+measures `scoreContainer.getBoundingClientRect().top` and fits to `innerHeight - top - 4`. The
+measurement happens at count-in, the only moment the performance layout exists *and* there are no
+note colours to lose (`start` resets them anyway). `setMaxHeight(maxHeight, force)` bypasses the 8 px
+resize tolerance for that call: a tolerance for drag jitter must not decide whether the score fits.
+
+**The fit loop stopped on the wrong criterion.** It broke when the *zoom* converged (0.005) but
+reported a *height* verdict, so it could finish a fraction of a pixel over budget, call it
+`fits=false`, and refuse a length it had just rendered readably. Each step now aims `FIT_MARGIN`
+(2%) inside the budget and the loop stops on the height. Measured: the 16-bar score lands at 302 px
+in a 306 px budget instead of 306.4 px and a refusal.
+
+**The fit created the chrome it was fitting around.** The "Scaled to N%" note renders *because* the
+score was scaled, and it is the sibling of `.rationale` — which the performance layout collapses —
+but it carried no class, so it survived: measured, it moved the score 56 px down and the result
+overflowed by 47 px. It is now `.fit-note` and collapses during a run with the rest. `refitToRunLayout`
+also takes one bounded second measurement, because a fit that changes the chrome above the score
+changes the room it was fitted to; bounded at two passes on purpose, since an unbounded one is the
+scrollbar oscillation this file already records.
+
+Verified: `scenario_long_exercises` passes with `top 290 + height 302 = bottom 591 vs 600,
+tooLong=False`, and scenario 5 no longer stops the tier. `--fast` green, `svelte-check` 0 errors,
+build clean. `docs/FEATURES.md` § 4 previously said Focus hides the note strip, which was wrong —
+the *run* hides it, and Focus hides the header and device bar; corrected there, with the measured
+budget and the fit note recorded in `docs/ENGINEERING.md` § 7.

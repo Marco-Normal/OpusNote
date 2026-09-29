@@ -64,31 +64,83 @@
   const busy = $derived(phase === 'loading' || phase === 'submitting');
   const running = $derived(phase === 'countin' || phase === 'playing');
 
+  /** Nonsense guard for the budget, not a target: it is also where squeezing stops being honest. */
+  const MIN_BUDGET_PX = 80;
+  /** Sub-pixel slack, so "fits" is never decided by half a pixel. */
+  const FIT_SLACK_PX = 4;
+  /**
+   * How far down the score starts before a run, used only until the playing layout exists.
+   *
+   * Measured once at 2026-09 from the running layout; they are estimates now and the run
+   * replaces them with a measurement (see `heightBudget`).
+   */
+  const SETUP_CHROME_PX = 290;
+  const FOCUS_CHROME_PX = 150;
+
   /**
    * Height the score may occupy.
    *
-   * Sized for the *playing* layout, which is deliberately compact, and computed
-   * from the viewport rather than from the current DOM so that entering play
-   * mode does not trigger a re-render (a re-render would discard note colours).
+   * Before a run this is an estimate, because the layout that has to fit is the playing
+   * one and it does not exist yet — the setup chrome is taller, so measuring now would
+   * fit the score to the wrong box and refuse lengths that do fit.
+   *
+   * During a run it is **measured from the score's own position**, because no constant
+   * can know what is actually above it: a host banner, a workout banner, the transport
+   * row, focus mode and the window all move it. The estimate was wrong by 45 px on a
+   * 1280x600 window in focus mode — the app claimed a 16-bar score fitted while its
+   * bottom sat below the fold, which is the one failure this whole mechanism exists to
+   * prevent (`docs/FEATURES.md` § 4). See `refitToRunLayout` for when it is measured.
+   *
+   * The floor only guards against nonsense values: a high one would make the "too long"
+   * refusal unreachable, squeezing the score rather than admitting it cannot fit.
    */
   function heightBudget(): number {
     if (typeof window === 'undefined') return 0;
-    // Measured from the running layout, not guessed: with the performance
-    // chrome collapsed the score starts ~269px down, or ~128px in focus mode.
-    // A high floor here would silently make the "too long" warning unreachable
-    // — the score would always be squeezed to fit rather than admitting it
-    // cannot — so the floor only guards against nonsense values.
-    const chromeAbove = app.focusMode ? 150 : 290;
-    return Math.max(80, window.innerHeight - chromeAbove);
+    if (running && scoreContainer) {
+      const top = scoreContainer.getBoundingClientRect().top;
+      // A score already scrolled out of view measures as zero or negative, which would
+      // become a nonsense budget; the estimate is a better answer than arithmetic on it.
+      if (top > 0) {
+        // The slack is sub-pixel rounding, so "fits" is never decided by half a pixel.
+        return Math.max(MIN_BUDGET_PX, Math.round(window.innerHeight - top - FIT_SLACK_PX));
+      }
+    }
+    const chromeAbove = app.focusMode ? FOCUS_CHROME_PX : SETUP_CHROME_PX;
+    return Math.max(MIN_BUDGET_PX, window.innerHeight - chromeAbove);
   }
 
-  function applyBudget(): void {
+  /**
+   * Re-fit the engraving to the room the *performance* layout actually leaves.
+   *
+   * Called at the start of every run, and deliberately not awaited before the metronome:
+   * the fit is a visual adjustment and must not delay the count-in. Re-engraving during a
+   * run normally discards the live note colours, which is why this belongs at the start —
+   * `start` has just reset them, so there are none to lose, and the count-in covers the
+   * redraw.
+   *
+   * The second pass is not belt-and-braces: the fit can itself change the chrome above the
+   * score, so the room it measured is not always the room it left. The "Scaled to N%" note
+   * did exactly that — it appears because the score was scaled, pushed the score 56 px
+   * down, and the result overflowed the window it had just been fitted to. One bounded
+   * re-check settles any such case; more than one would be the scrollbar oscillation
+   * again, so it is bounded at two.
+   */
+  async function refitToRunLayout(): Promise<void> {
+    // The run's layout has to be in the DOM before it can be measured.
+    await tick();
+    const measured = heightBudget();
+    await applyBudget(true);
+    await tick();
+    if (Math.abs(heightBudget() - measured) > 8) await applyBudget(true);
+  }
+
+  async function applyBudget(force = false): Promise<void> {
     if (!renderer) return;
-    void renderer.setMaxHeight(heightBudget());
+    await renderer.setMaxHeight(heightBudget(), force);
   }
 
   onMount(() => {
-    const onResize = () => applyBudget();
+    const onResize = () => void applyBudget();
     window.addEventListener('resize', onResize);
 
     const offNote = app.midi.onNote((event) => {
@@ -137,7 +189,7 @@
   // Focus mode changes how much room the score has.
   $effect(() => {
     app.focusMode;
-    applyBudget();
+    void applyBudget();
   });
 
   // Drives the performance layout in app.css. Set on <html> so the rules can
@@ -264,6 +316,9 @@
 
     phase = 'countin';
     renderer?.resetColors();
+    // The performance layout exists only now, so the room the score has is measured
+    // rather than assumed. Not awaited: the fit must not delay the count-in.
+    void refitToRunLayout();
 
     offBeat?.();
     offBeat = metronome.onBeat((info) => {
@@ -489,7 +544,7 @@
         </div>
       </div>
     {:else if zoom < 0.999}
-      <p class="muted small">Scaled to {Math.round(zoom * 100)}% so the whole exercise stays on screen.</p>
+      <p class="muted small fit-note">Scaled to {Math.round(zoom * 100)}% so the whole exercise stays on screen.</p>
     {/if}
 
     {#if phase === 'countin' || phase === 'playing'}
