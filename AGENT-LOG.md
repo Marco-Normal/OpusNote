@@ -4361,3 +4361,23 @@ check is conditional and says why — and the branch was **proven live** by forc
 guard inverted the scenario fails exactly as it did before, which is the evidence that the check is
 still the one that would catch a spurious warning on the piano machine. Recorded in
 `docs/TEST-STRATEGY.md` beside the sampled-piano note.
+
+## 2026-09-29 — score-layout — `--full` is green, and what it now reaches
+
+```
+check.sh --full passed in 680s
+```
+
+That is the first green full tier in several commits, and the point of the two fixes above: the tier
+had been stopping at `scenario_long_exercises`, so everything after it — nine scenarios, coverage and
+the mutation report — had not run for a while. Green means the browser tier reached and passed all
+17 scenarios, including `scenario_repertoire` with the three new opus assertions and
+`scenario_lan_viewer` with its now-guarded deployment check.
+
+Coverage is **97%** (5160 statements, 152 missed, 2026-09-29). Mutation is report-only and its tail
+is dominated by `bass_patterns.x_mirror_melody` and `x_pattern_catalogue` survivors, which is
+unchanged by this work.
+
+For the record, the totals at this revision: backend **1068 passing**, frontend **187 passing**,
+`--fast` 89-90 s, `--full` 680 s, tree clean. Counts are dated because they are true only of this
+tree.
