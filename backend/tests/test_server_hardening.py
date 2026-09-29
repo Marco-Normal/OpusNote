@@ -297,6 +297,27 @@ def test_the_connection_waits_for_a_lock_instead_of_failing(fresh_db) -> None:
         conn.close()
 
 
+def test_a_commit_does_not_fsync_the_write_ahead_log(fresh_db) -> None:
+    """WAL stays consistent without paying an fsync on every COMMIT.
+
+    SQLite's default is ``synchronous = FULL``, which fsyncs the write-ahead log on every
+    commit — measured at 1.165 ms against 0.012 ms on the owner's library, and paid on every
+    write, including the two a plain piece *read* performs. ``NORMAL`` under WAL is the
+    combination SQLite itself recommends: a power cut cannot corrupt the file and an
+    application crash loses nothing. What it gives up is the durability of the last commits
+    across a power cut or a hard reset, which the owner accepted when this was changed.
+    ``docs/DEPLOYMENT.md`` owns the statement of that trade.
+    """
+    from app.db import connect
+
+    conn = connect()
+    try:
+        # 0 = OFF, 1 = NORMAL, 2 = FULL, 3 = EXTRA.
+        assert conn.execute("PRAGMA synchronous").fetchone()[0] == 1, "NORMAL, not FULL"
+    finally:
+        conn.close()
+
+
 def test_a_capture_heartbeat_is_reported_back(client) -> None:
     assert client.get("/api/practice/status").json()["capture"] is None
     posted = client.post(

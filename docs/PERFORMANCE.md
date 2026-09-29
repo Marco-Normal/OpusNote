@@ -285,7 +285,11 @@ in CI. Assert that the number of reads does not grow with the input (see §5).
 
 **R7 — Fixed per-request costs matter on a slow disk.** A connection that sets a PRAGMA, a payload
 that is not compressed, a query with no index: small each, paid on every click. `PRAGMA
-journal_mode = WAL` is a property of the file and does not need re-issuing per connection.
+journal_mode = WAL` is a property of the file and does not need re-issuing per connection. The
+write side pays one too: at SQLite's default `synchronous = FULL` every COMMIT fsyncs the
+write-ahead log — **1.165 ms against 0.012 ms** measured on the 512,010-note library, and a plain
+piece *read* commits twice. Connections therefore ship `synchronous = NORMAL`; the durability that
+gives up is stated once, in [DEPLOYMENT.md](DEPLOYMENT.md) § *Backup*.
 
 **R8 — Measure before optimizing.** The piano roll's per-frame note filter looked like an obvious
 win. Measured, one pass over 23,482 notes is **0.140 ms**, about 0.8% of a 60 fps frame — the
@@ -321,7 +325,7 @@ If you touch one of these, you own its complexity.
 | `store.candidates_for_sitting` | the sitting's own segments, and its notes **once** | the note-read guard above |
 | `store._refresh_metrics` | the sitting's notes and its pedal stream, once each | metric equivalence in `tests/test_practice_metrics.py` |
 | `store._labelled_rows` | the labelled set — **uncapped on purpose** | `test_every_label_is_a_reference_however_lopsided_the_library` |
-| `db.connect` | per request; keep the fixed part small (R7) | — |
+| `db.connect` | per request, and per COMMIT (R7) | `test_a_commit_does_not_fsync_the_write_ahead_log` |
 | `db.init_db` | startup only; it may run migrations | `tests/test_migration_upgrade.py` |
 | `practice/api.py` responses | the events in the sitting; gzip is on for ≥1 KB | — |
 

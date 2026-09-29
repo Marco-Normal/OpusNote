@@ -181,6 +181,17 @@ routes, and one tempting one that is not safe.
    That is a silently truncated backup — it restores, and it is missing the last
    session.
 
+**What a power cut can and cannot cost.** Connections run `synchronous = NORMAL`, which is the
+setting SQLite recommends alongside WAL: **the file cannot be corrupted by losing power**, and a
+crash of the app itself loses nothing. What it does not promise is the last few commits — pull the
+plug mid-session and the most recent writes may be gone, along with whatever the browser had not
+flushed yet. That trade was taken deliberately, because `FULL` fsyncs the write-ahead log on every
+COMMIT — measured at 1.165 ms against 0.012 ms here, and a plain piece *read* commits twice. The
+machine is a notebook on a shelf, not a server with a UPS. If you would rather have the stronger
+guarantee, set the pragma back to `FULL` in `backend/app/db.py`; the test
+`test_a_commit_does_not_fsync_the_write_ahead_log` will then fail on purpose, which is the signal
+that you are changing a documented decision rather than fixing a bug.
+
 **The notebook also backs itself up nightly.** `deploy/install.sh` installs and enables
 `piano-backup.timer`, which runs the same JSON export at 03:10 with `Persistent=true`, so a machine
 that was off at that hour still backs up on the next boot. `SRT_BACKUP_DIR` says where and

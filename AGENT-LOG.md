@@ -4472,3 +4472,26 @@ rather than about "no fetch of any kind" — which was never the property and wa
 
 Worth keeping: a refusal from the harness means the *check* is unproven, not the code. Reading it as
 "the fix is fine, the test is flaky" would have shipped an assertion that could never pass.
+
+## 2026-09-29 — performance — stop fsyncing the write-ahead log on every commit
+
+Scope: `backend/app/db.py` (the one connection factory), `backend/tests/test_server_hardening.py`,
+`backend/tools/falsifications/fsync_every_commit.sh`, `docs/PERFORMANCE.md` (R7 and the map row for
+`db.connect`), `docs/DEPLOYMENT.md` § *Backup*.
+
+Did: connections now run `PRAGMA synchronous = NORMAL`. SQLite's default is `FULL`, which fsyncs the
+write-ahead log on every COMMIT; measured on the rebuilt 512,010-note fixture, a COMMIT costs
+**1.165 ms at FULL against 0.012 ms at NORMAL**, and a plain piece *read* commits twice. WAL + NORMAL
+is the pair SQLite recommends — the file cannot be corrupted by losing power, and a crash of the app
+itself loses nothing — but the last commits are no longer durable across a power cut or a hard reset.
+The owner accepted that trade explicitly ("I'm pretty sure that my laptop won't run out of power mid
+sitting"), so the statement of it lives in `DEPLOYMENT.md` § *Backup* and is linked rather than
+restated.
+
+`test_a_commit_does_not_fsync_the_write_ahead_log` reads the pragma back off a fresh connection; it
+failed at `assert 2 == 1` before the change. `fsync_every_commit.sh` puts the pragma back to `FULL`
+and names that test in its `# EXPECT`, so reverting the decision cannot be silent.
+
+Impact on the other side: no contract, table, route or field changes. A future test that asserts a
+row survives a hard reset would now be wrong, and there is none.
+
