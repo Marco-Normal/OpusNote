@@ -4126,3 +4126,30 @@ values from `backend/app/practice/store.py` and is caught by
 `test_the_log_names_a_piece_by_its_catalogue_number` and
 `test_a_suggestion_carries_the_catalogue_number` (`-k catalogue`). Neither break is a build error or
 a crash: each leaves a payload that is valid and simply identifies less.
+
+## 2026-09-29 — piece-labels — the third falsification, and what the real library holds
+
+The browser assertion needed its own break, because the unit tier cannot see this failure mode:
+`pieceLabel` can be correct while the component ignores it. `show_only_the_title_in_the_picker.sh`
+puts the old `<option>` markup back inside `SegmentTimeline.svelte` and declares the scenario as its
+check, so `npm test` stays green and only the browser catches it:
+
+```
+  falsified           show_only_the_title_in_the_picker.sh
+falsify: 1 falsified, 0 failed, 0 refused, 0 unattributed, 0 undeclared
+check.sh --falsify passed in 77s
+```
+
+Checked against the owner's real library (`piano-ecosystem-backup(3).json`, 20 pieces, read-only) —
+the ambiguity is not hypothetical, it is in the data twice:
+
+| ids | title | composer | key | opus |
+| --- | --- | --- | --- | --- |
+| 5, 6 | Waltz | Chopin | Ab Major | `Op 64. No. 3`, `Op. 69 No. 1` |
+| 9, 10 | Song Without Words | Mendelssohn | E Major, A minor | `Op. 19 No. 1`, `Op. 19 No. 2` |
+
+The two waltzes agree on title **and composer and key**, so the old picker offered "Waltz · Chopin"
+twice with nothing else to choose by; both pairs now read apart on the catalogue number. Noted but
+not touched: the stored opuses are inconsistently formatted (`Op 10. No. 4` beside `Op. 10 No. 3`,
+and `Op . 78` with a stray space) — that is library data entry, and normalising it is the owner's
+call rather than something a label should silently do.
