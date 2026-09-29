@@ -71,8 +71,11 @@
   /**
    * How far down the score starts before a run, used only until the playing layout exists.
    *
-   * Measured once at 2026-09 from the running layout; they are estimates now and the run
-   * replaces them with a measurement (see `heightBudget`).
+   * These are the numbers this file used to fit *every* render to, and they are not
+   * measurements: the real playing layout puts the score 290 px down at 1280x600 with focus
+   * mode on, not 150. They are kept only so the pre-run render has a sensible box, and being
+   * wrong there is harmless — the run replaces them with a measurement before anything is
+   * played (see `heightBudget` and `refitToRunLayout`).
    */
   const SETUP_CHROME_PX = 290;
   const FOCUS_CHROME_PX = 150;

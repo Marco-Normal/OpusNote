@@ -4313,3 +4313,27 @@ since a refusal happens before any restore), but the four results were `refused`
 nothing either way, and they were re-run on a clean tree afterwards. The rule is the same one the
 suite already carries for a bare `pytest` beside a running tier: one writer in the checkout at a
 time.
+
+## 2026-09-29 — score-layout — the falsifications, and the full tier reaching its tail
+
+All five break scripts catch their breaks on a clean tree at `6a5c70d`:
+
+```
+  falsified           allow_a_numberless_opus.sh
+  falsified           forget_the_stored_opus.sh
+  falsified           drop_the_editor_opus_preview.sh
+  falsified           guess_the_score_height_budget.sh
+```
+
+Of the opus three, `allow_a_numberless_opus` and `forget_the_stored_opus` are the two that matter
+most: without the first a piece can be stored with an opus that distinguishes nothing, and without
+the second the owner's own 21 pieces keep the four spellings the slice exists to remove. The
+editor's preview is proven separately because it is client-side and the Python suite cannot see it.
+
+Two comments corrected afterwards, both claims that had gone stale in the same change:
+`FOCUS_CHROME_PX` said it was "measured once ... from the running layout", which is exactly what the
+measurement disproved (150 against the real 290) — it now says plainly that these are the numbers
+the old code fitted everything to, kept only for the pre-run render. And `setMaxHeight`'s tolerance
+comment read "a 7 px change", which described the wrong thing; it now says a change of a few pixels.
+`guess_the_score_height_budget` was re-run after these edits, because a falsification is evidence
+about the revision it ran against.

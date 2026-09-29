@@ -224,9 +224,9 @@ export class ScoreRenderer {
    *
    * `force` re-engraves even when the budget barely moved. The tolerance below is there so
    * dragging a window edge does not re-render on every pixel, but it must not be what
-   * decides whether the score fits: a run measures its own room, and a 7 px change that
-   * was skipped would leave the app claiming a score is readable with its last system
-   * below the fold.
+   * decides whether the score fits: a run measures its own room, and a change of a few
+   * pixels that was skipped would leave the app claiming a score is readable with its last
+   * system below the fold.
    */
   async setMaxHeight(maxHeight: number, force = false): Promise<void> {
     if (!this.musicxml) return;
