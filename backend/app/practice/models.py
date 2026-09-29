@@ -358,6 +358,11 @@ class SittingDetail(BaseModel):
     duration_s: float
     closed: bool
     segments: list[SegmentSummary]
+    #: Phase 24: `segments` is empty because the work is queued elsewhere, not because the
+    #: sitting holds nothing. A read that finds the background already preparing this sitting
+    #: answers immediately and says so rather than waiting for it; the client asks again in a
+    #: moment. Additive with a default, so every pre-existing reader of a sitting still holds.
+    preparing: bool = False
     #: Additive, with a default, so every pre-existing reader of a sitting still holds.
     passages: list[PracticePassageOut] = Field(default_factory=list)
     #: Where the player asked to come back to, in ms relative to the sitting, ascending. Additive

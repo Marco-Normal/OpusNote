@@ -764,10 +764,15 @@ def awaiting_segments(
     nothing done to it once it has any segments at all — stored boundaries are never
     recomputed implicitly.
 
+    `EXISTS (note_events)` is not decoration: a sitting with no notes can never produce a
+    segment, so without it such a row would be selected on every tick for ever, and the only
+    work each selection could do is nothing.
+
     Its cost is O(sittings), which is one row per practice session, and it is deliberately
-    the one query allowed to be: it runs on a *tick*, not on a click, and the `NOT EXISTS` is
-    an index probe on ``segments(sitting_id, start_ms)``. `limit` bounds one tick so a long
-    backlog cannot hold the write lock for its whole length.
+    the one query allowed to be: it runs on a *tick*, not on a click, and both `EXISTS`
+    clauses are index probes — `segments(sitting_id, start_ms)` and
+    `note_events(sitting_id, onset_ms)`. `limit` bounds one tick so a long backlog cannot
+    hold the write lock for its whole length.
     """
     now = int(now_ms if now_ms is not None else time.time() * 1000)
     conn = db.connect(db_path)
@@ -776,6 +781,7 @@ def awaiting_segments(
             "SELECT s.id FROM sittings s"
             " WHERE (s.closed_ms IS NOT NULL OR s.ended_ms + ? < ?)"
             "   AND NOT EXISTS (SELECT 1 FROM segments g WHERE g.sitting_id = s.id)"
+            "   AND EXISTS (SELECT 1 FROM note_events n WHERE n.sitting_id = s.id)"
             " ORDER BY s.started_ms DESC LIMIT ?",
             (settings.sitting_gap_s * 1000, now, int(limit)),
         ).fetchall()
@@ -911,9 +917,27 @@ def _passage_rows(conn: sqlite3.Connection, sitting_id: int) -> list[PracticePas
 
 
 def sitting_detail(
-    sitting_id: int, now_ms: int | None = None, db_path: Path | None = None
+    sitting_id: int,
+    now_ms: int | None = None,
+    db_path: Path | None = None,
+    *,
+    materialise: bool = True,
 ) -> SittingDetail:
-    segments = ensure_segments(sitting_id, now_ms=now_ms, db_path=db_path)
+    """One sitting, with its segments.
+
+    ``materialise`` is the whole of Phase 24's read-side change, and its default is the old
+    behaviour: do the work here if it has not been done. The one caller that passes
+    ``materialise=False`` is the detail route, and only when it already knows a background
+    job is preparing this sitting — the answer is then what is stored plus ``preparing``, in
+    about a millisecond, instead of a wait.
+
+    ``preparing`` is only ever true on that path. A read that *did* the work and found no
+    segments is looking at a sitting that genuinely holds none — pedals and marks with no
+    notes, say — which is not a wait and must not be reported as one.
+    """
+    segments = (
+        ensure_segments(sitting_id, now_ms=now_ms, db_path=db_path) if materialise else None
+    )
     now = int(now_ms if now_ms is not None else time.time() * 1000)
     conn = db.connect(db_path)
     try:
@@ -924,6 +948,8 @@ def sitting_detail(
         ).fetchone()
         if row is None:
             raise NotFound(f"no sitting {sitting_id}")
+        if segments is None:
+            segments = _segment_rows(conn, sitting_id)
         note_count = conn.execute(
             "SELECT COUNT(*) FROM note_events WHERE sitting_id = ?", (sitting_id,)
         ).fetchone()[0]
@@ -941,6 +967,14 @@ def sitting_detail(
         candidates = candidates_for_sitting(conn, sitting_id)
         for segment in segments:
             segment.candidates = candidates.get(segment.id, [])
+        # The same question `ensure_segments` asks, answered the same way: a
+        # sitting is finished when it was explicitly closed (the piano went
+        # away) *or* when the silence gap has run out. Deriving it from the
+        # clock alone reported "not closed" for a sitting the piano had already
+        # ended, so the interface disagreed with the segmentation underneath it.
+        closed = row["closed_ms"] is not None or int(
+            row["ended_ms"]
+        ) + settings.sitting_gap_s * 1000 < now
         return SittingDetail(
             id=int(row["id"]),
             started_at=row["started_at"],
@@ -949,14 +983,9 @@ def sitting_detail(
             source=row["source"],
             note_count=int(note_count),
             duration_s=(int(row["ended_ms"]) - int(row["started_ms"])) / 1000.0,
-            # The same question `ensure_segments` asks, answered the same way: a
-            # sitting is finished when it was explicitly closed (the piano went
-            # away) *or* when the silence gap has run out. Deriving it from the
-            # clock alone reported "not closed" for a sitting the piano had already
-            # ended, so the interface disagreed with the segmentation underneath it.
-            closed=row["closed_ms"] is not None
-            or int(row["ended_ms"]) + settings.sitting_gap_s * 1000 < now,
+            closed=closed,
             segments=segments,
+            preparing=not materialise and not segments and closed and int(note_count) > 0,
             passages=_passage_rows(conn, sitting_id),
             review_marks_ms=review_marks_ms,
         )

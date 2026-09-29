@@ -3277,6 +3277,23 @@ def scenario_practice_log(browser) -> None:
     # Play something, unplug the piano, and the sitting must close at once instead of
     # waiting out the five-minute silence — and the dashboard must show it without a
     # reload, which is the difference between pressing F5 and not.
+    def ready_detail(sitting_id: int, tries: int = 40) -> dict:
+        """A sitting's detail, once it is closed and nothing is still preparing it.
+
+        Phase 24 prepares a finished sitting on a background worker and answers `preparing`
+        instead of making the read wait, so a read taken immediately after the piano goes
+        away may legitimately have no segments yet. Waiting on the *outcome* is the
+        assertion; a fixed sleep would be a race with the worker, and would pass on a fast
+        machine with the feature broken.
+        """
+        result = api(f"/api/practice/sittings/{sitting_id}")
+        for _ in range(tries):
+            if result["closed"] and not result.get("preparing"):
+                return result
+            page.wait_for_timeout(250)
+            result = api(f"/api/practice/sittings/{sitting_id}")
+        return result
+
     play_phrase(page, [72, 74, 76])
     page.wait_for_timeout(2_600)
     check(api("/api/practice/status")["open_sitting"] is True, "playing opened a sitting")
@@ -3291,13 +3308,12 @@ def scenario_practice_log(browser) -> None:
     )
 
     page.evaluate("() => window.__fakeMidi.unplugAll()")
-    page.wait_for_timeout(1_500)
 
-    closed_detail = api(f"/api/practice/sittings/{newest['id']}")
+    closed_detail = ready_detail(newest["id"])
     check(
         len(closed_detail["segments"]) >= 1,
         f"unplugging the piano closed and segmented the sitting "
-        f"({len(closed_detail['segments'])} segments)",
+        f"({len(closed_detail['segments'])} segments, preparing={closed_detail.get('preparing')})",
     )
     check(
         api("/api/practice/status")["open_sitting"] is False,
@@ -3341,7 +3357,7 @@ def scenario_practice_log(browser) -> None:
         f"({newest['id']} -> {newest_again['id']})",
     )
     check(
-        len(api(f"/api/practice/sittings/{newest_again['id']}")["segments"]) >= 1,
+        len(ready_detail(newest_again["id"])["segments"]) >= 1,
         "closed by the disconnect like the one before it",
     )
 

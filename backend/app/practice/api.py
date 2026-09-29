@@ -160,7 +160,18 @@ def sittings(
 
 @router.get("/sittings/{sitting_id}", response_model=SittingDetail)
 def sitting_detail(sitting_id: int) -> SittingDetail:
-    return _handle(store.sitting_detail, sitting_id)
+    """One sitting, prepared or being prepared.
+
+    A read must not wait on work the background is already doing for it. When a job for this
+    sitting is queued or running the answer is what is stored — with `preparing` set — and
+    the client asks again in a moment, while the work happens on the worker. When nothing is
+    scheduled (background jobs off, a process that just started, a job that failed) this
+    materialises the sitting exactly as it always did, so the optimisation can never become
+    the only way anything works.
+    """
+    return _handle(
+        store.sitting_detail, sitting_id, materialise=not jobs.scheduled(sitting_id)
+    )
 
 
 @router.get("/sittings/{sitting_id}/notes", response_model=SittingNotes)

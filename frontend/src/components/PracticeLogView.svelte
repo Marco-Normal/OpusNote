@@ -36,6 +36,11 @@
   //: Long enough not to be noise, short enough that a finished sitting appears
   //: while the player is still looking at the screen.
   const POLL_MS = 20_000;
+  //: A sitting the server is still preparing is asked about every this often, a bounded
+  //: number of times: the work is under a second on a real sitting, and the poll above is
+  //: the backstop if it never finishes.
+  const PREPARING_RETRY_MS = 700;
+  const PREPARING_TRIES = 10;
   let quality = $state<IdentificationQuality | null>(null);
   let matching = $state(false);
   let matchNote = $state<string | null>(null);
@@ -168,8 +173,37 @@
     app.reflect({ name: 'log', entity: { kind: 'sitting', id } });
     try {
       detail = await api.practice.sitting(id);
+      if (detail.preparing) void awaitPreparation(id);
     } catch (cause) {
       error = cause instanceof Error ? cause.message : String(cause);
+    }
+  }
+
+  /**
+   * Watch a sitting the server is still preparing.
+   *
+   * A scheduled sitting answers immediately with `preparing` rather than making the click wait
+   * for the segmentation, so opening the log a second after switching the piano off shows a
+   * short "preparing" and then the timeline. The retry is bounded on purpose: if the work never
+   * finishes — the job failed, or the process restarted mid-sitting — the twenty-second poll is
+   * the backstop, and this must not become a component that fetches for ever.
+   */
+  async function awaitPreparation(id: number): Promise<void> {
+    for (let attempt = 0; attempt < PREPARING_TRIES; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, PREPARING_RETRY_MS));
+      // The player may have selected something else, or started an edit whose own re-read
+      // owns `detail`; either way this loop has lost the right to write it.
+      if (selectedId !== id || busy) return;
+      try {
+        const next = await api.practice.sitting(id);
+        if (selectedId !== id) return;
+        detail = next;
+        if (!next.preparing) return;
+      } catch {
+        // A failed retry is not worth a banner: the poll still runs, and the read that
+        // materialises the sitting itself is only ever one request away.
+        return;
+      }
     }
   }
 
@@ -520,33 +554,47 @@
           </button>
         </div>
       {/if}
-      <SegmentTimeline
-        {detail}
-        {pieces}
-        {busy}
-        onassign={(segmentId, pieceId) =>
-          void edit(() => api.practice.assignSegment(segmentId, pieceId))}
-        onkinds={(segmentId, body) =>
-          void edit(() => api.practice.setSegmentKind(segmentId, body))}
-        onsplit={(segmentId, atMs) => void edit(() => api.practice.splitSegment(segmentId, atMs))}
-        onmerge={(segmentId, otherId) =>
-          void edit(() => api.practice.mergeSegments(segmentId, otherId))}
-        onlabelpassage={(attemptIds, pieceId) => void labelPassage(attemptIds, pieceId)}
-        onresegment={async (confirm) => {
-          await edit(() => api.practice.resegment(detail!.id, confirm));
-          // Re-segmenting rebuilds the rows the matcher was measured against, so its panel is
-          // the one thing here that a refresh can legitimately move.
-          quality = await api.practice.identificationQuality().catch(() => quality);
-        }}
-        onidentify={(segmentId, action) =>
-          // Answering the matcher has no inverse. The label does come back, but the
-          // `identification_outcomes` row recording the guess does not — a merge nulls it and nothing
-          // writes it again — so offering "Undo label" here would leave the accuracy figure claiming
-          // a decision that had been taken back. `inverseOf` cannot tell this apart from an ordinary
-          // assignment, because the segments look identical either way, so the suppression lives at
-          // the call site that knows which route it is.
-          void edit(() => api.practice.identify(segmentId, action), { undoable: false })}
-      />
+      {#if detail.preparing}
+        <!--
+          The server is segmenting this sitting, measuring it and looking for the pieces. It
+          answers immediately instead of making the click wait, so say what is happening
+          rather than drawing an empty timeline that looks like a sitting with nothing in it.
+        -->
+        <section class="card empty" data-preparing>
+          <p class="muted small">
+            Preparing this sitting — finding the passages and the pieces you played. It will
+            appear here in a moment.
+          </p>
+        </section>
+      {:else}
+        <SegmentTimeline
+          {detail}
+          {pieces}
+          {busy}
+          onassign={(segmentId, pieceId) =>
+            void edit(() => api.practice.assignSegment(segmentId, pieceId))}
+          onkinds={(segmentId, body) =>
+            void edit(() => api.practice.setSegmentKind(segmentId, body))}
+          onsplit={(segmentId, atMs) => void edit(() => api.practice.splitSegment(segmentId, atMs))}
+          onmerge={(segmentId, otherId) =>
+            void edit(() => api.practice.mergeSegments(segmentId, otherId))}
+          onlabelpassage={(attemptIds, pieceId) => void labelPassage(attemptIds, pieceId)}
+          onresegment={async (confirm) => {
+            await edit(() => api.practice.resegment(detail!.id, confirm));
+            // Re-segmenting rebuilds the rows the matcher was measured against, so its panel is
+            // the one thing here that a refresh can legitimately move.
+            quality = await api.practice.identificationQuality().catch(() => quality);
+          }}
+          onidentify={(segmentId, action) =>
+            // Answering the matcher has no inverse. The label does come back, but the
+            // `identification_outcomes` row recording the guess does not — a merge nulls it and nothing
+            // writes it again — so offering "Undo label" here would leave the accuracy figure claiming
+            // a decision that had been taken back. `inverseOf` cannot tell this apart from an ordinary
+            // assignment, because the segments look identical either way, so the suppression lives at
+            // the call site that knows which route it is.
+            void edit(() => api.practice.identify(segmentId, action), { undoable: false })}
+        />
+      {/if}
     </div>
   {:else}
     <section class="card empty">

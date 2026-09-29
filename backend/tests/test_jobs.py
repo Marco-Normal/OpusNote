@@ -240,14 +240,15 @@ def _switched_on(monkeypatch) -> None:
     jobs.reset()
 
 
-def _record_a_drill(client) -> int:
+def _record_a_drill(client, *, age_ms: int = 10 * 60 * 1000) -> int:
     """One sitting of notes, through the route a browser uses.
 
-    Anchored to *now*, not to `BASE_MS`: closing is deliberately limited to a sitting that
-    ended within the last hour, because a device event an hour later is not this sitting's
-    ending. Ten seconds ago is past the quiet guard and inside the lookback.
+    Anchored to *now* less ten minutes: past the five-minute gap, so the sitting is finished
+    by the clock as well as by the close route, and still inside the hour a close is allowed
+    to reach back over. A sitting recorded moments ago is deliberately *not* finished — the
+    existing close tests assert that its own gap has to pass.
     """
-    base_ms = int(time.time() * 1000) - 10_000
+    base_ms = int(time.time() * 1000) - age_ms
     response = client.post(
         "/api/practice/events",
         json={
@@ -343,3 +344,86 @@ def test_nothing_is_queued_when_background_jobs_are_off(fresh_db, monkeypatch) -
         assert jobs.scheduled(sitting_id) is False
     finally:
         jobs.reset()
+
+
+# --------------------------------------------------------------------------------------------
+# The read: answer "preparing" rather than wait for work that is already on its way
+# --------------------------------------------------------------------------------------------
+
+
+def test_a_scheduled_sitting_answers_preparing_instead_of_waiting(client, monkeypatch) -> None:
+    """The point of the read change, asserted by counting the work rather than timing it."""
+    _switched_on(monkeypatch)
+    try:
+        sitting_id = _record_a_drill(client)
+        client.post("/api/practice/sittings/close")
+        assert jobs.runner().scheduled(sitting_id) is True
+
+        calls = {"n": 0}
+        real = store.ensure_segments
+
+        def counted(*args, **kwargs):
+            calls["n"] += 1
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(store, "ensure_segments", counted)
+
+        body = client.get(f"/api/practice/sittings/{sitting_id}").json()
+        assert body["preparing"] is True
+        assert body["segments"] == []
+        assert calls["n"] == 0, (
+            "the read declined to wait, so it must not have done the work anyway — that is "
+            "the difference between answering and blocking"
+        )
+
+        # The same request once the queued job has run is a complete answer.
+        monkeypatch.setattr(store, "ensure_segments", real)
+        jobs.runner().drain()
+        after = client.get(f"/api/practice/sittings/{sitting_id}").json()
+        assert after["preparing"] is False
+        assert len(after["segments"]) > 0
+    finally:
+        jobs.reset()
+
+
+def test_a_read_materialises_when_nothing_is_scheduled(client, monkeypatch) -> None:
+    """The fallback, which is what makes the background pass an optimisation and no more."""
+    _switched_on(monkeypatch)
+    try:
+        sitting_id = _record_a_drill(client)
+        assert jobs.runner().scheduled(sitting_id) is False
+
+        body = client.get(f"/api/practice/sittings/{sitting_id}").json()
+        assert body["preparing"] is False
+        assert len(body["segments"]) > 0, (
+            "with no job scheduled the read does the work itself, exactly as it did before"
+        )
+    finally:
+        jobs.reset()
+
+
+def test_a_sitting_with_no_notes_is_not_reported_as_preparing(fresh_db) -> None:
+    """A sitting can hold nothing at all; no work is coming for it.
+
+    Without the `materialise` condition, `preparing` would be true for ever on such a sitting
+    and a client would poll a timeline that is never going to fill in. It is also not worth a
+    tick: a sitting with no notes can never produce a segment, so selecting it every twenty
+    seconds would be a standing no-op. Inserted directly because no route can create one —
+    ingest drops a pedal with no sitting around it rather than inventing a sitting.
+    """
+    conn = db.connect(settings.db_path)
+    try:
+        cursor = conn.execute(
+            "INSERT INTO sittings (started_ms, ended_ms, started_at, ended_at, local_date)"
+            " VALUES (?, ?, '2023-11-15 01:30:00', '2023-11-15 01:30:02', '2023-11-15')",
+            (BASE_MS, BASE_MS + 2_000),
+        )
+        sitting_id = int(cursor.lastrowid)
+        conn.commit()
+    finally:
+        conn.close()
+
+    assert store.awaiting_segments(limit=10) == [], "a sitting with no notes is not work"
+    body = store.sitting_detail(sitting_id, materialise=False)
+    assert body.segments == []
+    assert body.preparing is False, "nothing is on its way, so nothing may say it is"

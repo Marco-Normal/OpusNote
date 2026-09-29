@@ -692,6 +692,13 @@ export interface SittingDetail {
   closed: boolean;
   segments: SegmentSummary[];
   /**
+   * The server is preparing this sitting in the background, so `segments` is empty because
+   * the work is on its way rather than because the sitting holds nothing. Optional with a
+   * default for the same reason `passages` is: a server that predates Phase 24 still
+   * satisfies this type, and every reader can treat it as false.
+   */
+  preparing?: boolean;
+  /**
    * Additive with a default, so a server that predates Phase 22c still satisfies this type and
    * every reader can treat it as an empty list.
    */
