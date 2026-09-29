@@ -245,8 +245,6 @@ Every environment variable is optional.
 | `SRT_AUTOTAG_SCORE_PROMPT` | `0.55` | Score at or above which a match is offered |
 | `SRT_AUTOTAG_MIN_NOTES` | `8` | Below this many notes a segment is not recognised at all |
 | `SRT_AUTOTAG_CONTAINMENT_WEIGHT` | `0.25` | Phase 22b: how much of a match's score comes from local content rather than from the whole-segment average. Chosen by the sweep in `tools/measure_autotag.py` |
-| `SRT_AUTOTAG_NEIGHBOURS` | `6` | **Retired by Phase 22b, read by nothing.** Evidence is pooled per piece, so a window over segments has no meaning. Kept intact pending a deployment decision |
-| `SRT_AUTOTAG_TRAINING_LIMIT` | `600` | **Retired by Phase 22b, read by nothing.** A piece learned a year ago is exactly as strong as yesterday's. Kept intact pending a deployment decision |
 | `SRT_MAX_UPLOAD_MB` | `512` | Largest recording accepted by the upload endpoint |
 | `SRT_PIANO_DIR` | `<data dir>/piano` | Where the one-time sampled piano is kept and served from |
 | `SRT_BACKUP_DIR` | `<data dir>/backups` | Where the nightly JSON exports are written |
@@ -254,7 +252,6 @@ Every environment variable is optional.
 | `SRT_FRONTEND_DIST` | `<repo>/frontend/dist` | The built client the API serves |
 | `SRT_USER` | `local` | The single profile's display name |
 | `SRT_ELO_K_CALIBRATION` | `56` | Rating step during calibration — larger than the steady-state `SRT_ELO_K`, so a few answers move the seed fast |
-| `SRT_SELECTION_WINDOW` | `60` | **Read by nothing.** Kept intact pending a deployment decision |
 | `SRT_RHYTHM_TOLERANCE_BEATS` | `0.50` | How far a note may sit from its beat and still count as on time |
 | `SRT_WEIGHT_PITCH` | `0.50` | Overall-score weight on pitch |
 | `SRT_WEIGHT_RHYTHM` | `0.30` | Overall-score weight on rhythm |

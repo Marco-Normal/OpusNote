@@ -3881,3 +3881,22 @@ now records the removal in place of the inventory. `./check.sh --fast` passed.
 Impact on the other side: a contract removal. Any agent importing one of the nine names above by
 hand will now get an ImportError/AttributeError; nothing in `app/`, `tests/`, `tools/` or
 `frontend/` did. No route, field, tunable or player-visible behaviour changed.
+
+## 2026-09-28 — sanitize-dead-code — retire three dead settings (deployment decision taken)
+
+Scope: `backend/app/config.py`, `docs/ENGINEERING.md` §8, `docs/ECOSYSTEM.md`.
+
+Did: deleted `selection_window` (`SRT_SELECTION_WINDOW`), `autotag_neighbours`
+(`SRT_AUTOTAG_NEIGHBOURS`) and `autotag_training_limit` (`SRT_AUTOTAG_TRAINING_LIMIT`), and removed
+their three rows from the `ENGINEERING.md` §8 tunables table. The two `SRT_AUTOTAG_*` settings were
+retired as correctness boundaries by Phase 22b and read by nothing; `selection_window` had no reader
+either. The deployment decision their docstrings were waiting on is now made: nothing is deployed
+that sets them, and a setting with no reader is a trap for an operator. The present-tense claim in
+`ECOSYSTEM.md` §22b was updated; its earlier past-tense mention of the retired window is left as
+history, and `TEST-STRATEGY.md`'s `SRT_AUTOTAG_*` wildcard still holds because five such settings
+remain.
+
+Impact on the other side: any deployment that set `SRT_SELECTION_WINDOW`,
+`SRT_AUTOTAG_NEIGHBOURS` or `SRT_AUTOTAG_TRAINING_LIMIT` now has those variables ignored; it may
+delete them. No behaviour changes — nothing read them. `docs/PLAN-PHASE22.md` and
+`docs/PLAN-SLICES1-7.md` still mention them as their historical record, which is intentional.

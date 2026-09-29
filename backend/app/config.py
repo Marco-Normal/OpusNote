@@ -86,8 +86,6 @@ class Settings:
     default_rating: float = _env_float("SRT_DEFAULT_RATING", 700.0)
     elo_k: float = _env_float("SRT_ELO_K", 32.0)
     elo_k_calibration: float = _env_float("SRT_ELO_K_CALIBRATION", 56.0)
-    # How far around the target Elo an exercise may be picked.
-    selection_window: float = _env_float("SRT_SELECTION_WINDOW", 60.0)
     # Fraction of notes a learner should get right on a well-chosen exercise.
     # Exercises are aimed *below* the rating so this stays in the 70-85% zone.
     target_success_rate: float = _env_float("SRT_TARGET_SUCCESS_RATE", 0.78)
@@ -150,14 +148,6 @@ class Settings:
     attack_window_ms: int = _env_int("SRT_ATTACK_WINDOW_MS", 50)
 
     # --- recognising a segment from your own labelled practice --------------
-    #: How many of your closest labelled segments count as evidence.
-    #:
-    #: **Retired as a correctness boundary by Phase 22b**, for the same reason as
-    #: ``autotag_training_limit`` below and with the same measured cause: a window over
-    #: *segments* held one piece for 47 of the owner's 54 labelled segments, so the runner-up
-    #: was undefined and the auto band could not fire. Evidence is pooled per piece now and
-    #: nothing reads this any more; it is kept intact pending a deployment decision.
-    autotag_neighbours: int = _env_int("SRT_AUTOTAG_NEIGHBOURS", 6)
     #: At or above this, a match is written as an inferred label. The default is
     #: measured, not inherited — see `backend/tools/measure_autotag.py` and the
     #: numbers in `docs/ECOSYSTEM.md` §10.
@@ -178,14 +168,6 @@ class Settings:
     #: `backend/tools/measure_autotag.py` (22-D7), not asserted: at 32 pieces the mix beats
     #: either term alone at whole length *and* at a quarter length.
     autotag_containment_weight: float = _env_float("SRT_AUTOTAG_CONTAINMENT_WEIGHT", 0.25)
-    #: How many of your most recent labelled segments the matcher compares against.
-    #:
-    #: **Retired as a correctness boundary by Phase 22b.** Signatures are pooled per piece,
-    #: so matching costs O(pieces) rather than O(labels) and no piece can fall out of a
-    #: window. Nothing reads this any more; it is kept field-and-env-var intact because
-    #: removing a documented setting is a deployment decision, not a code one. Delete it and
-    #: its `docs/ENGINEERING.md` row when that call is made.
-    autotag_training_limit: int = _env_int("SRT_AUTOTAG_TRAINING_LIMIT", 600)
     #: How many labelled segments the accuracy report evaluates. Leave-one-out is
     #: quadratic in this number, so past the cap it takes the newest and says so in
     #: the report rather than quietly sampling.

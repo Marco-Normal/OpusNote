@@ -1759,9 +1759,9 @@ reason was not the threshold. The top-6 *segment* neighbour window held a single
 queries, so `runner_up` was undefined, so 46 segments were downgraded to "nothing else to compare
 it with". `practice/shingles.py` extracts tempo-invariant local features and `similarity` pools them
 per piece, mixes `0.75 × global + 0.25 × containment` into the score, and decides the band from the
-mixed score. The reference window and the neighbour window both retired; two settings
-(`SRT_AUTOTAG_NEIGHBOURS`, `SRT_AUTOTAG_TRAINING_LIMIT`) are now read by nothing and are kept only
-pending a deployment decision.
+mixed score. The reference window and the neighbour window both retired; the two settings they fed
+(`SRT_AUTOTAG_NEIGHBOURS`, `SRT_AUTOTAG_TRAINING_LIMIT`) were read by nothing and have since been
+deleted, along with their `ENGINEERING.md` rows.
 
 **22c — passages and piece-sessions.** Six attempts at one passage were six unrelated rows.
 `practice/passages.py` groups adjacent attempts that are the same musical material into a passage,
