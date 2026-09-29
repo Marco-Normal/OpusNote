@@ -12,7 +12,6 @@
 
 /** The choices offered: none, one bar, two bars. */
 export const COUNT_IN_BARS = [0, 1, 2] as const;
-export type CountInBars = (typeof COUNT_IN_BARS)[number];
 
 export function countInBeats(bars: number, barsBeats: number[]): number {
   const beatsPerBar = barsBeats[0] ?? 4;

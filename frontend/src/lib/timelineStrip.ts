@@ -8,7 +8,7 @@
  */
 
 /** The span of a segment, which is all either function below needs to know about one. */
-export interface StripSpan {
+interface StripSpan {
   start_ms: number;
   end_ms: number;
 }

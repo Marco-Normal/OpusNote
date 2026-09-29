@@ -3847,3 +3847,14 @@ and `Iterable` (`scoring/engine.py` and `store.py`), plus `Any` from `repertoire
 (`Literal` is still used there). No sibling name in any multi-import was touched.
 
 Impact on the other side: none. No behaviour, route, field or tunable changed.
+
+## 2026-09-28 — sanitize-dead-code — tidy four unused frontend type exports
+
+Scope: `frontend/src/lib/countIn.ts`, `state.svelte.ts`, `audioCut.ts`, `timelineStrip.ts`.
+
+Did: deleted two types nothing referenced (`CountInBars`, `BarChoice`) and dropped the redundant
+`export` from two interfaces used only inside their own module (`CutInput`, `StripSpan`; both are
+parameter types of the exported functions beside them, so the runtime contract is unchanged).
+
+Impact on the other side: none. No value, component or emitted type changed; `--chart-*` tokens and
+the type ramp were left alone.

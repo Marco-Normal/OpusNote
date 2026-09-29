@@ -9,7 +9,7 @@
  * quietly. There is no DOM here and no `MediaRecorder`, so `node --test` can reach it.
  */
 
-export interface CutInput {
+interface CutInput {
   /** Now, ms since the Unix epoch. */
   nowMs: number;
   /** When the current take began recording, ms since the Unix epoch. */

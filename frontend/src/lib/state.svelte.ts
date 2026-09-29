@@ -44,7 +44,6 @@ const GESTURE_TICK_MS = 40;
 
 /** Exercise lengths offered in the UI. Length is a preference, not difficulty. */
 export const BAR_CHOICES = [4, 8, 12, 16] as const;
-export type BarChoice = (typeof BAR_CHOICES)[number];
 
 function readBars(): number {
   try {
