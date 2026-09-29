@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import statistics
 from dataclasses import asdict, dataclass, field
-from typing import Any, Iterable, Sequence
+from typing import Any, Sequence
 
 from ..config import Settings, settings as default_settings
 from ..music.expected import ExpectedNote

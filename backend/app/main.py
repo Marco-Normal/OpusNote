@@ -31,7 +31,6 @@ from .models import (
     PerformanceDetail,
     ProfileOut,
     RatingHistory,
-    RatingPoint,
     ScoreRequest,
     SkillOut,
     SkillRatingSeries,

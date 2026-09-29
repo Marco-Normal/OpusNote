@@ -7,7 +7,6 @@ application object.
 from __future__ import annotations
 
 import mimetypes
-import shutil
 import sqlite3
 import tempfile
 from datetime import datetime, timezone

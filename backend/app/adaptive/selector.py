@@ -13,7 +13,7 @@ from typing import Mapping, Sequence
 from ..config import Settings, settings as default_settings
 from ..skills_data import HAND_CHOICES, HAND_LABELS, SKILL_SLUGS, level_for_key
 from . import elo
-from .elo import MAX_LEVEL, MIN_LEVEL, exercise_elo, level_for_rating, rating_for_level
+from .elo import MAX_LEVEL, MIN_LEVEL, exercise_elo, rating_for_level
 
 
 @dataclass

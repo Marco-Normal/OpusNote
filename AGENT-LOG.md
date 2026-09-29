@@ -3835,3 +3835,15 @@ calibration plan). It was written but never read: `services._exercise_payload` o
 unused with it and was dropped.
 
 Impact on the other side: none. No API field, tunable or player-visible behaviour changed.
+
+## 2026-09-28 — sanitize-dead-code — remove eight unused Python imports
+
+Scope: `backend/app/adaptive/selector.py`, `main.py`, `piano.py`, `practice/api.py`,
+`repertoire/api.py`, `scoring/engine.py`, `store.py`, `repertoire/models.py`.
+
+Did: dropped imports that were bound but never read (each `grep`-count of 1 across `app/`,
+`tests/` and `tools/`): `level_for_rating`, `RatingPoint`, `Depends`, `JSONResponse`, `shutil`,
+and `Iterable` (`scoring/engine.py` and `store.py`), plus `Any` from `repertoire/models.py`
+(`Literal` is still used there). No sibling name in any multi-import was touched.
+
+Impact on the other side: none. No behaviour, route, field or tunable changed.

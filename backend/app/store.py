@@ -7,7 +7,7 @@ and the API layer stays about HTTP.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 from .config import Settings, settings as default_settings
 from .db import connect, json_dump, json_load, utcnow_iso
