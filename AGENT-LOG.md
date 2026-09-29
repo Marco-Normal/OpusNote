@@ -3994,3 +3994,59 @@ shape, so a build that predates this one and opens the database will have its ow
 recreated on its next `init_db` — correct, just slower. `AGENT-LOG.md` is the place an agent working
 on a second machine should look before writing to `segments` from outside `ensure_segments`: the
 version counter is now a precise contract, not "any write".
+
+## 2026-09-29 — async-sitting-preparation — a pre-existing red browser assertion, found and left alone
+
+Scope: `backend/tools/e2e_browser.py` (one failure message), `docs/ECOSYSTEM.md`,
+`docs/PLAN-PHASE24.md`.
+
+Finding: `./check.sh --full` stops in `scenario_long_exercises` on
+`16 bars fits at 1280x600 once focus mode is on`, **before** Phase 24. Proven by checking out
+`366dfb7` (the commit Phase 24 starts from) and running the scenario alone: identical failure,
+score top 290 + height 356 = bottom 645 against a 600 px viewport, `tooLong=False`.
+
+Diagnosis: `PracticeView.heightBudget()` returns `innerHeight - chromeAbove` with a constant
+`chromeAbove` of 150 px in focus mode and 290 px otherwise, and subtracts nothing for the space
+*below* the score — while the scenario's measurement is `rect.bottom <= innerHeight`. With focus on
+at 600 px the layout leaves 310 px and the budget claims 450, so the fit renders a score that
+overflows the window and never sets `tooLong`. The current constants date from when the
+performance chrome was smaller (the comment says "~128px in focus mode"; it measures 290 now), and
+the earlier viewport checks pass only because a 4/8/12/16-bar render happens to come in under the
+real remaining space.
+
+Not fixed here on purpose: the honest fix is to derive the budget from the layout rather than from
+two constants, in the component that also owns the "the score must never scroll during a
+performance" invariant and the OSMD re-render trap (a re-render discards note colours). That is a
+slice of its own, not a footnote to an async-scheduling phase. The failing check's message now
+carries top, height, bottom, viewport and `tooLong` so the next attempt starts from a measurement.
+
+Impact on the other side: none functionally — no production code changed in this commit. The
+browser tier is red until that slice lands, and the failure is not attributable to Phase 24; every
+other scenario was run individually against a server with the worker enabled and passes.
+
+## 2026-09-29 — async-sitting-preparation — the tier stops early, so the tail was run by hand
+
+Scope: `backend/tools/e2e_browser.py`, `docs/ECOSYSTEM.md`, `docs/PLAN-PHASE24.md`.
+
+One failure in this phase: `scenario_takes` reads a sitting's detail immediately after
+`POST /sittings/close` and expects two segments. With Phase 24 that read can legitimately answer
+`preparing` with an empty list, because the close route queues the work instead of doing it, so the
+assertion was racing the worker. Fixed in the harness rather than in the behaviour: a shared
+`settled_detail()` polls until the sitting is *closed and not preparing* — the outcome the phase is
+for — and both `scenario_takes` and `scenario_practice_log` use it. A fixed sleep would have passed
+on a fast machine with the feature broken. `practice_log` and `takes` both pass again.
+
+Because `scenario_long_exercises` aborts a full run (see the entry above), the twelve scenarios after
+it never execute in `./check.sh --full`, so they were run individually against a server with the
+worker enabled. Ten pass. Two fail, and neither is this phase:
+
+* `scenario_long_exercises` — the pre-existing `heightBudget()` defect recorded above.
+* `scenario_lan_viewer` — its final check requires the machine under test to *have* ALSA. On this
+  host `sequencer_available()` is `False` (no `/dev/snd/seq`, no `/proc/asound/seq/clients`), so the
+  app correctly shows the "sequencer not present" warning and the scenario's "no deployment warnings
+  at all" is false here. `backend/app/hostinfo.py` is untouched by this phase, and the scenario's
+  first half — which stubs the remote answer — passes.
+
+Impact on the other side: the browser tier is red on two assertions that predate this phase, and the
+full tier cannot reach past the first one until it is fixed. The next agent should fix
+`heightBudget()` as its own slice; everything else in the tier is verified.

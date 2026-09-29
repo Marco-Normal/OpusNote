@@ -2004,6 +2004,25 @@ list by my estimate, since they change what the app is *for* rather than what it
 Also open: the **courtesy time signature** at system breaks, which OSMD cannot be talked into.
 ("Retiring `practice-logger/`" was the other one; the directory is no longer in this repository.)
 
+**A red browser assertion that predates Phase 24 (found 2026-09-29, not fixed).** The full tier stops
+in `scenario_long_exercises` on `16 bars fits at 1280x600 once focus mode is on`. It reproduces
+identically at `366dfb7`, before Phase 24, and the numbers are now in the check's own message: score
+top 290 + height 356 = bottom 645 against a 600 px viewport, `tooLong=False`. The cause is that
+`PracticeView.heightBudget()` subtracts a constant for the chrome **above** the score (150 px with
+focus on) and nothing for the space below it, so the fit believes it has 450 px where the layout has
+310 — it draws a score that overflows the window and does not refuse it. That is a real defect at a
+short viewport with focus on, not an over-strict assertion. It is left for its own slice because the
+fix belongs in the component that also owns the "never scroll during a performance" invariant and
+OSMD's re-render trap; [`PLAN-PHASE24.md`](./PLAN-PHASE24.md) § *Execution record* has the diagnosis.
+
+**Because the tier stops at that assertion, everything after it is unrun in a full pass** — which is
+its own cost, and running the remaining scenarios individually found one more red: `scenario_lan_viewer`
+fails its last check, *"the piano machine sees no deployment warnings at all"*, because
+`sequencer_available()` is `False` **on the machine the suite is running on**. That is the app telling
+the truth about a container with no `/dev/snd/seq` and no `/proc/asound/seq/clients`, not a defect:
+`backend/app/hostinfo.py` is untouched by this phase, and the scenario's first half stubs the remote
+answer and passes. The other ten scenarios pass individually with the background worker enabled.
+
 **Two playback boundaries, recorded rather than changed (2026-09-22).** `within()` in
 `frontend/src/lib/playback.ts` includes a note whose onset falls exactly on a segment's end, so such
 a note belongs to both adjacent segments and plays twice. That is asserted by name in

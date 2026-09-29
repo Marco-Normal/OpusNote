@@ -26,6 +26,7 @@ import os
 import re
 import sqlite3
 import sys
+import time
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -472,6 +473,25 @@ def api(path: str, method: str = "GET", body: dict | None = None) -> Any:
     )
     with urllib.request.urlopen(request, timeout=30) as response:
         return json.load(response)
+
+
+def settled_detail(sitting_id: int, *, tries: int = 40) -> dict:
+    """A sitting's detail, once it is closed and nothing is still preparing it.
+
+    Phase 24 prepares a finished sitting on a background worker and answers `preparing`
+    instead of making the read wait, so a read taken immediately after the piano goes away —
+    or immediately after `POST /sittings/close` — may legitimately have no segments yet.
+    Waiting on the *outcome* is the assertion. A fixed sleep would be a race with the worker,
+    and would pass on a fast machine with the feature broken, which is the failure mode this
+    harness exists to avoid.
+    """
+    result = api(f"/api/practice/sittings/{sitting_id}")
+    for _ in range(tries):
+        if result["closed"] and not result.get("preparing"):
+            return result
+        time.sleep(0.25)
+        result = api(f"/api/practice/sittings/{sitting_id}")
+    return result
 
 
 def new_page(browser, *, allow_statuses: set[int] | None = None) -> tuple[Page, list[str]]:
@@ -1102,9 +1122,15 @@ def scenario_long_exercises(browser) -> None:
             spacious["height"] > cramped["height"],
             f"focus mode gives the score more room ({cramped['height']} -> {spacious['height']})",
         )
+        # The numbers are in the message because this assertion is the one that catches a
+        # budget which believes the score fits when it does not: `top` and `height` together
+        # say how much room the layout actually had, against the viewport.
         check(
             spacious["fullyVisible"] and not spacious["tooLong"],
-            "16 bars fits at 1280x600 once focus mode is on",
+            "16 bars fits at 1280x600 once focus mode is on "
+            f"(top {spacious['top']} + height {spacious['height']} = bottom "
+            f"{spacious['bottom']} vs viewport {spacious['viewportHeight']}, "
+            f"tooLong={spacious['tooLong']}; refused without focus: {cramped['tooLong']})",
         )
         check(not errors, f"no console errors ({errors})")
         page.close()
@@ -2588,7 +2614,7 @@ def scenario_takes(browser) -> None:
     # read below is what attaches the takes, because nothing here runs on a timer.
     closed = api("/api/practice/sittings/close", "POST")
     check(closed["closed"] is True, "the playing closes when it is finished")
-    detail = api(f"/api/practice/sittings/{closed['sitting_id']}")
+    detail = settled_detail(closed["sitting_id"])
     check(len(detail["segments"]) == 2, "and it segments into the two passages that were played")
     for segment in detail["segments"]:
         api(f"/api/practice/segments/{segment['id']}", "PATCH", {"piece_id": piece["id"]})
@@ -3277,23 +3303,6 @@ def scenario_practice_log(browser) -> None:
     # Play something, unplug the piano, and the sitting must close at once instead of
     # waiting out the five-minute silence — and the dashboard must show it without a
     # reload, which is the difference between pressing F5 and not.
-    def ready_detail(sitting_id: int, tries: int = 40) -> dict:
-        """A sitting's detail, once it is closed and nothing is still preparing it.
-
-        Phase 24 prepares a finished sitting on a background worker and answers `preparing`
-        instead of making the read wait, so a read taken immediately after the piano goes
-        away may legitimately have no segments yet. Waiting on the *outcome* is the
-        assertion; a fixed sleep would be a race with the worker, and would pass on a fast
-        machine with the feature broken.
-        """
-        result = api(f"/api/practice/sittings/{sitting_id}")
-        for _ in range(tries):
-            if result["closed"] and not result.get("preparing"):
-                return result
-            page.wait_for_timeout(250)
-            result = api(f"/api/practice/sittings/{sitting_id}")
-        return result
-
     play_phrase(page, [72, 74, 76])
     page.wait_for_timeout(2_600)
     check(api("/api/practice/status")["open_sitting"] is True, "playing opened a sitting")
@@ -3309,7 +3318,7 @@ def scenario_practice_log(browser) -> None:
 
     page.evaluate("() => window.__fakeMidi.unplugAll()")
 
-    closed_detail = ready_detail(newest["id"])
+    closed_detail = settled_detail(newest["id"])
     check(
         len(closed_detail["segments"]) >= 1,
         f"unplugging the piano closed and segmented the sitting "
@@ -3357,7 +3366,7 @@ def scenario_practice_log(browser) -> None:
         f"({newest['id']} -> {newest_again['id']})",
     )
     check(
-        len(ready_detail(newest_again["id"])["segments"]) >= 1,
+        len(settled_detail(newest_again["id"])["segments"]) >= 1,
         "closed by the disconnect like the one before it",
     )
 

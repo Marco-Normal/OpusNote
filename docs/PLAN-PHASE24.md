@@ -361,9 +361,12 @@ What the implementation changed from what this plan said, and why.
   `awaiting_segments` gained `EXISTS (note_events)` and `preparing` gained `note_count > 0`, because
   a sitting with no notes can never produce a segment and would otherwise be selected on every tick
   for ever and reported as preparing for ever.
-* **The browser check waits for the outcome.** The existing scenario slept a fixed 1.5 s and then
-  asserted segments, which becomes a race once the work is asynchronous; it now polls until the
-  sitting is closed and not preparing, which is the outcome the phase is for.
+* **The browser checks wait for the outcome.** Two existing assertions read a sitting's segments
+  immediately after it closed (`scenario_takes`, `scenario_practice_log`), which becomes a race with
+  the worker once the work is asynchronous — the read legitimately answers `preparing` with no
+  segments. Both now poll through one shared `settled_detail()` helper until the sitting is closed
+  and not preparing, which is the outcome the phase is for. A fixed sleep would have hidden it on a
+  fast machine.
 
 **One acceptance gap, stated rather than papered over.** The `Preparing this sitting…` display and
 its bounded retry are **not asserted end to end**. The e2e server runs with the worker on, and on the
@@ -373,6 +376,19 @@ scheduled sitting answers `preparing` with no work done, and that the same reque
 one `tick()` (`tests/test_jobs.py`) — plus the fact that the branch is in the built bundle. Closing
 the gap honestly means a way to hold the worker still in a scenario, which would be a test hook in
 production code; it is recorded instead.
+
+**One pre-existing browser-tier failure, found and deliberately not fixed here.** `./check.sh --full`
+stops in scenario 5 on `16 bars fits at 1280x600 once focus mode is on`. It is **not** caused by this
+phase: it reproduces identically at `366dfb7`, the commit this phase starts from — score top 290 +
+height 356 = bottom 645 against a 600 px viewport, `tooLong=False`. `PracticeView.heightBudget()`
+subtracts a constant for the chrome *above* the score (150 px in focus mode) and nothing for what is
+below it, so with focus on the fit believes it has 450 px where the layout has 310: it renders a
+score that overflows the window and does not refuse it, which is exactly what the assertion exists to
+catch. Fixing it means making that budget honest against the real layout instead of a constant, in
+the component that also owns the "never scroll during a performance" invariant and the OSMD
+re-render trap, so it is named for its own slice rather than guessed at here. The failing check's
+message now carries the numbers, so the next attempt starts from a measurement rather than from this
+paragraph.
 
 ## 10. Execution route
 
