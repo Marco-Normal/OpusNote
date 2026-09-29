@@ -5,8 +5,8 @@ Rust app" premise of
 [`INTEGRATION-practice-logger.md`](./INTEGRATION-practice-logger.md), which
 remains accurate about *what exists today* but is no longer the destination.
 
-Status: **decided; Phases 1-13 and 15-23 are landed. Phases 14 and 24 are planned.**
-§9 covers Phases 1-7; §10 covers Phases 8-23 and closes with the decisions, the risks and the
+Status: **decided; Phases 1-13 and 15-24 are landed. Phase 14 is planned.**
+§9 covers Phases 1-7; §10 covers Phases 8-24 and closes with the decisions, the risks and the
 non-goals. Each landed phase names its own evidence in place.
 
 ---
@@ -215,7 +215,7 @@ this document carries the rest.
 | 21 | **The log at speed, and the blur you can find** | Blur positions cached beside the count and marked on the sitting strip; and an edit path that applies the server's own answer instead of refetching the matcher's accuracy, the machine's health and the week's ratings after every click. **Landed.** | low |
 | 22 | **Hearing the piece** | Where the playing actually turns over (an adaptive gap with a 2 s floor, plus minimum and maximum sizes), and a matcher that survives a growing library (tempo-invariant local shingles pooled per piece, IDF containment, a hybrid score). Passages and piece-sessions are derived from attempts, so the log shows *n* attempts at one passage rather than *n* unrelated rows. **Landed 22a–22c.** One acceptance number was corrected to its measurement and one decision was dropped after measuring: see § *Phase 22* below. | high |
 | 23 | **The pedal as a quick-action surface** | The sostenuto's one hard-coded action becomes three gestures on the same pedal — single, double, hold — each bound in Setup to one action or to nothing: a review flag, start/finish a workout, arm/stop the take, or finish the sitting. A review flag is a raw mark event in its own table, drawn on the sitting strip beside the blur hairlines. **Landed.** | medium |
-| 24 | **The sitting is ready before you open it** | A finished sitting is segmented, measured and classified by a background worker instead of by the first click that opens it, and a read never waits on work already scheduled: it answers *preparing* and fills in a moment later. Measuring the request found that ~1 s of the wait was not scheduling at all — the matcher's reference cache was being thrown away by writes that cannot change it, so the invalidation rule is narrowed to references. **Planned.** | medium |
+| 24 | **The sitting is ready before you open it** | A finished sitting is segmented, measured and classified by a background worker instead of by the first click that opens it, and a read never waits on work already scheduled: it answers *preparing* and fills in a moment later. Measuring the request found that ~1 s of the wait was not scheduling at all — the matcher's reference cache was being thrown away by writes that cannot change it, so the invalidation rule is narrowed to references. **Landed.** | medium |
 
 Phases 1-2 are the useful minimum: they get the library out of the Rust app's
 directory and into a browser, which is most of what you asked for.
@@ -453,7 +453,7 @@ wipe every table, restore, and compare row counts and sample rows.
 
 ---
 
-## 10. Phases 8-23: what landed, and the decisions behind it
+## 10. Phases 8-24: what landed, and the decisions behind it
 
 **Implementation plan:** [`PLAN-PHASE8-9.md`](./PLAN-PHASE8-9.md) owns the
 step-by-step *how* for both phases — 15 tasks with complete code, exact commands,
@@ -1905,6 +1905,93 @@ seeded by `init_db` and advanced by triggers on `segments`, so deleting it betwe
 leave it absent for the rest of the process and the matcher's in-process reference cache would stop
 invalidating. That the table gate caught it is the gate working; that it sat unrun is the cost of a
 tier nothing invoked.
+
+### Phase 24 — landed (the sitting is ready before you open it)
+
+**Implementation plan:** [`PLAN-PHASE24.md`](./PLAN-PHASE24.md). Asked for by the owner as "some
+async code, specially for when a sitting is done to pre segmentize and classify what it sees fit,
+because it does take some time to do it when I first click it".
+
+**Measuring the request changed the shape of it.** The first click on a 23,482-note sitting that
+nobody had opened cost **1,755 ms**; the same sitting once open cost 90 ms. But only about 770 ms of
+that was the work itself. The rest was the matcher's reference cache being rebuilt — and that rebuild
+was unnecessary, because segmenting a sitting invalidates the cache it is about to read. The
+segmentation inserts its new segments *unlabelled*, and the pass that runs straight after it tags
+them from any workout that overlaps, rewriting `identified_by` on rows that carry no piece at all.
+Neither write can change what `_labelled_rows` returns, yet both bumped the counter the cache is keyed
+on. On identical fixtures, in one process, with the cache warm: **1,755 ms and one rebuild** under
+the old rule, **699–770 ms and none** under a rule that counts only references.
+
+**So the phase is two changes, and the first is a bug fix.**
+
+1. **The invalidation rule is narrowed to what the cached material is actually a function of.** A
+   row counts when `piece_id IS NOT NULL` and it is not a `similarity` guess. The insert and delete
+   triggers guard on the row; the update trigger guards on either side of the change, because a row
+   entering or leaving the set is a change and a write to a row that is not a reference on either
+   side is not. The schema drops and recreates the triggers, since `CREATE TRIGGER IF NOT EXISTS`
+   would leave an existing database on the wide rule for ever.
+2. **The work happens when the sitting ends, not when it is opened.** `practice/jobs.py` is one
+   daemon thread over a queue whose job is a sitting id; the work stays `store.ensure_segments`, so
+   the runner owns *when* and nothing else. It is triggered by `POST /sittings/close` (the common
+   end of a sitting), by a sweep every `SRT_JOB_SWEEP_S` (the silence-gap case, a backlog after a
+   restart, a job stranded by a crash), and once at boot. A read that finds the work already
+   scheduled answers `preparing` in about a millisecond instead of waiting for it.
+
+**Why a thread, and not the obvious reuse.** FastAPI's `BackgroundTasks` was the candidate and is
+insufficient: it only runs after a request that happened, so it cannot cover a sitting closed by the
+silence gap, a backlog left by a restart, or a process that died mid-job — and it would hold a
+threadpool request thread for the whole duration. This deployment is one process, one user and one
+piano (the systemd unit starts a single uvicorn), so one thread is the machinery that is warranted.
+
+**What makes it safe to have a second writer.** It is not a second owner: the background pass calls
+the same `ensure_segments` the read still calls whenever nothing is scheduled. With
+`SRT_BACKGROUND_JOBS=0` every entry point behaves exactly as it did before the phase, and a job that
+fails releases its sitting so the next read materialises it. Nothing can be left permanently
+unprepared because a worker gave up.
+
+| ID | Question | Decision | Consequence |
+| --- | --- | --- | --- |
+| 24-D1 | Where does "prepare a finished sitting" run? | **One daemon thread in the API process**, over a queue of sitting ids; not `BackgroundTasks`, not a second service | Covers the silence-gap close, a boot backlog and a crash; one process to deploy, and the worker dies with it |
+| 24-D2 | What may a read do while that work is queued or running? | **Answer `preparing` and not do the work**; the lazy materialisation stays as the fallback | The click is never a wait; nothing can be stranded, because the path that worked before the phase is still there |
+| 24-D3 | Does the cache's invalidation rule widen or narrow? | **Narrow to references only** — `piece_id IS NOT NULL` and not a `similarity` guess | ~1 s of the first click disappears; the direction of the risk means the guard is tested in *both* directions, since under-bumping would serve a stale matcher |
+| 24-D4 | Does the trigger change bump `SCHEMA_VERSION`? | **No** — the stored shape is unchanged, and the triggers are dropped and recreated on every `init_db` | An older build reading this database sees the same tables and columns; its wider rule is still correct, only slower |
+| 24-D5 | Is the background pass configurable? | **Yes: `SRT_BACKGROUND_JOBS` (default on) and `SRT_JOB_SWEEP_S` (20 s)** | Off is the pre-Phase-24 behaviour rather than a degraded mode, which is also what the test suite sets |
+| 24-D6 | What happens when a job fails? | **Logged, remembered in the runner's state, and the sitting is released** | The read falls back to materialising it; a broken worker costs the optimisation and nothing else |
+| 24-D7 | Does the restored database get the row the cache is keyed on? | **Yes — a `replace` restore re-seeds `reference_state`** | That table is emptied like any other and a pre-22b document cannot restore the row; without this the cache is off until the next restart |
+
+**Schema and migration.** No table, no column, no `ADDED_COLUMNS` entry, no `BACKUP_VERSION` change,
+and `SCHEMA_VERSION` stays **5** (24-D4). The only schema-script change is that the three
+`reference_state` triggers are dropped and recreated rather than `CREATE ... IF NOT EXISTS`, which is
+what lets an existing database adopt the narrow rule. One field is added to a response:
+`SittingDetail.preparing`, additive with a default, so a client that predates it is unaffected.
+
+**ADR signal.** 24-D1/24-D2 (a background writer inside the API process, and a read that reports a
+state instead of waiting) widen the runtime boundary the deployment chapter describes. This document
+plus its decisions table is the record, per § *Phase 9*; nothing here creates a second authority.
+
+**Verified.** Backend **1005 passed**; frontend **169 passed**; `svelte-check` clean; build clean.
+Four falsifications, each seen to fail and to name its assertion:
+`widen_the_reference_invalidation`, `the_runner_segments_an_open_sitting`,
+`the_close_route_forgets_to_prepare`, `the_read_waits_for_a_scheduled_job`. The browser tier's
+practice-log scenario closes a sitting by unplugging the piano and waits for it to be *closed and not
+preparing*, which is the outcome the phase is for; the e2e server runs with the worker on, so the
+scenario exercises the real background path. Measured on the real library: the first click on the
+23,482-note sitting **1,755 → 699 ms**, with **0** reference rebuilds.
+
+**Two things the tests found that reading did not.** A sitting with no notes at all is unreachable
+through the API, but if one existed it would be selected by the sweep on every tick for ever, each
+time to do nothing — hence the `EXISTS (note_events)` in the selection and the matching condition on
+`preparing`. And the first version of the invalidation test asked for `identified_by = 'workout'` as
+its evidence that the tagging pass had run; `autotag_sitting` legitimately overwrites that column
+when a segment matches confidently, so the durable evidence is `workout_id`, and the matcher
+overwriting a workout tag is now recorded rather than assumed away.
+
+**One acceptance gap, recorded.** The `Preparing this sitting…` display and its bounded retry are not
+asserted end to end: the browser tier runs with the worker on, and on the fixture the preparation
+finishes before a browser can observe the state, so an assertion on it would be a race. The server
+behaviour it depends on *is* asserted — `tests/test_jobs.py` requires a scheduled sitting to answer
+`preparing` with no work done, and the same request to be complete after one `tick()`. The gap and
+what closing it would cost are in [`PLAN-PHASE24.md`](./PLAN-PHASE24.md) § *Execution record*.
 
 ### Still open, from the earlier brainstorm
 

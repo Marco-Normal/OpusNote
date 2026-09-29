@@ -6,7 +6,7 @@ sitting finishes rather than when it is first opened, and measuring that request
 second of the wait was not scheduling at all — it was the matcher's cache being thrown away by
 writes that cannot change it.
 
-**Status: planned.**
+**Status: landed.**
 
 **Goal.** A finished sitting is segmented, measured and classified *before* anyone opens it; a read
 never waits on work that is already scheduled; and that work stops paying for a rebuild it does not
@@ -268,8 +268,11 @@ immediately and then one every `job_sweep_s`.
    segmented, with no request naming it.
 3. `POST /sittings/close` that closes nothing (`reason="nothing open"`) submits nothing.
 
-**Falsification.** `the_sweep_forgets_the_clock_case.sh` removes the `ended_ms + gap < now` half of
-the predicate; assertion 2 must fail.
+**Falsification.** `the_close_route_forgets_to_prepare.sh` removes the queue call from the close
+route; assertion 1 must fail. (This plan first named `the_sweep_forgets_the_clock_case.sh`, which
+would have duplicated task 24.2's break on the same predicate; the honest falsifier for this task is
+the code it adds — the trigger — and the sweep's clock case is already pinned by
+`the_runner_segments_an_open_sitting.sh`. Recorded rather than quietly renamed.)
 
 ### Task 24.4 — the read reports `preparing` instead of waiting
 
@@ -342,7 +345,36 @@ Nothing is retired: the read path's lazy materialisation is deliberately retaine
 (§3.4), and `reference_state` keeps its ownership of invalidation — this phase narrows what it
 counts, it does not replace it. The one thing removed is the wider trigger rule, replaced in place.
 
-## 9. Execution route
+## 9. Execution record
+
+What the implementation changed from what this plan said, and why.
+
+* **Task 24.3's falsification was renamed** from `the_sweep_forgets_the_clock_case.sh` to
+  `the_close_route_forgets_to_prepare.sh`: the old name would have duplicated task 24.2's break on
+  the same predicate, while the code 24.3 adds is the close trigger. The sweep's clock case is
+  pinned by 24.2's script, which fails two assertions when the predicate is widened.
+* **The invalidation test's evidence changed.** It first asserted `identified_by = 'workout'` as
+  proof the tagging pass ran; `autotag_sitting` legitimately overwrites that column when a segment
+  matches a reference confidently, so the durable evidence is `workout_id`. The overwrite itself is
+  a separate observation, recorded in `ECOSYSTEM.md` rather than changed here.
+* **Two conditions were added that the plan did not have**, both found by writing the tests:
+  `awaiting_segments` gained `EXISTS (note_events)` and `preparing` gained `note_count > 0`, because
+  a sitting with no notes can never produce a segment and would otherwise be selected on every tick
+  for ever and reported as preparing for ever.
+* **The browser check waits for the outcome.** The existing scenario slept a fixed 1.5 s and then
+  asserted segments, which becomes a race once the work is asynchronous; it now polls until the
+  sitting is closed and not preparing, which is the outcome the phase is for.
+
+**One acceptance gap, stated rather than papered over.** The `Preparing this sitting…` display and
+its bounded retry are **not asserted end to end**. The e2e server runs with the worker on, and on the
+fixture it finishes the preparation faster than a browser can observe it, so no browser assertion can
+see the state without racing. What *is* asserted is the server behaviour it depends on — that a
+scheduled sitting answers `preparing` with no work done, and that the same request is complete after
+one `tick()` (`tests/test_jobs.py`) — plus the fact that the branch is in the built bundle. Closing
+the gap honestly means a way to hold the worker still in a scenario, which would be a test hook in
+production code; it is recorded instead.
+
+## 10. Execution route
 
 ```text
 Execution Route:

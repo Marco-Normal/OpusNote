@@ -59,6 +59,15 @@ counting.
 
 Everything else — `/api/calibration/next`, `/api/stats`, `/api/profile` — is convenience on top.
 
+The practice log has its own surface under `/api/practice` — ingest, sittings, segments, analytics —
+and one field on it is worth recording here, because it is the contract between the browser and the
+background worker:
+
+`GET /api/practice/sittings/{id}` answers `"preparing": true` with an empty `segments` list when the
+server is already preparing that sitting in the background (Phase 24). The client asks again a
+moment later. When nothing is scheduled the same route materialises the sitting itself, exactly as
+it always did — so the field reports a state, it never becomes a requirement on the caller.
+
 ## 3. Difficulty model
 
 Nine independent skills, each on a level from 1 to 10. `backend/app/skills_data.py` is the single

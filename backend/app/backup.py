@@ -161,6 +161,14 @@ def import_document(
             conn.execute(f"DELETE FROM {name}")
     for name, rows in tables.items():
         written[name] = _insert(conn, name, rows, merge=mode == "merge")
+    if mode == "replace" and "reference_state" in known:
+        # `replace` empties every table, and the matcher's cache version lives in one row of
+        # a table like any other — so a restore used to leave it missing, and a document
+        # exported before that table existed cannot put it back. The cache then reports "no
+        # table to ask" (-1) and is never used: ~1 s on every sitting open and every accuracy
+        # report until the next restart, which repairs it. `init_db` does the same insert,
+        # which is why this only ever lasted a restart; a restore does not restart anything.
+        conn.execute("INSERT OR IGNORE INTO reference_state (id, version) VALUES (1, 0)")
     return {
         "mode": mode,
         "written": written,

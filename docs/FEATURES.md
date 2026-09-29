@@ -226,6 +226,14 @@ silence and into **segments** at the pauses the passage itself calls for, which 
 per segment.
 Nothing is recomputed behind the user's back: a boundary moved by hand stays moved.
 
+**A finished sitting is prepared before you open it.** The segmentation, its measurements, the search
+for the pieces you played and the practice-kind offers all happen on a background worker as soon as
+the sitting ends — when the piano goes away, when the silence gap runs out, or at the next start if
+that was missed. Opening a sitting is therefore a read: if the work is still in flight the timeline
+says *Preparing this sitting…* and fills in a moment later, instead of the click waiting for it.
+Nothing about the result changes either way; with background preparation switched off
+(`SRT_BACKGROUND_JOBS=0`) the read prepares the sitting itself, exactly as it did before.
+
 - **Segments are cut where the playing turns over, not at one fixed silence.** A pause becomes a
   boundary when it is long *for what was being played*: at least `SRT_SEGMENT_FLOOR_MS` (2 s) and
   `SRT_SEGMENT_PULSE_MULTIPLIER` (2.5) times the passage's own pulse, with `SRT_SEGMENT_CEILING_MS`

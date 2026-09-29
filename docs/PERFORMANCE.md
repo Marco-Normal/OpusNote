@@ -113,6 +113,62 @@ switch, and the switch is usually the explanation for a bug report that says "it
 write one, say so in the docstring — and when a read sits on the *edit* path, remember its cost is
 multiplied by how often somebody clicks.
 
+### 1.5 An invalidation rule wider than the thing it invalidates
+
+**Symptom.** The first click on a sitting nobody had opened took **1,755 ms**, and the same click
+afterwards took 90 ms. Reported as "it takes some time when I first click it".
+
+**Cause.** The reference cache is keyed on `reference_state.version`, which three triggers on
+`segments` bump. Two of the writes that bumped it cannot change what the cache is made of:
+
+* `ensure_segments` inserts its new segments **unlabelled**, and `_labelled_rows` only selects
+  segments with a piece on them;
+* `_tag_from_workouts` rewrites `identified_by` on every segment a workout overlaps — including
+  segments with no piece at all — and `identified_by` is in the UPDATE trigger's column list,
+  because it decides whether a row is a `similarity` guess and therefore not training data.
+
+So segmenting a sitting threw away the material it was about to read. Measured on the owner's
+library, in one process with the cache warm, on identical fixtures:
+
+| Invalidation rule | first click | reference rebuilds during it |
+| --- | ---: | ---: |
+| every write | 1,755 ms | 1 |
+| only a reference change | **699–770 ms** | **0** |
+
+That is ~985 ms — well over half the wait — spent deriving, from 49 labelled segments and a
+quarter of a million notes, an answer identical to the one just discarded.
+
+**Fix.** Each trigger asks whether the row *is or becomes* a reference:
+`piece_id IS NOT NULL AND COALESCE(identified_by, '') <> 'similarity'`. The insert and delete
+triggers guard on the row itself; the update trigger guards on either side of the change, because a
+row entering or leaving the set is a change and a write to a row that is not a reference on either
+side is not. `schema.py` drops and recreates the triggers, since `CREATE TRIGGER IF NOT EXISTS`
+would leave an existing database on the old rule for ever.
+
+**Take the shape, not the SQL.** An invalidation rule must be a function of *exactly* what the
+derived material is a function of. Over-invalidating is always safe and never free, and on a path
+that both writes and reads the cache it is not a rounding error — it was the dominant cost of the
+whole operation. The direction of the risk is what makes this hard: over-bumping costs a rebuild,
+under-bumping serves a stale answer, so narrow it against a test that walks every write path which
+*does* change the set, not against one that only proves the cheap direction.
+
+### 1.6 Work that runs on a read, when the read is not the only thing that knows the work is due
+
+The other half of that same 1,755 ms was not a cost problem at all: the segmentation, its metrics,
+the matcher's pass and the kind offers all ran inside the request that first opened the sitting,
+although nothing about them depends on somebody looking. They depend on the playing having stopped,
+and the server is told that far earlier — the browser closes the sitting when the piano goes away.
+
+So the work moved to a background thread (`practice/jobs.py`), triggered by the close route, by a
+sweep every twenty seconds, and once at boot; and the read, when it finds that work already
+scheduled, answers `preparing` in about a millisecond instead of waiting for it. The click on a
+fresh sitting is now the warm read it already was on every other one (~90 ms, §1.3).
+
+**The rule this keeps.** The background pass calls the same `store.ensure_segments` the read still
+calls when nothing is scheduled. It owns *when*, never *what*, so it is an optimisation over a path
+that still works — which is also why a job that fails is survivable and why turning it off
+(`SRT_BACKGROUND_JOBS=0`) is the old behaviour rather than a degraded one.
+
 ---
 
 ## 2. The rules
@@ -127,7 +183,9 @@ rows down (1.2). Check every caller of the helper, not just the one you found.
 **R3 — Sort once, then bisect or carry a cursor.** Never rescan a list you have already walked (1.1).
 
 **R4 — Cache derived material; let the database own the invalidation.** A version the writes maintain
-(triggers) beats a list of call sites to remember (1.3).
+(triggers) beats a list of call sites to remember (1.3) — and the trigger must count *only* what the
+cached material is a function of, or it is the database throwing the cache away on the cache's own
+read path (1.5).
 
 **R5 — Never bound cost by discarding data.** A newest-N cap on the matcher's references is a
 *correctness* change wearing a performance fix's clothes: measured on the owner's library, a newest-10
@@ -162,6 +220,8 @@ If you touch one of these, you own its complexity.
 | `pedal.blur_attacks` | the segment's notes and stretches, O((N+S) log N) | `tests/test_pedal.py`, `falsifications/drop_blur_positions.sh` |
 | `store._notes_for_segments` | one query per sitting; the notes in the group's range | `test_reading_a_sitting_does_not_read_its_notes_once_per_open_section` |
 | `store.cached_references` | nothing on a hit; the labelled set only when the version moves | the invalidation tests in `tests/test_autotag.py` |
+| `store.awaiting_segments` | one indexed probe per sitting, on a **tick** (Phase 24) — never a click | `tests/test_jobs.py` |
+| `practice/jobs.py` | the work `ensure_segments` already costs, once per sitting, and only while it is queued or running | `tests/test_jobs.py` |
 | `store.segment_identification` | what the caller hands it; accept `examples`, `signatures`, `notes` rather than re-deriving | — |
 | `store.candidates_for_sitting` | the sitting's own segments, and its notes **once** | the note-read guard above |
 | `store._refresh_metrics` | the sitting's notes and its pedal stream, once each | metric equivalence in `tests/test_practice_metrics.py` |
@@ -278,7 +338,8 @@ Before you commit backend work that touches a hot path:
 
 The case studies are in `AGENT-LOG.md`, with the commits that fixed them. The four that produced this
 document: `a63e991` (1.1 and 1.2-part), `b9e0be5` (1.3), `8b775c3` (1.2), `94590af` (R5). The
-non-optimization in R8 is `f7decad`.
+non-optimization in R8 is `f7decad`. Phase 24 added 1.5 and 1.6: `692c132` (the invalidation rule),
+`a93899a` (the runner) and `671d4fd` (the read that answers instead of waiting).
 
 [docs/TEST-STRATEGY.md](TEST-STRATEGY.md) owns how a change is known not to have broken something;
 [docs/ENGINEERING.md](ENGINEERING.md) owns what the code is. This document owns what it costs.

@@ -3912,3 +3912,85 @@ documents (a tracked `docs/*.md` would also have to be linked from the README to
 
 Impact on the other side: none. Nothing reads the row; it is a signpost for a human or agent
 looking for a run's narrative.
+
+## 2026-09-29 — async-sitting-preparation — Phase 24 (the sitting is ready before you open it)
+
+Scope: `backend/app/practice/jobs.py` (new), `backend/app/practice/{store,schema,api,models}.py`,
+`backend/app/config.py`, `backend/app/main.py`, `backend/app/backup.py`, `backend/tests/{test_jobs
+(new),test_autotag,test_backup,conftest}.py`, `backend/tools/falsifications/*` (four new),
+`backend/tools/e2e_browser.py`, `frontend/src/lib/types.ts`,
+`frontend/src/components/PracticeLogView.svelte`, and the documents listed at the end.
+
+Requested as "some async code, specially for when a sitting is done to pre segmentize and classify
+what it sees fit, because it does take some time to do it when I first click it". Measuring it first
+changed the shape of the work, which is the part worth recording.
+
+**The measurement.** On a rebuilt copy of the owner's real library (238,665 notes, 539,726 pedal
+events, 17 sittings, 49 labelled segments), the first click on the never-opened 23,482-note sitting
+cost **1,755 ms**; the same sitting once open cost 90 ms. Breakdown: `_refresh_metrics` 430 ms,
+`autotag_sitting` ~1,100 ms, notes+cut+insert+workout tag ~260 ms, segment rows 3 ms.
+
+**About 985 ms of that was a bug, not scheduling.** The matcher's reference cache is keyed on
+`reference_state.version`, bumped by three triggers on `segments`, and two of the writes that bumped
+it cannot change what the cache is made of: `ensure_segments` inserts its new segments *unlabelled*
+(`_labelled_rows` selects only segments with a piece), and `_tag_from_workouts` rewrites
+`identified_by` on every segment a workout overlaps, piece or no piece, while `identified_by` is in
+the UPDATE trigger's column list because a `similarity` guess is deliberately not training data. So
+segmenting a sitting threw away the material it was about to read. A/B on identical fixtures in one
+process with the cache warm: **1,755 ms / 1 rebuild** under the old rule, **699–770 ms / 0 rebuilds**
+under a rule that counts only references.
+
+**Did.** Two changes, in four commits.
+
+1. `692c132` — the invalidation rule is narrowed to what the cached material is a function of
+   (`piece_id IS NOT NULL AND COALESCE(identified_by,'') <> 'similarity'`), the insert and delete
+   triggers guarding on the row and the update trigger on either side of the change. The schema drops
+   and recreates the triggers, because `CREATE TRIGGER IF NOT EXISTS` would leave an existing
+   database on the wide rule for ever. No `SCHEMA_VERSION` bump: the shape is unchanged and an older
+   build's wider rule is still correct, only slower. Guarded in both directions — an unlabelled
+   insert, a cut and a machine guess must not invalidate; labelling, unlabelling, moving a
+   reference's window, inserting one and deleting one still must.
+2. `a93899a` — `practice/jobs.py`, one daemon thread over a queue whose job is a sitting id, with the
+   work left as `store.ensure_segments` so the runner owns *when* and nothing else. Selection is
+   `store.awaiting_segments` (finished sittings with no segments, newest first, bounded per tick, one
+   indexed probe per sitting). Two settings: `SRT_BACKGROUND_JOBS` (default on) and `SRT_JOB_SWEEP_S`
+   (20 s). The runner does not start under the suite, which drives `tick()`/`drain()` by hand.
+3. `fc81c48`… → `671d4fd` — the close route queues the sitting it just closed, `start()` sweeps the
+   backlog before the thread exists, and the detail route answers `preparing: true` with what is
+   stored when a job for that sitting is queued or running — instead of waiting for it. When nothing
+   is scheduled the read materialises the sitting exactly as before, so the background pass is an
+   optimisation over a path that still works and nothing can be stranded by a failed job.
+4. `24.5` — a `replace` restore re-seeds the `reference_state` singleton it empties (a document from
+   before that table existed cannot restore it, and the cache was off until the next restart).
+
+**Two things the tests found that reading did not.** A note-less sitting is unreachable through the
+API, but if one existed the sweep would select it every tick for ever to do nothing — so
+`awaiting_segments` gained `EXISTS (note_events)` and `preparing` gained `note_count > 0`. And the
+invalidation test's first oracle (`identified_by = 'workout'`) was wrong: `autotag_sitting` overwrites
+that column when a segment matches confidently, so `workout_id` is the durable evidence. That the
+matcher overwrites a workout tag is now recorded in `ECOSYSTEM.md` rather than assumed away.
+
+**One acceptance gap, recorded not papered over.** The `Preparing this sitting…` display and its
+bounded retry are not asserted end to end — the browser tier runs with the worker on and the fixture
+prepares faster than a browser can observe, so the assertion would be a race. The server behaviour is
+asserted instead, and the gap is named in `PLAN-PHASE24.md` § *Execution record* and in
+`ECOSYSTEM.md` § *Phase 24*.
+
+**Verified.** Backend **1005 passed**; frontend **169 passed**; `svelte-check` 0 errors/warnings;
+build clean; `./check.sh --fast` green after every task and `./check.sh --full` green at the end.
+Four falsifications, each seen to fail and to name its assertion:
+`widen_the_reference_invalidation`, `the_runner_segments_an_open_sitting`,
+`the_close_route_forgets_to_prepare`, `the_read_waits_for_a_scheduled_job`. The browser tier's
+practice-log scenario was run on its own against a server with the worker enabled and passes,
+including "unplugging the piano closed and segmented the sitting (1 segments, preparing=False)".
+
+**Impact on the other side.** A new background writer exists inside the API process; it writes only
+`segments`, `segment_metrics`, `identification_outcomes`, `segments.practice_kind*` and
+`segments.piece_id` — through `ensure_segments`, the same function the read calls, so there is still
+one owner of what segmentation means. Two new environment variables are read
+(`SRT_BACKGROUND_JOBS`, `SRT_JOB_SWEEP_S`). One response field is added
+(`SittingDetail.preparing`), additive with a default. The three `reference_state` triggers changed
+shape, so a build that predates this one and opens the database will have its own wider triggers
+recreated on its next `init_db` — correct, just slower. `AGENT-LOG.md` is the place an agent working
+on a second machine should look before writing to `segments` from outside `ensure_segments`: the
+version counter is now a precise contract, not "any write".

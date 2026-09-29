@@ -174,6 +174,34 @@ def test_merging_a_backup_keeps_what_is_already_here(client) -> None:
     assert client.get(f"/api/practice/sittings/{sitting_id}").status_code == 200
 
 
+def test_a_replace_restore_leaves_the_matcher_its_cache_version(client) -> None:
+    """`replace` empties every table, including the one row the reference cache is keyed on.
+
+    A document exported before that table existed cannot put the row back, and the cache then
+    reports "no table to ask" (-1) and is never used at all: about a second on every sitting
+    open and every accuracy report, until the next restart happened to repair it. A restore
+    must leave the row behind itself, because it does not restart anything.
+    """
+    _populate(client)
+    document = client.get("/api/backup/export").json()
+    # A document from before the row existed is, exactly, a document without that table.
+    document["tables"].pop("reference_state", None)
+
+    replaced = client.post(
+        "/api/backup/import",
+        json={"document": document, "mode": "replace", "confirm": True},
+    )
+    assert replaced.status_code == 200, replaced.text
+
+    conn = db.connect()
+    try:
+        assert practice_store._reference_version(conn) >= 0, (
+            "the reference cache must still have a version to be keyed on after a restore"
+        )
+    finally:
+        conn.close()
+
+
 def test_merging_twice_changes_nothing(client) -> None:
     _populate(client)
     document = client.get("/api/backup/export").json()
