@@ -6,6 +6,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from .opus import opus_problem
+
 PieceStatus = Literal["active", "completed", "paused"]
 
 #: Upper bound for an A/B loop marker. Nothing here is longer than a couple of
@@ -163,6 +165,19 @@ class RepertoireStatus(BaseModel):
 DATE_PATTERN = r"^\d{4}-\d{2}-\d{2}$"
 
 
+def _validate_opus(value: str | None) -> str | None:
+    """The guardrail on the catalogue number. See `repertoire/opus.py`.
+
+    Validated here rather than in the store because it is a rule about *input*, and a 422
+    with an explanation is the useful answer. The canonical form is a rule about *storage*
+    and lives in the store, so the legacy importer is covered by it too.
+    """
+    problem = opus_problem(value)
+    if problem is not None:
+        raise ValueError(problem)
+    return value
+
+
 class PieceCreate(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     composer_id: int | None = None
@@ -172,6 +187,8 @@ class PieceCreate(BaseModel):
     started_on: str | None = Field(default=None, pattern=DATE_PATTERN)
     status: PieceStatus = "active"
     description: str | None = None
+
+    _check_opus = field_validator("opus")(_validate_opus)
 
 
 class PieceUpdate(BaseModel):
@@ -189,6 +206,8 @@ class PieceUpdate(BaseModel):
     started_on: str | None = Field(default=None, pattern=DATE_PATTERN)
     status: PieceStatus | None = None
     description: str | None = None
+
+    _check_opus = field_validator("opus")(_validate_opus)
 
 
 class ComposerCreate(BaseModel):

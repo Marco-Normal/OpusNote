@@ -147,6 +147,12 @@ and one of them is already in the Rust schema:
 `piano-progress.notes` is the odd one out and renaming it at import time is free.
 Leaving it would guarantee confusion in a database that also stores MIDI notes.
 
+**`pieces.opus` has one canonical form** (`Op. 27 No. 2`), applied on write and to the rows already
+stored — the real library held the same catalogue number four ways, and one of them twice in two
+cases (`w264` beside `W264`). That is a *data* migration and **`SCHEMA_VERSION` stays 5**: no table
+and no column changes, so an older build reads these rows exactly as it did. The rule, its guardrail
+and where it is applied are in `docs/ENGINEERING.md` § 2.
+
 ---
 
 ## 5. Migrating off the Rust app without losing anything

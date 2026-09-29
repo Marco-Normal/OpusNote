@@ -1146,9 +1146,12 @@ def test_the_journal_feed_names_a_piece_by_its_catalogue_number(client) -> None:
 
     The owner's library holds two Chopin waltzes — both "Waltz", one ``Op 64. No. 3`` and one
     ``Op. 69 No. 1``, spelled exactly as the library spells them — and an entry's piece name has to
-    say which one it was written about. The spellings are reproduced rather than tidied because the
-    point of the test is that the label carries what is stored, not what is stored after a rule the
-    app does not have.
+    say which one it was written about.
+
+    The messy spellings are still what is *posted*, because they are what the real library holds;
+    the canonical form is what the field now stores (`repertoire/opus.py`), so that is what the
+    label carries. What the test is about is unchanged either way — the two waltzes must not read
+    alike — so it asserts that as well as the two strings.
     """
     first = client.post(
         "/api/repertoire/pieces", json={"title": "Waltz", "opus": "Op 64. No. 3"}
@@ -1164,8 +1167,9 @@ def test_the_journal_feed_names_a_piece_by_its_catalogue_number(client) -> None:
 
     feed = client.get("/api/repertoire/journal").json()
     by_content = {row["content"]: row for row in feed}
-    assert by_content["the first"]["piece_opus"] == "Op 64. No. 3"
+    assert by_content["the first"]["piece_opus"] == "Op. 64 No. 3"
     assert by_content["the second"]["piece_opus"] == "Op. 69 No. 1"
+    assert by_content["the first"]["piece_opus"] != by_content["the second"]["piece_opus"]
 
 
 def test_the_journal_feed_searches_the_prose(client) -> None:

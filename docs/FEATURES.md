@@ -168,6 +168,17 @@ description, and can create a **composer inline** (`+ new composer…` in the co
 fresh installation needs nothing else. From a piece's detail view it is also possible to add
 journal entries, edit the piece, attach a score, upload a recording, or delete it.
 
+**The catalogue number is tidied, and refuses to be meaningless.** It is what tells two pieces
+with the same title apart — two Chopin waltzes are both *Waltz* — so the library keeps one form
+of it: `Op` and `No` carry a period and a space (`Op. 27 No. 2`), a period after the number is
+not the abbreviation's period, and a catalogue initial is upper case (`w264` becomes `W264`).
+Typing `Op 10. No. 4` shows *Saved as Op. 10 No. 4* while the field is still being filled in,
+and leaving the field writes that form into it, so the screen matches what the library stores.
+A value with no number in it (`Sonata`, `Op.`) is refused beside the field, and the *Add piece*
+button stays disabled until it is fixed: it would look like information and could not
+distinguish anything. A value the rule does not recognise is left alone apart from its spacing,
+because there is no second copy of what was typed.
+
 **Journal.** Entries carry tags and two ratings — how hard it felt and how well it went. The
 feed can be filtered by tag, where a tag matches the label written rather than a word in the
 prose. An entry can point at the recording it concerns; deleting the recording leaves the

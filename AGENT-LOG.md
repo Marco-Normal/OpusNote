@@ -4239,3 +4239,56 @@ tooLong=False`, and scenario 5 no longer stops the tier. `--fast` green, `svelte
 build clean. `docs/FEATURES.md` § 4 previously said Focus hides the note strip, which was wrong —
 the *run* hides it, and Focus hides the header and device bar; corrected there, with the measured
 budget and the fit note recorded in `docs/ENGINEERING.md` § 7.
+
+## 2026-09-29 — catalogue-numbers — one canonical form for `pieces.opus`, and a guardrail at insert
+
+Scope: `backend/app/repertoire/opus.py` (new), `{store,models,schema,importer}.py`,
+`backend/tests/test_opus.py` (new), `backend/tests/test_repertoire.py`,
+`backend/tools/e2e_browser.py`, `backend/tools/falsifications/*` (four new),
+`frontend/src/lib/pieceOpus.ts` (new) + `.test.ts` (new),
+`frontend/src/components/PieceEditor.svelte`, and the documents listed at the end.
+
+Asked for as "normalize the Opus number, maybe when we are inserting a new piece, have some kind
+of guardrail". Read from the owner's real backup rather than from the code, because the rule has to
+fit what is actually stored: **21 pieces, 20 with a catalogue number, and the same number written
+four ways** — `Op 10. No. 4` beside `Op. 10 No. 3` and `Op 10. No. 1`, `Op . 78` with a space before
+the period, `S.566a` with none after it — plus the same catalogue number twice in two cases, `w264`
+and `W264`, on two rows. All 20 carry a digit; that is what makes "must contain a number" a rule
+rather than a preference.
+
+**One canonical form**, `Op. 27 No. 2`: `Op`/`No` carry a period and one space, a period *after*
+the number is not the abbreviation's period (`Op. 10. No. 4` → `Op. 10 No. 4`), and a leading
+catalogue initial followed by its number is upper case (`w264` → `W264`). Anything the rule does
+not recognise keeps its spelling with the whitespace tidied — `see the Henle edition` and `Book 2`
+survive — because mangling a value the player typed loses the only copy of it.
+
+**Where it is applied, and why that is three places rather than one.** The rule has one owner
+(`repertoire/opus.py`); the *write* has three entry points and two of them cannot be moved:
+`store.create_piece`/`update_piece` (the API), the legacy importer's `_upsert` (table-generic by
+design — it also carries `legacy_id` matching and re-import idempotence), and the backup restore,
+whose writer is generic on purpose. The first two call the rule; the third is tidied by the startup
+migration, which also canonicalises the rows already stored. That migration is *data*, not shape:
+`SCHEMA_VERSION` **stays 5**, and it is idempotent, so a canonical library costs one SELECT and
+reports nothing.
+
+**The guardrail.** A value that is present must contain a digit; otherwise `POST`/`PATCH` answers
+**422** with the message from the same module. `Sonata` or `Op.` as an opus is worse than an empty
+field — it looks like information and distinguishes nothing — which is the confusion the field
+exists to remove. The editor mirrors the rule (`frontend/src/lib/pieceOpus.ts`, the authority named
+in its header) so the answer arrives while the field is being filled in: typing `Op 10. No. 4` shows
+*Saved as Op. 10 No. 4*, leaving the field writes that form into it, and a numberless value puts the
+refusal beside the field and disables *Add piece*. The server remains the authority; the mirror is
+cosmetic, and `pieceOpus.test.ts` pins the same table as `test_opus.py::LIBRARY_OPUSES` so the two
+cannot drift silently.
+
+**A pre-existing test had to change, and its premise is worth recording.**
+`test_the_journal_feed_names_a_piece_by_its_catalogue_number` asserted that a messy spelling
+(`Op 64. No. 3`) reached the feed's label — explicitly because "the app does not have" a rule. It
+does now, so the expected strings are the canonical ones and the test asserts the property it is
+really about as well: the two Chopin waltzes still do not read alike. That is a superseded
+expectation, not a loosened assertion.
+
+Verified: `test_opus.py` 58 tests, backend suite **1068 passing** (1067 + the updated one),
+frontend **187**, `svelte-check` 0 errors, build clean, and `scenario_repertoire` passes three new
+assertions — the preview, the in-place tidy after leaving the field, and the refusal beside the field
+with the button disabled — plus the stored form in the library row.

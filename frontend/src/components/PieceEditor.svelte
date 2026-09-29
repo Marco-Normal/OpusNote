@@ -7,6 +7,7 @@
    * edit, so the PATCH stays a genuine partial update.
    */
   import { api } from '../lib/api';
+  import { normaliseOpus, opusProblem } from '../lib/pieceOpus';
   import type { Composer, PieceDetail, PieceInput } from '../lib/types';
 
   interface Props {
@@ -57,6 +58,22 @@
 
   const isEdit = $derived(piece !== null);
 
+  /**
+   * What the opus field will become, and why it cannot be saved as it stands.
+   *
+   * The rule is the server's (`backend/app/repertoire/opus.py`); this mirrors it so the
+   * answer arrives while the field is being filled in rather than as a 422 after a save.
+   * The catalogue number is not cosmetic: two pieces called "Waltz" are told apart by it,
+   * and the library this app was built from had the same number written four ways.
+   */
+  const opusIssue = $derived(opusProblem(form.opus));
+  const opusPreview = $derived.by(() => {
+    if (opusIssue !== null) return null;
+    const canonical = normaliseOpus(form.opus);
+    if (canonical === null || canonical === form.opus.trim()) return null;
+    return canonical;
+  });
+
   function buildBody(composerId: string): PieceInput {
     return {
       title: form.title.trim(),
@@ -94,6 +111,12 @@
     error = null;
     if (!form.title.trim()) {
       error = 'A title is required.';
+      return;
+    }
+    // Also enforced by the server, which is the authority; refusing here is what makes the
+    // message appear beside the field instead of after a round trip.
+    if (opusIssue !== null) {
+      error = opusIssue;
       return;
     }
     saving = true;
@@ -165,7 +188,24 @@
 
     <label>
       <span>Opus</span>
-      <input bind:value={form.opus} placeholder="Op. 118 No. 2" />
+      <input
+        bind:value={form.opus}
+        placeholder="Op. 118 No. 2"
+        aria-invalid={opusIssue !== null ? 'true' : undefined}
+        aria-describedby="opus-note"
+        onblur={() => {
+          // Tidy the field where the player can see it. What is on screen before the save is
+          // then what the library will show, rather than a silent rewrite afterwards.
+          form.opus = normaliseOpus(form.opus) ?? '';
+        }}
+      />
+      {#if opusIssue !== null}
+        <span class="field-note bad" id="opus-note">{opusIssue}</span>
+      {:else if opusPreview !== null}
+        <span class="field-note" id="opus-note">Saved as {opusPreview}</span>
+      {:else}
+        <span class="field-note" id="opus-note">The catalogue number — it is what tells two pieces with the same title apart.</span>
+      {/if}
     </label>
 
     <label>
@@ -205,7 +245,7 @@
   </div>
 
   <div class="row">
-    <button class="primary" type="submit" disabled={saving}>
+    <button class="primary" type="submit" disabled={saving || opusIssue !== null}>
       {saving ? 'Saving…' : isEdit ? 'Save changes' : 'Add piece'}
     </button>
     <button type="button" class="ghost" onclick={onCancel} disabled={saving}>Cancel</button>
@@ -260,5 +300,14 @@
 
   textarea {
     resize: vertical;
+  }
+
+  .field-note {
+    font-size: 0.72rem;
+    color: var(--muted);
+  }
+
+  .field-note.bad {
+    color: var(--bad);
   }
 </style>

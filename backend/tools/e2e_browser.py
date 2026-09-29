@@ -1664,6 +1664,33 @@ def scenario_repertoire(browser) -> None:
     page.fill('.editor input[placeholder="Intermezzo"]', "First piece")
     page.fill('.editor input[placeholder="A Major"]', "C Major")
     page.fill('.editor input[placeholder="Late Intermediate"]', "Beginner")
+
+    # The catalogue number, which is what tells two pieces with the same title apart. The
+    # field is free text, so the editor shows the canonical form while it is still being
+    # typed and refuses a value that carries no number at all — and the server is the
+    # authority for both, which `test_opus.py` checks directly. A value with no number is
+    # the case worth proving here: it is worse than an empty field, because it looks like
+    # information and cannot disambiguate anything.
+    opus_field = '.editor input[placeholder="Op. 118 No. 2"]'
+    page.fill(opus_field, "Op 10. No. 4")
+    check(
+        page.locator(".editor .field-note").inner_text().strip() == "Saved as Op. 10 No. 4",
+        "the opus field shows what will be stored while it is still being typed",
+    )
+    page.locator(opus_field).blur()
+    check(
+        page.input_value(opus_field) == "Op. 10 No. 4",
+        "leaving the field tidies it in place, so the screen matches the library",
+    )
+    page.fill(opus_field, "Sonata")
+    check(
+        page.locator(".editor .field-note.bad").count() == 1
+        and page.locator('.editor button[type="submit"]').is_disabled(),
+        "a catalogue number with no number in it is refused beside the field",
+    )
+    page.fill(opus_field, "Op 10. No. 4")
+    page.locator(opus_field).blur()
+
     # Creating a composer inline is the other half of a first run: with an empty
     # library there is nothing to pick from.
     page.select_option('.editor select', "__new__")
@@ -1680,6 +1707,10 @@ def scenario_repertoire(browser) -> None:
     check(
         page.locator(".row-piece", has_text="First piece").count() == 1,
         "and it is listed",
+    )
+    check(
+        page.locator(".row-piece", has_text="Op. 10 No. 4").count() == 1,
+        "and the catalogue number is stored in its canonical form",
     )
     page.screenshot(path=str(SHOTS / "16-first-piece.png"), full_page=True)
 

@@ -11,6 +11,7 @@ from typing import Any, Sequence
 
 from .. import db
 from ..config import settings
+from .opus import normalise_opus
 
 
 def _media_dir() -> Path:
@@ -355,7 +356,10 @@ def create_piece(conn: sqlite3.Connection, fields: dict[str, Any]) -> int:
         {
             "composer_id": fields.get("composer_id"),
             "title": fields["title"],
-            "opus": fields.get("opus"),
+            # Canonicalised here rather than in the request model because this is the one
+            # path every write takes — the API and the legacy importer both come through it
+            # — and a rule about the stored form belongs where the storing happens.
+            "opus": normalise_opus(fields.get("opus")),
             "difficulty": fields.get("difficulty"),
             "key": fields.get("key"),
             "started_on": fields.get("started_on"),
@@ -384,6 +388,10 @@ def update_piece(conn: sqlite3.Connection, piece_id: int, changes: dict[str, Any
     updates = {key: value for key, value in changes.items() if key in PIECE_COLUMNS}
     if not updates:
         return conn.execute("SELECT COUNT(*) FROM pieces WHERE id = ?", (piece_id,)).fetchone()[0]
+    # An explicit null clears the column and stays null; anything else is canonicalised, as
+    # in `create_piece`.
+    if "opus" in updates:
+        updates["opus"] = normalise_opus(updates["opus"])
     assignments = ", ".join(f"{column} = :{column}" for column in updates)
     cursor = conn.execute(
         f"UPDATE pieces SET {assignments} WHERE id = :piece_id",

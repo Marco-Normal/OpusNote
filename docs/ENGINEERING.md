@@ -78,6 +78,24 @@ predates them still holds. The browser composes the label in one place —
 `frontend/src/lib/pieceLabel.ts` — which is also where the guarantee lives that no two labels in one
 list are the same string; see `docs/FEATURES.md` § 6.
 
+`pieces.opus` has one canonical form on the way in, and the rule is **hardcoded, not a tunable**
+(`backend/app/repertoire/opus.py`): `Op. 27 No. 2`, a period after the abbreviation and after
+nothing else, an upper-case leading catalogue initial. The library this app was built from held the
+same catalogue number four ways (`Op 10. No. 4`, `Op 10. No. 3`, `Op . 78`, `w264`) and twice in two
+cases (`w264` beside `W264`), which is what the rule removes. It is applied in the store
+(`create_piece`/`update_piece`) and in the legacy importer, which writes through a table-generic
+upsert rather than through the store; a database restored from an old backup is tidied by the
+startup migration instead, because that writer is generic on purpose. `migrate` therefore also
+rewrites the values already stored — idempotently, so a canonical library reports nothing — and
+that is a *data* migration: **`SCHEMA_VERSION` did not move**, because an older build reads these
+rows exactly as it did.
+
+`POST`/`PATCH /api/repertoire/pieces` answers **422** for an opus that contains no digit, with the
+message from the same module. A value that is present but distinguishes nothing (`Sonata`, `Op.`) is
+worse than an empty field: it looks like information and cannot tell two pieces apart. The client
+mirrors the rule for the editor's live preview (`frontend/src/lib/pieceOpus.ts`) so the answer
+arrives before a save; the server remains the authority.
+
 ## 3. Difficulty model
 
 Nine independent skills, each on a level from 1 to 10. `backend/app/skills_data.py` is the single

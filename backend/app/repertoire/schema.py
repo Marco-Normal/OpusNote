@@ -11,6 +11,8 @@ a table called `notes` holding prose is a trap.
 
 from __future__ import annotations
 
+from .opus import normalise_opus
+
 REPERTOIRE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS composers (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -182,6 +184,32 @@ ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
 )
 
 
+def _normalise_stored_opus(conn) -> int:
+    """Rewrite catalogue numbers already in the column into their canonical form.
+
+    A data migration rather than a shape one, so `SCHEMA_VERSION` does not move: an older
+    build reads these rows exactly as it did, and the column means the same thing. It runs
+    from `migrate` because that already runs on every startup and is required to be
+    idempotent — and it must be, or every boot would rewrite the column.
+
+    Only rows whose value actually changes are written, so a canonical library costs one
+    SELECT and reports nothing.
+
+    This is also what tidies a database restored from an old backup: the restore writes rows
+    as they are, table-generically and by design, and the next startup canonicalises them.
+    """
+    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if "pieces" not in tables:
+        return 0
+    changed = 0
+    for row in conn.execute("SELECT id, opus FROM pieces WHERE opus IS NOT NULL").fetchall():
+        canonical = normalise_opus(row[1])
+        if canonical != row[1]:
+            conn.execute("UPDATE pieces SET opus = ? WHERE id = ?", (canonical, row[0]))
+            changed += 1
+    return changed
+
+
 def migrate(conn) -> list[str]:
     """Bring an existing database up to the current schema. Returns what changed.
 
@@ -197,4 +225,7 @@ def migrate(conn) -> list[str]:
         if column not in existing:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
             applied.append(f"{table}.{column}")
+    normalised = _normalise_stored_opus(conn)
+    if normalised:
+        applied.append(f"pieces.opus ({normalised} canonicalised)")
     return applied

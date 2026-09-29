@@ -16,6 +16,8 @@ import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .opus import normalise_opus
+
 #: Tables the import expects to find, so a wrong file fails loudly rather than
 #: silently importing nothing.
 REQUIRED_SOURCE_TABLES = ("composers", "pieces", "notes", "media")
@@ -140,7 +142,12 @@ def _upsert_pieces(
                 # have a different id from the legacy one.
                 "composer_id": composer_map.get(row["composer_id"]) if row["composer_id"] else None,
                 "title": row["title"],
-                "opus": row["opus"],
+                # This writes through the generic `_upsert` rather than through
+                # `store.create_piece`, so the canonical form of the catalogue number is
+                # applied here as well as there. One rule (`repertoire/opus.py`), two write
+                # paths that name the columns; the third, a backup restore, is tidied by the
+                # startup migration, because that writer is table-generic on purpose.
+                "opus": normalise_opus(row["opus"]),
                 "difficulty": row["difficulty"],
                 "key": row["key"],
                 "started_on": row["started_on"],
