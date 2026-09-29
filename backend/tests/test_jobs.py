@@ -190,6 +190,25 @@ def test_a_tick_is_bounded(fresh_db, runner) -> None:
     assert runner.tick(limit=2) == 2
 
 
+def test_a_backlog_drains_in_batches_and_empties(fresh_db, runner) -> None:
+    """The shape the runner's sweep loop uses: act on a batch, then choose the next one.
+
+    It terminates because every selected sitting is a sitting with notes, and every sitting
+    with notes yields at least one segment — so each one leaves the selection. That is the
+    property that makes "keep going while a batch comes back full" safe rather than a spin.
+    """
+    for index in range(5):
+        make_sitting(index)
+
+    batches = 0
+    while runner.tick(limit=2):
+        runner.drain(limit=2)
+        batches += 1
+
+    assert batches == 3, "five sittings, two per batch"
+    assert store.awaiting_segments(limit=10) == [], "and the backlog is gone, not re-selected"
+
+
 def test_awaiting_segments_returns_the_newest_first(fresh_db) -> None:
     oldest = make_sitting(0)
     middle = make_sitting(1)

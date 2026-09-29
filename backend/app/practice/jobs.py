@@ -170,10 +170,14 @@ class JobRunner:
             try:
                 sitting_id = self._queue.get(timeout=self._sweep_s)
             except queue.Empty:
-                # Nothing to do, so it is the moment to look for a sitting that finished
-                # without anything telling us: the silence gap ran out while the piano was
-                # still connected, or the last process died mid-job.
-                self.tick()
+                # Nothing is queued, so this is the moment to look for work nobody has told
+                # us about: the silence gap running out while the piano is still connected, a
+                # backlog left by a restart, or a job stranded by a crash. A full batch means
+                # there is probably more, so keep going rather than waiting another whole
+                # interval — every selected sitting produces segments and leaves the
+                # selection, so this cannot spin.
+                while not self._stop.is_set() and self.tick() >= SWEEP_LIMIT:
+                    self.drain(limit=SWEEP_LIMIT)
                 continue
             if sitting_id is None:
                 break

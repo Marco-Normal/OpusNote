@@ -771,8 +771,8 @@ def awaiting_segments(
     Its cost is O(sittings), which is one row per practice session, and it is deliberately
     the one query allowed to be: it runs on a *tick*, not on a click, and both `EXISTS`
     clauses are index probes — `segments(sitting_id, start_ms)` and
-    `note_events(sitting_id, onset_ms)`. `limit` bounds one tick so a long backlog cannot
-    hold the write lock for its whole length.
+    `note_events(sitting_id, onset_ms)`. `limit` keeps one sweep to a batch, so the caller
+    re-reads its selection between batches rather than acting on a stale list.
     """
     now = int(now_ms if now_ms is not None else time.time() * 1000)
     conn = db.connect(db_path)
