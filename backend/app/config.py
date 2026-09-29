@@ -58,7 +58,6 @@ class Settings:
     )
 
     # --- app -------------------------------------------------------------
-    api_prefix: str = "/api"
     cors_origins: tuple[str, ...] = ("http://localhost:5173", "http://127.0.0.1:5173")
     frontend_dist: Path = _env_path("SRT_FRONTEND_DIST", REPO_DIR / "frontend" / "dist")
 
@@ -112,7 +111,6 @@ class Settings:
     #: Exercises in a workout. Was `SRT_SESSION_LENGTH`, which was dead config
     #: while only single exercises existed; a workout is what it always meant.
     workout_length: int = _env_int("SRT_WORKOUT_LENGTH", 8)
-    default_meter: str = "4/4"
 
     # --- practice logging -------------------------------------------------
     #: Silence that closes a sitting. Long on purpose: walking to the piano,

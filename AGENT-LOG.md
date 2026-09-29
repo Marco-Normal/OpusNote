@@ -3798,3 +3798,15 @@ The next agent should know: **`AGENTS.md` is the reading path; do not let it acc
 a line in it disagrees with the document it links to, the linked document is right and the line is a
 bug. And when you land a phase, the plan it produced already carries its banner — add the `Status:`
 line it needs rather than removing the banner.
+
+## 2026-09-28 — sanitize-dead-code — drop the two unreferenced `Settings` fields
+
+Scope: `backend/app/config.py`.
+
+Did: removed `Settings.api_prefix` (`"/api"`, read by nothing — routes declare their prefixes
+through `app.include_router`) and `Settings.default_meter` (`"4/4"`, read by nothing). Neither was
+env-backed, neither appeared in `ENGINEERING.md` §8, and `git grep` over `app/`, `tests/` and
+`tools/` found only the definitions.
+
+Impact on the other side: none. No tunable, route, request/response field or player-visible
+behaviour changed; neither name was part of a documented contract.
