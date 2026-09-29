@@ -4179,3 +4179,21 @@ every test. The tier reported three failures that were entirely mine — `FOREIG
 failed` inserting media, and two fixture errors — and none of them reproduce when the suite runs
 alone (`1010 passed`). The suite is deliberately single-occupancy: do not run a bare `pytest` in
 the same checkout as a tier. `--full` was re-run on its own afterwards.
+
+## 2026-09-29 — piece-labels — the falsification and the full tier, concluded
+
+```
+  falsified           drop_the_opus_from_the_journal_feed.sh
+falsify: 1 falsified, 0 failed, 0 refused, 0 unattributed, 0 undeclared
+```
+
+`./check.sh --full` re-run on its own reaches the browser tier and stops at the pre-existing
+`scenario_long_exercises` failure (`16 bars fits at 1280x600 once focus mode is on`, top 290 +
+height 356 = bottom 645 against a 600 px viewport, `tooLong=False`) — the `heightBudget()` defect
+recorded in the two entries above this one, reproduced here on an untouched file. Because that
+scenario precedes the Log, the tier cannot reach the assertions this slice added, so they were
+verified individually against a server started for the purpose: `practice_log`, `repertoire`,
+`takes`, `autotag` and `bench` all pass, and `practice_log` carries the three new picker
+assertions. `--fast` is green (89 s), the backend suite is **1010 passed** on its own, frontend 178.
+
+Totals here are dated 2026-09-29 and true only of this tree.
