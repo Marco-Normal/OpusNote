@@ -110,6 +110,7 @@ careful reader still gets wrong. The full reasoning is at the owner.
 | Path | What it is | Read it only when |
 | --- | --- | --- |
 | [`AGENT-LOG.md`](AGENT-LOG.md) | Append-only session log, ~267 KB, never edited | You need *why* a specific change was made, or a past defect's evidence |
+| [`../.scratch/agent-sessions/`](../.scratch/agent-sessions) | Per-run agent summaries, kept outside the repo on purpose | You want the goal, commits and commands of one agent run rather than one change |
 | `docs/PLAN-*.md` | Implementation records for landed phases | You need the reasoning behind a shipped phase |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | **Superseded** by ECOSYSTEM | You want the original slicing reasoning |
 | [`docs/INTEGRATION-practice-logger.md`](docs/INTEGRATION-practice-logger.md) | **Superseded** | You want what the two-project integration verified |

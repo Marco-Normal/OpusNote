@@ -3900,3 +3900,15 @@ Impact on the other side: any deployment that set `SRT_SELECTION_WINDOW`,
 `SRT_AUTOTAG_NEIGHBOURS` or `SRT_AUTOTAG_TRAINING_LIMIT` now has those variables ignored; it may
 delete them. No behaviour changes — nothing read them. `docs/PLAN-PHASE22.md` and
 `docs/PLAN-SLICES1-7.md` still mention them as their historical record, which is intentional.
+
+## 2026-09-28 — sanitize-dead-code — point AGENTS.md at the out-of-repo run summaries
+
+Scope: `AGENTS.md`.
+
+Did: added one row to the record table pointing at `../.scratch/agent-sessions/`, where per-run
+agent summaries live. They are deliberately outside the repository so they do not become tracked
+documents (a tracked `docs/*.md` would also have to be linked from the README to pass
+`check_docs.py`). No product document changed; the README was left untouched.
+
+Impact on the other side: none. Nothing reads the row; it is a signpost for a human or agent
+looking for a run's narrative.
