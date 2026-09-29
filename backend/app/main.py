@@ -37,6 +37,7 @@ from .models import (
     SystemStatus,
 )
 from .adaptive.elo import MAX_LEVEL, MIN_LEVEL
+from .practice import jobs
 from .practice.api import router as practice_router
 from .repertoire.api import router as repertoire_router
 from .skills_data import HAND_CHOICES, SKILLS, SKILLS_BY_SLUG, SKILL_SLUGS, level_for_key
@@ -51,7 +52,14 @@ async def lifespan(app: FastAPI):
     global USER_ID
     init_db(settings.db_path)
     USER_ID = services.init_workspace()
-    yield
+    # A finished sitting is prepared here rather than on the read that first opens it. It is
+    # started after the schema exists and stopped on the way out, so a restart does not leave
+    # a thread mid-transaction.
+    jobs.start()
+    try:
+        yield
+    finally:
+        jobs.stop()
 
 
 app = FastAPI(

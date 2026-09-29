@@ -751,6 +751,39 @@ def _segment_config() -> segment.Config:
     )
 
 
+def awaiting_segments(
+    *,
+    now_ms: int | None = None,
+    limit: int = 4,
+    db_path: Path | None = None,
+) -> list[int]:
+    """Finished sittings that have never been segmented, newest first.
+
+    The selection a background preparation pass runs on: a sitting is finished when it was
+    explicitly closed (the piano went away) or when the silence gap has run out, and it needs
+    nothing done to it once it has any segments at all — stored boundaries are never
+    recomputed implicitly.
+
+    Its cost is O(sittings), which is one row per practice session, and it is deliberately
+    the one query allowed to be: it runs on a *tick*, not on a click, and the `NOT EXISTS` is
+    an index probe on ``segments(sitting_id, start_ms)``. `limit` bounds one tick so a long
+    backlog cannot hold the write lock for its whole length.
+    """
+    now = int(now_ms if now_ms is not None else time.time() * 1000)
+    conn = db.connect(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT s.id FROM sittings s"
+            " WHERE (s.closed_ms IS NOT NULL OR s.ended_ms + ? < ?)"
+            "   AND NOT EXISTS (SELECT 1 FROM segments g WHERE g.sitting_id = s.id)"
+            " ORDER BY s.started_ms DESC LIMIT ?",
+            (settings.sitting_gap_s * 1000, now, int(limit)),
+        ).fetchall()
+        return [int(row["id"]) for row in rows]
+    finally:
+        conn.close()
+
+
 def ensure_segments(
     sitting_id: int, now_ms: int | None = None, db_path: Path | None = None
 ) -> list[SegmentSummary]:

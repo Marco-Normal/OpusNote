@@ -26,6 +26,10 @@ os.environ["SRT_MEDIA_DIR"] = str(_TMP_ROOT / "ecosystem-media")
 # path this suite can write to, both so a test can install samples and so a test
 # run never downloads 2 MB into the real data directory.
 os.environ["SRT_PIANO_DIR"] = str(_TMP_ROOT / "piano")
+# The background runner prepares finished sittings on a thread of its own. No test depends
+# on a thread: the suite turns it off, and the tests that are about the runner drive
+# `tick()`/`drain()` synchronously, so nothing here sleeps or races a worker.
+os.environ["SRT_BACKGROUND_JOBS"] = "0"
 
 import pytest  # noqa: E402
 

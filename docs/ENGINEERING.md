@@ -240,6 +240,8 @@ Every environment variable is optional.
 | `SRT_SEGMENT_MAX_MS` | `120000` | Phase 22a: above this, a group is split at its largest internal pauses |
 | `SRT_RESTART_GAP_MS` | `3000` | Mid-segment silence counted as a restart |
 | `SRT_ATTACK_WINDOW_MS` | `50` | Notes closer than this are one attack, for tempo |
+| `SRT_BACKGROUND_JOBS` | `true` | Phase 24: prepare a finished sitting on a background thread instead of on the read that first opens it. `0` is the old behaviour, not a degraded one — a read that finds no work scheduled still does the work itself. The test suite sets `0` |
+| `SRT_JOB_SWEEP_S` | `20` | Phase 24: how often the runner looks for a finished sitting nobody has asked for yet — one closed by the silence gap rather than by the piano going away, a backlog after a restart, or a job stranded by a crash |
 | `SRT_AUTOTAG_SCORE_AUTO` | `0.85` | Score at or above which a match is written without asking |
 | `SRT_AUTOTAG_MIN_MARGIN` | `0.10` | Required lead over the runner-up. `0.05` roughly doubles the labels written, at about a 3% measured error rate |
 | `SRT_AUTOTAG_SCORE_PROMPT` | `0.55` | Score at or above which a match is offered |

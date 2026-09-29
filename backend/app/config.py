@@ -41,6 +41,20 @@ def _env_int(name: str, default: int) -> int:
     return int(raw) if raw else default
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    """A flag, spelled the way people spell flags on a command line.
+
+    Anything absent means the default; anything present and recognisably negative means
+    false. An unrecognised value is truthy rather than an error — a typo in an environment
+    file must not stop the service booting, and the settings that matter to correctness are
+    not flags.
+    """
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"0", "false", "no", "off", ""}
+
+
 @dataclass(frozen=True)
 class Settings:
     # --- persistence -----------------------------------------------------
@@ -143,6 +157,18 @@ class Settings:
     segment_max_ms: int = _env_int("SRT_SEGMENT_MAX_MS", 120_000)
     #: Mid-segment silence counted as a restart rather than as phrasing.
     restart_gap_ms: int = _env_int("SRT_RESTART_GAP_MS", 3000)
+    #: Prepare a finished sitting in the background instead of on the first read that opens
+    #: it: the segmentation, its metrics, the matcher's pass and the kind offers all happen
+    #: while nobody is waiting, so the click is the warm read it is on every other sitting.
+    #:
+    #: **Off is the old behaviour, not a degraded one.** A read that finds no work scheduled
+    #: still materialises the sitting itself, so turning this off changes timing and nothing
+    #: else. The suite turns it off so no test depends on a thread.
+    background_jobs: bool = _env_bool("SRT_BACKGROUND_JOBS", True)
+    #: How often the runner looks for a finished sitting that nobody has asked for yet —
+    #: a sitting closed by the silence gap rather than by the piano going away, a backlog
+    #: after a restart, or a job stranded by a crash. One indexed query per tick.
+    job_sweep_s: float = _env_float("SRT_JOB_SWEEP_S", 20.0)
     #: Notes closer together than this are one attack, so a chord does not read
     #: as an infinitely fast tempo.
     attack_window_ms: int = _env_int("SRT_ATTACK_WINDOW_MS", 50)
