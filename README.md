@@ -295,6 +295,13 @@ deploy/                systemd units, kiosk policy, installer
 
 ## Documentation
 
+**Where to start, and where the truth lives.**
+
+| Document | Contents |
+| --- | --- |
+| [AGENTS.md](AGENTS.md) | The entry map: which file owns which fact, the verification commands, the traps that have silently broken here, and which paths are history rather than current truth |
+| [docs/archive/README.md](docs/archive/README.md) | The historical record — the log, the plans and the superseded proposals, marked so they cannot be mistaken for specifications |
+
 **Reference** — what the application does and how it is built.
 
 | Document | Contents |

@@ -589,3 +589,6 @@ ImpactStatementDraft
 - No new owner except `[data-app-ready]` (a test hook, not a product surface);
   one owner removed (§4.6 removes the duplicated chart palette).
 ```
+
+<!-- historical-record -->
+This plan is a record of work that has landed, not a specification. Current behaviour is in docs/FEATURES.md; current status is the status line in ECOSYSTEM.md. See docs/archive/README.md.

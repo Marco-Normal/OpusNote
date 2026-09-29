@@ -1072,3 +1072,6 @@ Execution Route:
 
 **Landed.** Both `PLAN-PHASE20D.md` and `PLAN-PHASE20E.md` were written and have landed since; see
 `ECOSYSTEM.md` § *Phase 20* and `AGENT-LOG.md` (2026-09-21).
+
+<!-- historical-record -->
+This plan is a record of work that has landed, not a specification. Current behaviour is in docs/FEATURES.md; current status is the status line in ECOSYSTEM.md. See docs/archive/README.md.

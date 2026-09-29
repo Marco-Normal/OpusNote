@@ -1805,3 +1805,6 @@ The route is `inline` rather than `subagent-driven` because the tasks are not in
 cannot type-check until Task 1's signatures exist, and Task 5's assertions cannot be written until
 Tasks 2–4 have given them something to assert. The only genuinely independent pair is Task 3 (server)
 and Task 1 (recogniser), and splitting the context between them would cost more than it saves.
+
+<!-- historical-record -->
+This plan is a record of work that has landed, not a specification. Current behaviour is in docs/FEATURES.md; current status is the status line in ECOSYSTEM.md. See docs/archive/README.md.

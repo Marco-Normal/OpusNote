@@ -2191,3 +2191,6 @@ Execution Route:
 **Landed.** `PLAN-PHASE20C.md`, `PLAN-PHASE20D.md` and `PLAN-PHASE20E.md` were written and have all
 landed since, completing Phase 20; see `ECOSYSTEM.md` § *Phase 20* and `AGENT-LOG.md` (2026-09-17).
 The pedal mapping this plan describes is superseded — see the note above and `PLAN-PHASE23.md`.
+
+<!-- historical-record -->
+This plan is a record of work that has landed, not a specification. Current behaviour is in docs/FEATURES.md; current status is the status line in ECOSYSTEM.md. See docs/archive/README.md.

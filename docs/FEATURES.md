@@ -120,6 +120,14 @@ rather than presenting a score that scrolls.
 volume beside it. Both are remembered, and the transport reports how many beats the count-in
 actually used. The count-in length follows the first bar's meter rather than assuming 4/4.
 
+**The count-in is not scored.** A note struck while following the clicks arrives before beat 1
+and is left out of the attempt, so warming up over the count-in costs nothing: it cannot be
+counted as an extra note, and it cannot claim a note the exercise asked for. Notes are measured
+from beat 1 precisely so that a note played *slightly* early is scored as early rather than
+silently fitted; the boundary is beat 1 itself, not a tolerance around it. Length is kept for
+every note, including a key struck again before the first strike was released — a repeated note
+is the case where the two releases are easiest to attribute to the wrong strike.
+
 **Deliberate practice: pinning the difficulty and the hand.** Left alone, the difficulty comes from
 the ratings, and it also decides which hand you read — level 1 is the right hand, level 2 the left,
 and 3 upward both. That coupling was the defect: reading the bass clef was possible only by being

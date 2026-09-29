@@ -35,11 +35,19 @@ README = ROOT / "README.md"
 DOCS = ROOT / "docs"
 ECOSYSTEM = DOCS / "ECOSYSTEM.md"
 
+#: The marker that separates history from current truth. A document carrying it is a record of
+#: work that has landed; it is kept because deleting it would take its reasoning with it, but it
+#: must not be read as a specification. `AGENTS.md` is the entry map that tells a reader which is
+#: which, and this gate is what keeps that map honest.
+HISTORICAL_MARKER = "<!-- historical-record -->"
+
 #: Docs are discovered, not listed: a new document is checked the moment it exists. Binary
 #: assets under `docs/images/` are not documentation and are skipped by the suffix filter.
+#: Recursive, so a document filed under `docs/archive/` is held to the same link and status rules
+#: as one at the top level — the alternative is a directory where staleness is allowed to hide.
 def markdown_files() -> list[Path]:
     files = [README, ROOT / "THIRD-PARTY.md", ROOT / "AGENT-LOG.md", ROOT / "deploy" / "README.md"]
-    files += sorted(DOCS.glob("*.md"))
+    files += sorted(DOCS.rglob("*.md"))
     return [f for f in files if f.exists()]
 
 
@@ -128,13 +136,13 @@ def check_every_doc_is_reachable(files: list[Path], failures: list[str]) -> int:
         path, _, _frag = target.partition("#")
         if path:
             linked.add((README.parent / path).resolve())
-    for doc in sorted(DOCS.glob("*.md")):
+    for doc in sorted(DOCS.rglob("*.md")):
         if doc.resolve() not in linked:
             failures.append(
                 f"README.md: no link to {doc.relative_to(ROOT)} — a document nothing reaches "
                 f"goes stale"
             )
-    return len(list(DOCS.glob("*.md")))
+    return len(list(DOCS.rglob("*.md")))
 
 
 PHASE_ROW = re.compile(r"^\|\s*(\d+)\s*\|(.*)$")
@@ -298,6 +306,45 @@ def check_no_execute_footer(files: list[Path], failures: list[str]) -> int:
     return checked
 
 
+def check_historical_markers(files: list[Path], failures: list[str]) -> int:
+    """A document marked as history must also say whether the work landed.
+
+    The problem this solves is not size, it is *ambiguity*. A current rule and a superseded one
+    read identically to anyone who is not already an expert, and this repository has already paid
+    for that once: `FEATURES.md` documented a fixed 8-second segment gap for two phases after the
+    rule replacing it landed, and four landed plans still said `planned`. Neither broke a test,
+    because no test can read a stale claim.
+
+    So the two are separated and the separation is checked. `AGENTS.md` declares which paths are
+    history; this requires that anything carrying the marker also carries a `Status:`, so a reader
+    can always tell whether they are looking at finished work. The marker itself lives in
+    `AGENTS.md`'s do-not-read table, so it is declared exactly once.
+    """
+    checked = 0
+    for f in files:
+        text = f.read_text(encoding="utf-8")
+        # The marker counts only as a closing banner: within the last three non-blank lines, at
+        # the end of a line, where a file's own status has deliberately been put. A mid-file
+        # mention of it is prose about the convention — an index that explains the rule must not
+        # thereby claim to be a record itself. The first version tested `marker in text` and made
+        # exactly that mistake the moment `docs/archive/README.md` described it.
+        lines = [line.rstrip() for line in text.splitlines() if line.strip()]
+        if not any(line.endswith(HISTORICAL_MARKER) for line in lines[-3:]):
+            continue
+        checked += 1
+        if declared_status(f) is None:
+            failures.append(
+                f"{f.relative_to(ROOT)}: carries {HISTORICAL_MARKER} but declares no `Status:` — "
+                f"a reader cannot tell whether this is finished work"
+            )
+    entry = ROOT / "AGENTS.md"
+    if entry.exists() and HISTORICAL_MARKER not in entry.read_text(encoding="utf-8"):
+        failures.append(
+            "AGENTS.md: does not name the historical-record marker, so the convention that "
+            "separates history from current truth is undeclared"
+        )
+    return checked
+
 #: Exact phrases whose return means a bug this repository already fixed has come back. Kept short
 #: on purpose: every entry is a known-wrong claim, not a style preference.
 CANARIES: list[tuple[str, str, str]] = [
@@ -330,6 +377,7 @@ def main() -> int:
     docs = check_every_doc_is_reachable(files, failures)
     compared = check_status_agreement(failures, notes)
     plans = check_no_execute_footer(files, failures)
+    marked = check_historical_markers(files, failures)
     hits = canaries(files)
 
     print(f"check_docs: {len(files)} files, {links} relative links")
@@ -339,6 +387,7 @@ def main() -> int:
         else f"  index: {docs} documents, some unreachable (below)"
     )
     print(f"  status: {compared} plan/phase pairs compared, {plans} landed plans checked for footers")
+    print(f"  history: {marked} documents marked as a historical record, all declaring a status")
 
     if notes:
         print("\nnotes (not failures):")

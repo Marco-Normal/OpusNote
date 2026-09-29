@@ -2066,21 +2066,35 @@ the new text exists.
 #### What is enforced, and what is not
 
 `backend/tools/check_docs.py` runs in the `--fast` tier, so every edit is checked. It gates on the
-four things that are objective and always the author's to fix:
+five things that are objective and always the author's to fix:
 
 | Gate | What it refuses |
 | --- | --- |
 | Links and anchors | a relative link that does not resolve, or a `#anchor` no heading provides |
-| Reachability | a `docs/*.md` that nothing links to from `README.md` — an unreachable document is how fifteen of these went stale unnoticed |
+| Reachability | a `docs/*.md` that nothing links to from `README.md` — an unreachable document is how fifteen of these went stale unnoticed. Recursive, so a document filed under `docs/archive/` is held to the same rule as one at the top level |
 | Status agreement | a plan and `ECOSYSTEM.md` disagreeing about whether a phase shipped, whether the disagreement is in the table row or the status line |
 | Re-execution footers | a landed plan still ending in *"Next step: execute…"* |
+| Historical markers | a document carrying the closing `<!-- historical-record -->` banner without declaring a `Status:`, so a reader can never tell whether it is a specification or a record |
 
 Each gate has a break script in `backend/tools/falsifications/` — `break_a_document_link.sh`,
-`make_a_document_unreachable.sh`, `stale_phase_status.sh`, `restore_the_execute_footer.sh` — so
-none of them is trusted until it has been seen to fail (`TEST-STRATEGY.md` §8). All four were run
-and all four caught their break by name. Run one with
+`make_a_document_unreachable.sh`, `stale_phase_status.sh`, `restore_the_execute_footer.sh`,
+`unmark_a_historical_record.sh` — so none of them is trusted until it has been seen to fail
+(`TEST-STRATEGY.md` §8). All five were run and all five caught their break by name. Run one with
 `./check.sh --falsify stale_phase_status` (the filter matches the script's name), or every break
 script in the repository with `./check.sh --falsify`.
+
+**The reading path is separate from the record, and separated on purpose.** These documents are
+large — the log is a quarter of a megabyte and the phase narratives run to hundreds of lines each —
+and the cost of a large document is not its size but the difficulty of finding the current rule
+inside a history of what the rule used to be. So [`AGENTS.md`](../AGENTS.md) is the declared entry
+map: it says which file owns which fact, which paths are records rather than specifications, and
+the traps that have silently broken here. It may point and never restate, and its paths are
+ordinary links, so the link gate above holds them to account by construction.
+
+The marker is what makes that separation checkable rather than aspirational. Every `docs/PLAN-*.md`
+ends with the closing banner, so a reader arriving at one is told it is a record — and the gate
+above means none can carry the banner while leaving its status ambiguous. The material itself is
+indexed by [`docs/archive/README.md`](archive/README.md).
 
 It also *reports* a short list of exact phrases whose return would mean a bug this repository
 already fixed has come back. Those are canaries, not gates: a heuristic that can be wrong must

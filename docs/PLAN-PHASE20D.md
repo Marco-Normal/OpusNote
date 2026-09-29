@@ -2095,3 +2095,6 @@ Execution Route:
 
 **Landed.** `PLAN-PHASE20E.md` (audio takes) also landed, completing Phase 20; see `ECOSYSTEM.md`
 § *Phase 20*.
+
+<!-- historical-record -->
+This plan is a record of work that has landed, not a specification. Current behaviour is in docs/FEATURES.md; current status is the status line in ECOSYSTEM.md. See docs/archive/README.md.

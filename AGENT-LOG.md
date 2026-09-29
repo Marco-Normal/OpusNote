@@ -3685,3 +3685,116 @@ the colour a piece owns and the segment a click means — so a third belongs the
 test, rather than in the component. And any future break to the strip should carry a browser
 check, not a unit one: the two defects that actually matter here (a page that scrolls, a gesture
 that makes a sound) are invisible to `npm test`.
+
+## 2026-09-27 — sight-reading agent — two capture defects that corrupted every attempt
+
+Scope: `frontend/src/components/PracticeView.svelte`, new `frontend/src/lib/scoredAttempt.ts` and
+its test, new `backend/tools/falsifications/score_during_the_count_in.sh` and
+`overwrite_a_restruck_notes_length.sh`, `docs/FEATURES.md` §4. No schema, no route, no server
+behaviour touched; `SCHEMA_VERSION` stays 5.
+
+Did: **fixed two ways the scored payload was wrong while remaining well-formed**, both in the view's
+own attempt-capture state. Neither was visible from the score, the log or any existing test — the
+notes arrived, they were just wrong.
+
+1. **A note struck during the count-in was scored.** The note handler accepted both the `countin`
+   and `playing` phases, while recording is anchored at beat 1
+   (`startRecording(metronome.downbeatMs)` — deliberately, so an early note is *measurably* early
+   rather than silently fitted). A note played over the count-in therefore arrived with a negative
+   onset, was sent to `/api/score` as an unmatched extra — costing pitch precision for the whole
+   exercise — and in the browser could claim an expected note in `LiveMatcher`, whose `isComplete`
+   then finished the run 450 ms later, before the player had been counted in. The boundary is now
+   explicit at the note path: an onset before beat 1 is not part of the attempt.
+2. **A re-struck key lost the first strike's length.** The view held `Map<pitch, index>` — one slot
+   per pitch — and releases arrive oldest-first, so the second release was applied to the second
+   note-on while the first kept the `duration: 0` it was created with. Every held note in a
+   repeated passage was scored with no length at all. The fix is a per-pitch FIFO queue, which is
+   what `midi.ts`'s `activeNotes` already does one level down; the view had re-introduced the
+   single-slot problem the transport layer had solved.
+
+Both rules were extracted into **`frontend/src/lib/scoredAttempt.ts`**, pure and reachable by
+`node --test`, following `segmentUndo.ts`'s reasoning: the pairing is a pure function of event order,
+and the view owns the DOM, the clock and the network, so it should not also own the arithmetic. This
+is not a new architectural owner — the old owner was the component's own local state.
+
+**Tests: 11 in `scoredAttempt.test.ts`**, including the exact defect (two strikes of one key before
+either release, asserting each keeps its own length), the count-in boundary, a release with nothing
+open, a double release, and that the snapshot handed to the API is a copy.
+
+`./check.sh --fast` green in **83 s** (`2026-09-27`), including `svelte-check` (0 errors, 0
+warnings) and the production build.
+
+Impact on the other side: none. No table, endpoint, column or file format changed, and `PlayedNote`
+keeps its shape — `duration` is now the length that was measured instead of `0`.
+
+The next agent should know: **`./check.sh --fast` was run, and both break scripts were verified by
+hand with `npm test` rather than through `./check.sh --falsify`**, because that tier refuses to start
+on a dirty tree and restores with `git checkout`, so it needs this work committed first. Each break
+was applied to `scoredAttempt.ts`, the named assertion was seen to fail, and the file was restored
+and verified byte-identical. Run `./check.sh --falsify score_during_the_count_in` and
+`./check.sh --falsify overwrite_a_restruck` after committing, to record the positive control
+properly. Second: a fix to capture now belongs in `scoredAttempt.ts` beside its test rather than in
+the component, and a defect of this class — a payload that is well-formed but wrong — wants a break
+script, because nothing else in the suite can see it.
+
+## 2026-09-27 — documentation agent — the reading path, separated from the record
+
+Scope: new `AGENTS.md` and `docs/archive/README.md`; `README.md`'s Documentation section;
+`backend/tools/check_docs.py`; the closing banner on all 13 `docs/PLAN-*.md`;
+`docs/ECOSYSTEM.md` § *What is enforced, and what is not*; new
+`backend/tools/falsifications/unmark_a_historical_record.sh`. No source behaviour, schema, route or
+config changed.
+
+Did: **made the documentation queryable rather than smaller.** The corpus is ~200,000 words
+(`AGENT-LOG.md` 267 KB, `docs/ECOSYSTEM.md` 143 KB, the `PLAN-*.md` files ~860 KB combined) against
+`docs/ENGINEERING.md`'s 18 KB of current truth. The cost of that is not its size — a document nobody
+opens is free — it is the difficulty of finding the current rule inside a history of what the rule
+used to be. Three changes, none of which deletes anything:
+
+1. **`AGENTS.md` is now the declared entry point.** It says which file owns which *fact* (the
+   `README`'s layout block maps directories, which is not the same thing), the verification
+   commands and their costs, the traps that have silently broken here, and which paths are records
+   rather than specifications. Its hard rule is that it may point and never restate, so it cannot
+   become a second source of truth; and every path in it is an ordinary Markdown link, so
+   `check_docs.py`'s existing link gate holds it to account with no new machinery.
+2. **History is marked, and the marking is gated.** Every `docs/PLAN-*.md` ends with a closing
+   `<!-- historical-record -->` banner, and a fifth docs gate refuses any document carrying that
+   banner without a `Status:` — so a reader arriving at a plan always learns whether its work
+   landed. `docs/archive/README.md` indexes the historical material and points at where current
+   truth lives instead.
+3. **The docs gate now sees nested documents.** `markdown_files()` and the reachability check moved
+   from `DOCS.glob` to `DOCS.rglob`, so a document filed under `docs/archive/` is held to the same
+   link, anchor and reachability rules as one at the top level. The alternative was an archive
+   directory where staleness is allowed to hide, which is the failure this repository has already
+   paid for once.
+
+**Two findings from building the gate, both worth recording.**
+
+The first is that the marker check's first implementation was `HISTORICAL_MARKER in text` — a
+substring test — and `docs/archive/README.md` tripped it the moment it *described* the convention,
+because the index quoted the marker in its own prose. The gate was therefore demanding a `Status:`
+from a document that is not a record. Fixed on both sides: the marker now counts only as a closing
+banner within the last three non-blank lines of a file, and the index names the convention in words
+rather than reproducing the token. A checker that fires on the documentation of its own rule is a
+checker that will be worked around.
+
+The second is that `check_status_agreement` already reports a plan with no `Status:` as a *note*
+rather than a failure, and `check_historical_markers` fires on the same document as a failure — so
+the break below shows both, and the note is the weaker half of the same finding. Neither is
+redundant: the note covers any plan, marked or not; the gate covers exactly the marked ones.
+
+**The new gate was falsified by hand**, because `./check.sh --falsify` refuses to run on a dirty
+tree and this work is uncommitted. `unmark_a_historical_record.sh` strips 20e's status line while
+leaving its banner. The positive control passed on the unbroken tree; with the break applied the
+checker exited 1 and named the assertion — `docs/PLAN-PHASE20E.md: carries <!-- historical-record -->
+but declares no Status:` — and the file was restored and verified byte-identical. Run
+`./check.sh --falsify unmark_a_historical_record` after committing to record the control properly.
+
+Impact on the other side: none. No table, endpoint, column or file format changed. `AGENTS.md` is a
+new top-level file, and it will be loaded as instruction context by agents that support that
+convention, which is the point of it.
+
+The next agent should know: **`AGENTS.md` is the reading path; do not let it accumulate facts.** If
+a line in it disagrees with the document it links to, the linked document is right and the line is a
+bug. And when you land a phase, the plan it produced already carries its banner — add the `Status:`
+line it needs rather than removing the banner.

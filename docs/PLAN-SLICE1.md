@@ -303,3 +303,6 @@ AGENT-LOG entry. Representative evidence:
 2. **A corrupt row is now a 500.** Intended, but an existing library with one bad JSON value
    would surface it on the request that reads it. The message names the value.
 3. **The harness stays in `--fast`.** The new tests add ~4 s; the tier is at 62 s of 180 s.
+
+<!-- historical-record -->
+This plan is a record of work that has landed, not a specification. Current behaviour is in docs/FEATURES.md; current status is the status line in ECOSYSTEM.md. See docs/archive/README.md.

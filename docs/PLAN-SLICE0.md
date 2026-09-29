@@ -692,3 +692,6 @@ Execution Route:
    inherited state. That is the point, but it means Task 2 may take longer than it looks.
 4. **`wait_for_function` replacements can flake** in the other direction; revert an
    individual site rather than weakening the wait.
+
+<!-- historical-record -->
+This plan is a record of work that has landed, not a specification. Current behaviour is in docs/FEATURES.md; current status is the status line in ECOSYSTEM.md. See docs/archive/README.md.

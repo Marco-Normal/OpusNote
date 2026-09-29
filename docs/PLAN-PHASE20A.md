@@ -1857,3 +1857,6 @@ Execution Route:
 **Landed.** All five tasks are implemented and verified; see `ECOSYSTEM.md` § *Phase 20* and
 `AGENT-LOG.md` (2026-09-16). Nothing here remains to execute. The two review gates above are kept
 as the record of how it was executed.
+
+<!-- historical-record -->
+This plan is a record of work that has landed, not a specification. Current behaviour is in docs/FEATURES.md; current status is the status line in ECOSYSTEM.md. See docs/archive/README.md.

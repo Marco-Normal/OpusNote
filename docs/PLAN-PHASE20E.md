@@ -1791,3 +1791,6 @@ Execution Route:
 
 **This is the last plan in Phase 20.** With 20a landed and 20b–20e planned, the phase is fully
 specified; executing the remaining four in order is the next work.
+
+<!-- historical-record -->
+This plan is a record of work that has landed, not a specification. Current behaviour is in docs/FEATURES.md; current status is the status line in ECOSYSTEM.md. See docs/archive/README.md.

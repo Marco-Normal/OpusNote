@@ -508,3 +508,6 @@ Nothing is deleted in slices 1-7. `SRT_SELECTION_WINDOW` (D4), the unreachable
 `delete_media` `still_referenced` branch, and the nine dead functions from the Appendix
 join the retirement inventory with their evidence. Deleting any of them is a separate
 decision.
+
+<!-- historical-record -->
+This plan is a record of work that has landed, not a specification. Current behaviour is in docs/FEATURES.md; current status is the status line in ECOSYSTEM.md. See docs/archive/README.md.

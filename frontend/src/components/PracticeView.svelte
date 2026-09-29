@@ -4,6 +4,7 @@
   import { countInBeats as countInBeatsFor } from '../lib/countIn';
   import { LiveMatcher } from '../lib/liveMatch';
   import { Metronome, type BeatInfo } from '../lib/metronome';
+  import { ScoredAttempt, isBeforeDownbeat } from '../lib/scoredAttempt';
   import { MIN_ZOOM, ScoreRenderer } from '../lib/score';
   import { app, BAR_CHOICES } from '../lib/state.svelte';
   import { theme } from '../lib/theme.svelte';
@@ -35,7 +36,16 @@
   let liveStatuses = $state<Map<number, NoteStatus>>(new Map());
   let progress = $state({ done: 0, total: 0, correct: 0, wrong: 0, extra: 0 });
 
-  let played: PlayedNote[] = [];
+  /**
+   * The attempt being captured.
+   *
+   * It owns the pairing of each note-off with the note-on it finishes, which is why it is a module
+   * of its own rather than a `Map` in this file: keying by pitch alone held one slot per key, so a
+   * re-struck note was scored with no length at all. `scoredAttempt.ts` records what happened too.
+   *
+   * Not reactive. It is written from a MIDI callback and read once, at scoring time.
+   */
+  let attemptBuffer = new ScoredAttempt();
   /** What was played, frozen at scoring time: the results panel replays this. */
   let attempt = $state<PlayedNote[]>([]);
   let matcher: LiveMatcher | null = null;
@@ -50,7 +60,6 @@
   let completeTimer: ReturnType<typeof setTimeout> | null = null;
   let offBeat: (() => void) | null = null;
   let finishing = false;
-  let durations = new Map<number, number>();
 
   const busy = $derived(phase === 'loading' || phase === 'submitting');
   const running = $derived(phase === 'countin' || phase === 'playing');
@@ -84,14 +93,12 @@
 
     const offNote = app.midi.onNote((event) => {
       if (phase !== 'playing' && phase !== 'countin') return;
-      played.push({
-        pitch: event.pitch,
-        onset: event.onset,
-        duration: 0,
-        velocity: event.velocity,
-        channel: event.channel,
-      });
-      durations.set(event.pitch, played.length - 1);
+      // Playing during the count-in is warm-up, not an answer. A note struck before beat 1 arrives
+      // with a negative onset; admitting it would score it as an unmatched extra, which costs pitch
+      // precision for the whole exercise, and would let a stray note claim expected notes in the
+      // live matcher and finish the run before the player was counted in.
+      if (isBeforeDownbeat(event)) return;
+      attemptBuffer.record(event);
 
       if (!matcher) return;
       const match = matcher.register(event.pitch, event.onset);
@@ -109,10 +116,9 @@
     });
 
     const offRelease = app.midi.onNoteRelease((pitch, durationS) => {
-      const index = durations.get(pitch);
-      if (index === undefined) return;
-      const note = played[index];
-      if (note) note.duration = durationS;
+      // The buffer closes the oldest unreleased note of that pitch, because a key can be struck
+      // again before the first strike has been released.
+      attemptBuffer.release(pitch, durationS);
     });
 
     // Arriving with a key pinned — the Repertoire tab's "Practise in A" sets
@@ -219,9 +225,8 @@
     finishing = false;
     metronome.stop();
     app.midi.stopRecording();
-    played = [];
+    attemptBuffer = new ScoredAttempt();
     attempt = [];
-    durations = new Map();
     matcher = null;
     result = null;
     beatInfo = null;
@@ -291,7 +296,7 @@
     beatInfo = null;
 
     phase = 'submitting';
-    const notes = played.map((note) => ({ ...note }));
+    const notes = attemptBuffer.notes;
     attempt = notes;
 
     try {

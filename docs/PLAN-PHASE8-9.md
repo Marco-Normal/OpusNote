@@ -3266,3 +3266,6 @@ Execution Route:
 - User confirmation required: yes — the user asked to plan before implementing, so
   execution starts on their go-ahead, not automatically.
 ```
+
+<!-- historical-record -->
+This plan is a record of work that has landed, not a specification. Current behaviour is in docs/FEATURES.md; current status is the status line in ECOSYSTEM.md. See docs/archive/README.md.
