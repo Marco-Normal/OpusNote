@@ -250,7 +250,8 @@ Nothing about the result changes either way; with background preparation switche
   nothing, because the library can hold two Beethoven sonatas and both are "Sonata". So a piece
   reads `Sonata · Beethoven · Op. 27 No. 2` — in the segment and passage pickers, on the session
   and passage headings, on the matcher's *Maybe* row, on the timeline strip's tooltip, in the
-  command palette, and in the Log's time-per-piece and neglected lists. Where two rows would still
+  command palette, in the cross-piece journal feed, and in the Log's time-per-piece and neglected
+  lists. Where two rows would still
   read alike — the opus was never filled in, or two rows genuinely duplicate one another — the
   label gains the key and then the library number, so no two options in one list are ever the same
   string. The composer and the opus were already in the data and already shown in the Repertoire

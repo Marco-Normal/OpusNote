@@ -15,6 +15,7 @@
     SegmentSummary,
   } from '../lib/types';
   import { formatDuration } from '../lib/clock';
+  import { pieceLabel } from '../lib/pieceLabel';
   import { formatMinutes, formatSize } from '../lib/types';
   import type { PiecePracticeDetail } from '../lib/types';
   import LineChart from './LineChart.svelte';
@@ -1440,9 +1441,13 @@
                     <span>
                       <span class="date mono">{entry.entry_date}</span>
                       <button class="ghost tiny piece-link" onclick={() => void open(entry.piece_id)}>
-                        {entry.piece_title}{entry.composer_name
-                          ? ` · ${entry.composer_name}`
-                          : ''}
+                        {entry.piece_title
+                          ? pieceLabel({
+                              title: entry.piece_title,
+                              composer_name: entry.composer_name,
+                              opus: entry.piece_opus,
+                            })
+                          : 'this piece'}
                       </button>
                     </span>
                     {#if entry.practice_minutes}

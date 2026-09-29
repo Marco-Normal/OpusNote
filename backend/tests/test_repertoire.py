@@ -1141,6 +1141,33 @@ def test_the_journal_feed_gathers_entries_across_pieces(client) -> None:
     assert feed[0]["piece_title"] == "Ballade", "and it says which piece it came from"
 
 
+def test_the_journal_feed_names_a_piece_by_its_catalogue_number(client) -> None:
+    """The feed gathers entries from the whole library, so it names pieces that can share a title.
+
+    The owner's library holds two Chopin waltzes — both "Waltz", one ``Op 64. No. 3`` and one
+    ``Op. 69 No. 1``, spelled exactly as the library spells them — and an entry's piece name has to
+    say which one it was written about. The spellings are reproduced rather than tidied because the
+    point of the test is that the label carries what is stored, not what is stored after a rule the
+    app does not have.
+    """
+    first = client.post(
+        "/api/repertoire/pieces", json={"title": "Waltz", "opus": "Op 64. No. 3"}
+    ).json()["id"]
+    second = client.post(
+        "/api/repertoire/pieces", json={"title": "Waltz", "opus": "Op. 69 No. 1"}
+    ).json()["id"]
+    for piece_id, content in ((first, "the first"), (second, "the second")):
+        client.post(
+            f"/api/repertoire/pieces/{piece_id}/journal",
+            json={"entry_date": "2026-03-01", "content": content},
+        )
+
+    feed = client.get("/api/repertoire/journal").json()
+    by_content = {row["content"]: row for row in feed}
+    assert by_content["the first"]["piece_opus"] == "Op 64. No. 3"
+    assert by_content["the second"]["piece_opus"] == "Op. 69 No. 1"
+
+
 def test_the_journal_feed_searches_the_prose(client) -> None:
     piece_id = _a_piece(client)
     client.post(

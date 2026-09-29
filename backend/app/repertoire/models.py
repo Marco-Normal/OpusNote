@@ -46,6 +46,10 @@ class JournalEntryOut(BaseModel):
     #: away from its piece and therefore has to say which piece it belongs to.
     piece_title: str | None = None
     composer_name: str | None = None
+    #: And the catalogue number, because two of the pieces the feed names can share a title:
+    #: the library holds two Chopin waltzes, both "Waltz". Additive with a default, so a reader
+    #: that predates it still holds.
+    piece_opus: str | None = None
 
 
 class MediaOut(BaseModel):

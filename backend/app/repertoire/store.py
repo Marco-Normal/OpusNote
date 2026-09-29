@@ -691,7 +691,7 @@ def list_journal_entries(
         SELECT j.id, j.piece_id, j.entry_date, j.content, j.practice_minutes,
                j.sitting_id, j.tags, j.difficulty, j.fluency, j.media_id,
                j.created_at,
-               p.title AS piece_title, c.name AS composer_name
+               p.title AS piece_title, c.name AS composer_name, p.opus AS piece_opus
         FROM piece_journal j
         JOIN pieces p ON p.id = j.piece_id
         LEFT JOIN composers c ON c.id = p.composer_id

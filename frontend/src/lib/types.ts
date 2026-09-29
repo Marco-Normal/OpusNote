@@ -306,6 +306,8 @@ export interface JournalEntry {
   /** Filled only by the cross-piece feed, which shows an entry away from its piece. */
   piece_title?: string | null;
   composer_name?: string | null;
+  /** The catalogue number too — the feed can name two pieces that share a title. */
+  piece_opus?: string | null;
 }
 
 export interface Recording {

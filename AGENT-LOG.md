@@ -4153,3 +4153,29 @@ twice with nothing else to choose by; both pairs now read apart on the catalogue
 not touched: the stored opuses are inconsistently formatted (`Op 10. No. 4` beside `Op. 10 No. 3`,
 and `Op . 78` with a stray space) — that is library data entry, and normalising it is the owner's
 call rather than something a label should silently do.
+
+## 2026-09-29 — piece-labels — the same rule in the journal feed
+
+Scope: `backend/app/repertoire/{models.py,store.py}`, `backend/tests/test_repertoire.py`,
+`frontend/src/lib/types.ts`, `frontend/src/components/RepertoireView.svelte`,
+`backend/tools/falsifications/drop_the_opus_from_the_journal_feed.sh` (new),
+`docs/{FEATURES.md,ENGINEERING.md}`.
+
+The cross-piece journal feed is the other place a piece is named away from its own page, so it had
+the same defect: `JournalEntry` gained `piece_opus`, the feed's select carries `p.opus`, and the
+feed's piece button reads `pieceLabel`. Additive with a `None` default; `SCHEMA_VERSION` unchanged.
+
+One measurement trap of my own making, worth recording because it looks exactly like a bug in the
+app: the new test asserted `"Op 69 No. 1"` while its own fixture had posted `"Op. 69 No. 1"` — a
+one-character discrepancy in the test *data*, not in the code. It read as "the app is normalising
+the opus" for far longer than it should have, because the two strings differ by one visible
+character in a diff. The fix was to the fixture, and the fixtures now reproduce the owner's real
+spellings (`Op 64. No. 3` beside `Op. 69 No. 1`) rather than tidied ones.
+
+A second, sharper trap, and this one is about the harness rather than the code: running `pytest`
+by hand in `backend/` **while `./check.sh --full` was running** put two suites on the one scratch
+database `backend/.pytest-tmp/test.sqlite3`, because `conftest._wipe()` unlinks it at the start of
+every test. The tier reported three failures that were entirely mine — `FOREIGN KEY constraint
+failed` inserting media, and two fixture errors — and none of them reproduce when the suite runs
+alone (`1010 passed`). The suite is deliberately single-occupancy: do not run a bare `pytest` in
+the same checkout as a tier. `--full` was re-run on its own afterwards.
