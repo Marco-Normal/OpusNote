@@ -202,6 +202,47 @@ def test_a_replace_restore_leaves_the_matcher_its_cache_version(client) -> None:
         conn.close()
 
 
+def test_a_restore_drops_the_caches_derived_from_the_rows_it_replaced(
+    client, monkeypatch
+) -> None:
+    """A restore rewrites the rows the derived caches are keyed on, in a live process.
+
+    `init_db` drops them because it may have replaced the file underneath. An import replaces the
+    *rows* and restarts nothing, so it has to say so itself — and the passage cache is keyed on a
+    sitting's segment rows and its note count, which a `replace` restore reproduces exactly.
+    Without this, a sitting's passages could stay as they were derived from whatever the database
+    held when it was last read, which is the one stale answer the key is otherwise immune to.
+    """
+    _populate(client)
+    sitting_id = int(client.get("/api/practice/sittings").json()[0]["id"])
+
+    practice_store.forget_references()  # a cold cache, so the first read must derive
+    derivations = {"n": 0}
+    original = practice_store._segment_features
+
+    def counted(conn, rows):
+        derivations["n"] += 1
+        return original(conn, rows)
+
+    monkeypatch.setattr(practice_store, "_segment_features", counted)
+    practice_store.sitting_detail(sitting_id, now_ms=LATER_MS, materialise=False)
+    warm = derivations["n"]
+    assert warm >= 1, "the first read has to derive them, or this asserts nothing"
+
+    document = client.get("/api/backup/export").json()
+    restored = client.post(
+        "/api/backup/import",
+        json={"document": document, "mode": "replace", "confirm": True},
+    )
+    assert restored.status_code == 200, restored.text
+
+    practice_store.sitting_detail(sitting_id, now_ms=LATER_MS, materialise=False)
+    assert derivations["n"] > warm, (
+        "a restore must drop the passages derived from the rows it replaced: the segment rows "
+        "and note count it is keyed on come back identical, so nothing else can tell them apart"
+    )
+
+
 def test_merging_twice_changes_nothing(client) -> None:
     _populate(client)
     document = client.get("/api/backup/export").json()

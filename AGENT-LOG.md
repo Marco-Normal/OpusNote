@@ -4446,3 +4446,29 @@ What is *not* claimed: `sitting_detail` on the largest sitting still takes about
 cost on the open path, it is a separate question with its own owner, and it has not been measured to
 a conclusion. `PERFORMANCE.md` §6 says so rather than leaving the old "deepest remaining cost"
 sentence standing, which the cache had stopped being true.
+
+## 2026-09-29 — performance — the hole the new key left, and the assertion that was measuring the wrong thing
+
+Two follow-ups to the commit above, both found by checks rather than by reading.
+
+**A key on the inputs is blind to a restore.** The passage cache is keyed on a sitting's segment
+rows and its note count, which is what makes it immune to a write path forgetting to invalidate it.
+It is also exactly what a `replace` restore reproduces: `import_document` re-inserts the exported
+rows with their own ids, so after a restore the key matches while the notes are whatever the document
+carried. Nothing restarts on an import, so nothing cleared the cache — `init_db` does that, and it is
+not on this path. `import_document` now drops both caches itself, and
+`test_a_restore_drops_the_caches_derived_from_the_rows_it_replaced` derives once, restores, and
+requires a second derivation.
+
+**The browser assertion was failing for a reason that was not the defect.** `poll_a_hidden_log_tab`
+was refused by the falsify harness, which turned out to mean the check was already red: "a hidden tab
+asks the server for nothing (1 reads in 21 s)". Two hypotheses both predict one read, so I measured
+instead of choosing — the shim reported `visibilityState: hidden`, and **45 seconds produced the same
+single read**. So the guard was working and the read was something else: `PracticeLogView` re-reads
+the Log itself when `app.revision` changes, which is what the sitting closing does, and that read is
+not the interval. The probe is now zeroed after that read has landed, so what the window measures is
+only what the poll does. The assertion is unchanged in what it claims and is now about the interval
+rather than about "no fetch of any kind" — which was never the property and was not true.
+
+Worth keeping: a refusal from the harness means the *check* is unproven, not the code. Reading it as
+"the fix is fine, the test is flaky" would have shipped an assertion that could never pass.

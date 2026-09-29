@@ -169,6 +169,14 @@ def import_document(
         # report until the next restart, which repairs it. `init_db` does the same insert,
         # which is why this only ever lasted a restart; a restore does not restart anything.
         conn.execute("INSERT OR IGNORE INTO reference_state (id, version) VALUES (1, 0)")
+    # Derived material is keyed on rows this import has just rewritten, and nothing restarts — so
+    # the caches have to be dropped here. `init_db` does the same for the same reason. The passage
+    # cache is what makes it matter: it is keyed on a sitting's segment rows and its note count,
+    # and a `replace` restore reproduces both *exactly* while the notes themselves are whatever the
+    # document carried, so the key alone cannot tell the two databases apart.
+    from .practice.store import forget_references
+
+    forget_references()
     return {
         "mode": mode,
         "written": written,

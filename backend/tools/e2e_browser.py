@@ -3449,6 +3449,16 @@ def scenario_practice_log(browser) -> None:
     play_phrase(page, [77, 79, 81])
     page.wait_for_timeout(2_600)
     page.evaluate("() => window.__fakeMidi.unplugAll()")
+    # The client re-reads the Log itself when a sitting closes (`app.revision` in
+    # PracticeLogView), and that read is not the interval. Wait for it to land and then zero the
+    # probe, so that what the window below measures is only what the *poll* does. Without this the
+    # assertion is about "no fetch of any kind", which is not the property and is not true.
+    try:
+        page.wait_for_function("() => (window.__logPolls || 0) > 0", timeout=15_000)
+    except PlaywrightTimeout:
+        pass
+    page.evaluate("() => { window.__logPolls = 0 }")
+
     # A hidden tab must ask for nothing. The refresh exists so somebody *looking at the screen*
     # sees the newest sitting without pressing F5, and a tab behind another window was paying the
     # same server cost for nobody — 110 ms of SQLite per poll on the owner's library. The wait is

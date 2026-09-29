@@ -248,6 +248,14 @@ incomplete instruction: a database can only own a counter it maintains, and a co
 a *different* question is narrower than yours. When the derived value is a function of rows rather
 than of a labelled set, key it on those rows.
 
+**A key is only as good as the writes it can see, though.** Keying on the inputs is immune to a
+write path forgetting to invalidate *within* one database, and blind to a wholesale rewrite of that
+database's contents: `import_document` replaces every row and restarts nothing, and a `replace`
+restore reproduces a sitting's segment rows and note count *exactly* while the notes are whatever
+the document carried. So the import drops both caches itself — the same `forget_references()` that
+`init_db` calls, for the same reason. Guarded by
+`test_a_restore_drops_the_caches_derived_from_the_rows_it_replaced`.
+
 ---
 
 ## 2. The rules
