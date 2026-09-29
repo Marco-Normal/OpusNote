@@ -115,6 +115,15 @@ absent — and the whole media failure surface is behind it.
 is always available, so it now runs with or without the samples, and it is the arm that
 asserts the master output is audible. The sampled-piano arm still skips.)
 
+(2026-09-29: `scenario_lan_viewer`'s last check — that the piano machine sees **no** deployment
+warning — is conditional, and deliberately not a `return`. A machine with no ALSA sequencer (a
+container, CI: no `/dev/snd`, no `/proc/asound/seq/clients`) makes that warning the *correct*
+answer, so asking for its absence asks the app to lie about its own machine; the check prints
+`not applicable: …` and the rest of the scenario runs. It is guarded on the server's real
+`/api/host` answer, the guarded branch was proven live by forcing it (it fails here, as it must),
+and it runs in full on a machine that has a sequencer — which is where the defect it guards would
+appear.)
+
 **A scenario that never checks its own errors and never closes its page.**
 `scenario_repertoire` collects `console`/`pageerror`/HTTP failures at `:1235` and never
 asserts them; it is the only scenario outside the `check(not errors, ...)` list.

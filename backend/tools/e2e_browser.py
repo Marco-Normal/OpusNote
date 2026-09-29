@@ -4527,17 +4527,31 @@ def scenario_lan_viewer(browser) -> None:
     page.close()
 
     # And on the piano machine itself, with the server's real answer, neither appears.
-    page, errors = new_page(browser)
-    page.goto(BASE_URL, wait_until="domcontentloaded")
-    wait_for_app(page)
-    ensure_midi(page)
-    page.wait_for_timeout(600)
-    check(
-        page.locator("[data-host-warning]").count() == 0,
-        "the piano machine sees no deployment warnings at all",
-    )
-    check(not errors, f"no console errors ({errors})")
-    page.close()
+    #
+    # Guarded on this machine actually having a sequencer, because otherwise the assertion
+    # asks the app to lie about the machine it is on: a container or a CI box has no ALSA at
+    # all (no `/dev/snd`, no `/proc/asound/seq/clients`), so the server's honest answer is
+    # `sequencer: false` and the warning *must* appear — which is the check above. On a
+    # machine with a sequencer this runs and still catches a spurious warning, which is the
+    # defect it exists for.
+    host = api("/api/host")
+    if not host.get("sequencer"):
+        print(
+            "      not applicable: this machine has no ALSA sequencer, so the warning is the"
+            " correct answer rather than a defect"
+        )
+    else:
+        page, errors = new_page(browser)
+        page.goto(BASE_URL, wait_until="domcontentloaded")
+        wait_for_app(page)
+        ensure_midi(page)
+        page.wait_for_timeout(600)
+        check(
+            page.locator("[data-host-warning]").count() == 0,
+            "the piano machine sees no deployment warnings at all",
+        )
+        check(not errors, f"no console errors ({errors})")
+        page.close()
 
 
 def main() -> int:

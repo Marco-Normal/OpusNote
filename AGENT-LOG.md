@@ -4337,3 +4337,27 @@ the old code fitted everything to, kept only for the pre-run render. And `setMax
 comment read "a 7 px change", which described the wrong thing; it now says a change of a few pixels.
 `guess_the_score_height_budget` was re-run after these edits, because a falsification is evidence
 about the revision it ran against.
+
+## 2026-09-29 — score-layout — the second red, which the first one had been hiding
+
+Fixing `scenario_long_exercises` let `--full` reach the rest of the browser tier for the first time
+in several commits, and it stopped again — in the **last** scenario, `lan_viewer`:
+`the piano machine sees no deployment warnings at all`. That is not this change's defect, and it is
+worth being precise about why rather than calling it flaky.
+
+The check loads the page with the server's *real* `/api/host` and asserts no `[data-host-warning]`
+renders. This container has no ALSA at all — `/dev/snd` is absent and `/proc/asound/seq/clients` is
+absent — so the server honestly answers `{"host":"127.0.0.1","loopback":true,"sequencer":false,
+"clients":[]}` and the app correctly shows the sequencer warning. Asking for its absence here asks
+the app to lie about the machine it is on; the assertion is written for the piano notebook, where
+the sequencer is present. It became visible only now because the earlier failure stopped the tier
+before this scenario ran, which is the cost of a tier that aborts at its first red.
+
+The check is now guarded on that same real answer: with no sequencer it prints
+`not applicable: this machine has no ALSA sequencer, so the warning is the correct answer rather
+than a defect` and the rest of the scenario runs; with one, the assertion runs unchanged. Guarding
+it is not the same as the self-skips `TEST-STRATEGY.md` warns about — nothing returns early, one
+check is conditional and says why — and the branch was **proven live** by forcing it: with the
+guard inverted the scenario fails exactly as it did before, which is the evidence that the check is
+still the one that would catch a spurious warning on the piano machine. Recorded in
+`docs/TEST-STRATEGY.md` beside the sampled-piano note.
