@@ -79,6 +79,18 @@ def test_submitting_the_same_sitting_twice_queues_one_job(fresh_db, runner) -> N
     assert runner.scheduled(sitting_id) is False, "and it stops being scheduled when it is done"
 
 
+def test_a_mistyped_sweep_interval_cannot_spin(fresh_db) -> None:
+    """`queue.get(timeout=0)` returns at once, so a zero interval would be a busy loop.
+
+    An environment file typo must cost a slower catch-up, not a core. The floor is asserted
+    directly because the alternative — running the thread and watching for a spin — is a
+    timing test, and this repository counts work instead.
+    """
+    made = jobs.JobRunner(db_path=settings.db_path, sweep_s=0)
+    assert made._sweep_s >= 1.0
+    made.stop()
+
+
 def test_a_finished_sitting_is_prepared_with_no_request_that_names_it(fresh_db, runner) -> None:
     """The point of the whole phase: the work happens without anybody opening the sitting."""
     sitting_id = make_sitting(0)

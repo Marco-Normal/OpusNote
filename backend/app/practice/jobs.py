@@ -59,7 +59,10 @@ class JobRunner:
 
     def __init__(self, *, db_path: Path | None = None, sweep_s: float | None = None) -> None:
         self._db_path = db_path
-        self._sweep_s = float(sweep_s if sweep_s is not None else settings.job_sweep_s)
+        # Clamped, because `queue.get(timeout=0)` returns immediately and a mistyped
+        # `SRT_JOB_SWEEP_S=0` would turn the sweep into a busy loop on one core. The floor is
+        # a second: faster than that is not a cadence, it is a spin.
+        self._sweep_s = max(1.0, float(sweep_s if sweep_s is not None else settings.job_sweep_s))
         self._queue: queue.Queue[int | None] = queue.Queue()
         self._lock = threading.Lock()
         #: Queued *or* running. Membership is what a read asks about, so it must not be
