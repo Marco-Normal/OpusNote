@@ -4108,3 +4108,21 @@ The cause was the stale `frontend/dist` the runner serves (it does not build): t
 one `--fast` had produced before the edit. Rebuilt, it passed. `falsify.sh` owns the bundle; the
 scenario must be run with a rebuilt one too, which is the standing `frontend/dist` trap in AGENTS.md
 and is now the second time it has produced a wrong answer here.
+
+## 2026-09-29 — piece-labels — falsification
+
+Both break scripts caught their own break, attributed, against the committed tree (`caa9c6e`):
+
+```
+  falsified           drop_the_opus_from_a_pieces_name.sh
+  falsified           drop_the_opus_from_the_log_payload.sh
+falsify: 2 falsified, 0 failed, 0 refused, 0 unattributed, 0 undeclared
+check.sh --falsify passed in 12s
+```
+
+The first drops the opus from `pieceCredits` and is caught by `frontend/src/lib/pieceLabel.test.ts`
+under `npm test` (`--expect "Sonata · Beethoven · Op. 27 No. 2"`). The second removes the three wire
+values from `backend/app/practice/store.py` and is caught by
+`test_the_log_names_a_piece_by_its_catalogue_number` and
+`test_a_suggestion_carries_the_catalogue_number` (`-k catalogue`). Neither break is a build error or
+a crash: each leaves a payload that is valid and simply identifies less.
