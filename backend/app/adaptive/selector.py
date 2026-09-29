@@ -7,7 +7,7 @@ for every skill dimension), which the generator turns into notation.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Mapping, Sequence
 
 from ..config import Settings, settings as default_settings
@@ -23,7 +23,6 @@ class ExercisePlan:
     difficulty_elo: float
     rationale: str
     calibration: bool = False
-    focus_notes: list[str] = field(default_factory=list)
     #: Set when the player pinned the hand and/or the level. Both are recorded on the
     #: exercise so a reused one is never served for a different request, and so scoring
     #: knows the attempt was deliberate practice rather than an assessment.
@@ -147,7 +146,6 @@ def plan_exercise(
         levels=levels,
         difficulty_elo=exercise_elo(levels, cfg),
         rationale=rationale,
-        focus_notes=[f"{slug}: level {target_level}"],
         forced_hand=forced_hand,
         pinned_level=pin_level if pin_level is None else int(pin_level),
     )
@@ -182,7 +180,6 @@ def calibration_plan(step: int, *, ratings: Mapping[str, float], config: Setting
         difficulty_elo=exercise_elo(levels, cfg),
         rationale=f"Calibration {step + 1}/{len(CALIBRATION_LADDER)}: {focus} at level {level}",
         calibration=True,
-        focus_notes=[f"{focus}: level {level}"],
     )
 
 

@@ -3824,3 +3824,14 @@ counts instead).
 Impact on the other side: none. No route, request/response field, tunable or player-visible
 behaviour changed. `ENGINEERING.md` §2 is unchanged because `ExpectedNoteOut` was not part of the
 contract.
+
+## 2026-09-28 — sanitize-dead-code — drop the write-only `ExercisePlan.focus_notes`
+
+Scope: `backend/app/adaptive/selector.py`.
+
+Did: removed `ExercisePlan.focus_notes` and the two places that set it (the exercise plan and the
+calibration plan). It was written but never read: `services._exercise_payload` omits it and
+`ExerciseOut` has no such field, so it never reached the browser either. The `field` import became
+unused with it and was dropped.
+
+Impact on the other side: none. No API field, tunable or player-visible behaviour changed.
