@@ -15,6 +15,14 @@ player typed and there is no second copy of it.
 The canonical form is `Op. 27 No. 2` — the abbreviation carries a period, one space follows
 it, and a period *after* the number is not the abbreviation's period:
 `Op 10. No. 4` is `Op. 10 No. 4`, not `Op. 10. No. 4`.
+
+The column has three writers and only two of them can name the rule. `store.create_piece` and
+`store.update_piece` call it, and so does the legacy importer, which writes through a
+table-generic upsert (`importer._upsert`) rather than through the store because it also matches on
+`legacy_id` and must stay idempotent. The third is the backup restore, whose writer is generic on
+purpose; a restored document is tidied by `schema._normalise_stored_opus` on the next startup,
+which is also what canonicalises the rows already stored. One rule, three applications, and the
+migration is the one that catches what the others cannot.
 """
 
 from __future__ import annotations

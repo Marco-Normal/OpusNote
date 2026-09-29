@@ -4292,3 +4292,24 @@ Verified: `test_opus.py` 58 tests, backend suite **1068 passing** (1067 + the up
 frontend **187**, `svelte-check` 0 errors, build clean, and `scenario_repertoire` passes three new
 assertions — the preview, the in-place tidy after leaving the field, and the refusal beside the field
 with the button disabled — plus the stored form in the library row.
+
+## 2026-09-29 — catalogue-numbers — correction, and the falsify loop's one-file rule
+
+Two things to record rather than leave implicit.
+
+**A mode bit landed in the wrong commit.** `guess_the_score_height_budget.sh` was committed with
+`git add`, and only afterwards made executable — so at `ef87f01` the break script is mode 644, and
+`falsify.sh` refuses a break script that is not executable (`[ ! -x "$BREAK" ]`). The commit that
+fixed it is the next one, and nothing about `HEAD` is affected; the note is here because a reader
+checking out the layout commit alone to reproduce its falsification would otherwise hit "the break
+script is not executable" and have to work out why. The five new break scripts are all mode 755 at
+`HEAD`.
+
+**Do not touch the working tree while `./check.sh --falsify` is running.** I edited a docstring
+between two falsifications in one loop and the remaining four were refused in 0 s each — the
+harness requires a clean tree, because it restores a break with `git checkout -- .` and a dirty tree
+would lose whatever else was in it. The refusals were correct and lost nothing (the edit survived,
+since a refusal happens before any restore), but the four results were `refused`, which proves
+nothing either way, and they were re-run on a clean tree afterwards. The rule is the same one the
+suite already carries for a bare `pytest` beside a running tier: one writer in the checkout at a
+time.

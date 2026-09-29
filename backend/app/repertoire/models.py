@@ -168,9 +168,10 @@ DATE_PATTERN = r"^\d{4}-\d{2}-\d{2}$"
 def _validate_opus(value: str | None) -> str | None:
     """The guardrail on the catalogue number. See `repertoire/opus.py`.
 
-    Validated here rather than in the store because it is a rule about *input*, and a 422
-    with an explanation is the useful answer. The canonical form is a rule about *storage*
-    and lives in the store, so the legacy importer is covered by it too.
+    Validated here rather than in the store because it is a rule about *input*, and a 422 with
+    an explanation is the useful answer. The canonical form is a rule about *storage* and is
+    applied at the three points that write the column — see `opus.py`'s module docstring for
+    why there are three rather than one.
     """
     problem = opus_problem(value)
     if problem is not None:
