@@ -14,7 +14,7 @@ from ..config import settings
 from ..hostinfo import require_loopback
 from ..store import open_connection
 from ..workout import store as workout_store
-from . import capture_status, store
+from . import capture_status, jobs, store
 from .capture_status import CaptureReport
 from .legacy import LegacyDatabaseMissing, import_legacy_practice
 from .models import (
@@ -92,8 +92,14 @@ def close_sitting() -> SittingCloseResult:
     The player switching the piano off is a much sooner answer to "are they done?"
     than waiting out the whole silence gap, and it is the difference between the
     dashboard showing the sitting now and showing it five minutes from now.
+
+    It is also the common end of a sitting, so it is the common trigger for preparing one:
+    the work that used to happen on the first read that opened it happens here, while nobody
+    is waiting for it. Queued rather than done here — the response must not wait either.
     """
     outcome = _handle(store.close_open_sitting)
+    if outcome.sitting_id is not None:
+        jobs.submit(outcome.sitting_id)
     return SittingCloseResult(
         closed=outcome.sitting_id is not None,
         sitting_id=outcome.sitting_id,

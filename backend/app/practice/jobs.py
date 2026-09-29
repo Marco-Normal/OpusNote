@@ -213,6 +213,18 @@ def scheduled(sitting_id: int) -> bool:
     return _runner.scheduled(sitting_id)
 
 
+def submit(sitting_id: int) -> bool:
+    """Queue a sitting to be prepared, if that is switched on. False when it is not.
+
+    Every trigger goes through here for that reason: with the feature off, nothing is ever
+    queued, so there is no queue accumulating work nobody will run and every entry point
+    behaves exactly as it did before Phase 24.
+    """
+    if not settings.background_jobs:
+        return False
+    return runner().submit(sitting_id)
+
+
 def start() -> None:
     """Start preparing sittings in the background, unless the setting says not to."""
     if settings.background_jobs:

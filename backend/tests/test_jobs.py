@@ -14,6 +14,7 @@ because a worker happened to win a race.
 from __future__ import annotations
 
 import dataclasses
+import time
 
 import pytest
 
@@ -220,5 +221,125 @@ def test_the_runner_does_not_start_when_the_setting_says_so(fresh_db, monkeypatc
     try:
         assert jobs.runner().state().running is False
         assert jobs.scheduled(1) is False
+    finally:
+        jobs.reset()
+
+
+# --------------------------------------------------------------------------------------------
+# The triggers: what tells the runner to look
+# --------------------------------------------------------------------------------------------
+
+
+def _switched_on(monkeypatch) -> None:
+    """Turn background jobs on for this test, with no thread anywhere near it.
+
+    The `client` fixture has already run the app's lifespan with the setting off, so no
+    worker exists; every case here drives the queue by hand.
+    """
+    monkeypatch.setattr(jobs, "settings", dataclasses.replace(settings, background_jobs=True))
+    jobs.reset()
+
+
+def _record_a_drill(client) -> int:
+    """One sitting of notes, through the route a browser uses.
+
+    Anchored to *now*, not to `BASE_MS`: closing is deliberately limited to a sitting that
+    ended within the last hour, because a device event an hour later is not this sitting's
+    ending. Ten seconds ago is past the quiet guard and inside the lookback.
+    """
+    base_ms = int(time.time() * 1000) - 10_000
+    response = client.post(
+        "/api/practice/events",
+        json={
+            "tz_offset_minutes": 0,
+            "source": "web_midi",
+            "events": [
+                {
+                    "epoch_ms": base_ms + index * 250,
+                    "pitch": 60 + index,
+                    "velocity": 70,
+                    "duration_ms": 200,
+                    "channel": 0,
+                }
+                for index in range(8)
+            ],
+        },
+    )
+    assert response.status_code == 200, response.text
+    return int(response.json()["sitting_id"])
+
+
+def test_closing_a_sitting_queues_it_for_preparation(client, monkeypatch) -> None:
+    """The piano going away is the common end of a sitting, so it is the common trigger."""
+    _switched_on(monkeypatch)
+    try:
+        sitting_id = _record_a_drill(client)
+        assert jobs.runner().state().pending == 0, "nothing is prepared while it is being played"
+
+        closed = client.post("/api/practice/sittings/close")
+        assert closed.status_code == 200, closed.text
+        assert closed.json()["closed"] is True
+
+        assert jobs.runner().scheduled(sitting_id) is True
+        assert jobs.runner().state().pending == 1
+
+        jobs.runner().drain()
+        assert segment_count(sitting_id) > 0, "the queued job is what prepares it"
+    finally:
+        jobs.reset()
+
+
+def test_closing_nothing_queues_nothing(client, monkeypatch) -> None:
+    _switched_on(monkeypatch)
+    try:
+        body = client.post("/api/practice/sittings/close").json()
+        assert body["closed"] is False
+        assert jobs.runner().state().pending == 0
+    finally:
+        jobs.reset()
+
+
+def test_starting_sweeps_the_backlog_before_the_thread_runs(fresh_db, monkeypatch) -> None:
+    """A restored backup, or sittings logged by a build without this feature, are prepared
+    without anybody opening them — and that happens on the start path, before the thread."""
+    sitting_id = make_sitting(0)
+    monkeypatch.setattr(jobs, "settings", dataclasses.replace(settings, background_jobs=True))
+
+    started: list[str] = []
+
+    class FakeThread:
+        """A thread that records being started and deliberately never runs its target."""
+
+        def __init__(self, *, target, name, daemon):
+            self.name = name
+
+        def start(self) -> None:
+            started.append(self.name)
+
+        def join(self, timeout=None) -> None:  # noqa: ARG002
+            return None
+
+    monkeypatch.setattr(jobs.threading, "Thread", FakeThread)
+    jobs.reset()
+    try:
+        jobs.start()
+        assert jobs.runner().scheduled(sitting_id) is True, (
+            "the boot sweep must have queued the backlog before any thread exists"
+        )
+        assert started == ["practice-jobs"]
+    finally:
+        jobs.reset()
+
+
+def test_nothing_is_queued_when_background_jobs_are_off(fresh_db, monkeypatch) -> None:
+    """Off is the old behaviour at every entry point, not a queue nobody drains."""
+    monkeypatch.setattr(jobs, "settings", dataclasses.replace(settings, background_jobs=False))
+    sitting_id = make_sitting(0)
+
+    jobs.reset()
+    try:
+        assert jobs.submit(sitting_id) is False
+        assert jobs.runner().state().pending == 0
+        assert jobs.scheduled(sitting_id) is False
     finally:
         jobs.reset()
