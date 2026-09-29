@@ -674,6 +674,174 @@ def test_answering_a_practice_kind_keeps_the_cached_references(fresh_db) -> None
     assert after[0] is before[0], "a practice kind must not throw the references away"
 
 
+def _version() -> int:
+    """The database's own counter, which is what the cache is keyed on."""
+    conn = db.connect(settings.db_path)
+    try:
+        return store._reference_version(conn)
+    finally:
+        conn.close()
+
+
+def _finished_workout_over(started_ms: int, ended_ms: int) -> None:
+    """A finished workout the tag-from-workout pass will find, inserted directly."""
+    conn = db.connect(settings.db_path)
+    try:
+        conn.execute(
+            "INSERT INTO workouts (started_ms, ended_ms, local_date, completed)"
+            " VALUES (?, ?, '2023-11-15', 1)",
+            (started_ms, ended_ms),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_segmenting_a_sitting_does_not_rebuild_the_references(fresh_db, monkeypatch) -> None:
+    """The first click on a fresh sitting must not throw the training set away.
+
+    `ensure_segments` inserts its new segments *unlabelled*, and the pass that runs straight
+    after it tags them from whatever workout overlaps them — which rewrites `identified_by`
+    on rows that carry no piece at all. Neither write can change what `_labelled_rows`
+    returns, yet both used to bump the counter the cache is keyed on, so segmenting a sitting
+    rebuilt the very material the segmentation was about to read. Measured on the owner's
+    library that rebuild was ~985 ms of a 1,755 ms first click.
+
+    Counted, not timed: how many times the references were derived, not how long it took.
+    """
+    distinct_library()
+
+    # A running server has the cache warm; the one-off first build is not what this is about.
+    conn = db.connect(settings.db_path)
+    try:
+        store.cached_references(conn)
+    finally:
+        conn.close()
+
+    rebuilds = {"n": 0}
+    original = store.references_from
+
+    def counted(conn, rows):
+        rebuilds["n"] += 1
+        return original(conn, rows)
+
+    monkeypatch.setattr(store, "references_from", counted)
+
+    # A fresh sitting, with a finished workout overlapping it, so that the tagging pass which
+    # rewrites `identified_by` genuinely runs. Without it this test would only exercise the
+    # unlabelled insert.
+    index = 20
+    base = BASE_MS + index * STEP_MS
+    _finished_workout_over(base - 1_000, base + 5_000)
+    sitting_id = make_drill(index, PIECE_A)
+
+    segments = store.ensure_segments(sitting_id)
+    assert segments, "the sitting must actually be segmented, or this proves nothing"
+
+    conn = db.connect(settings.db_path)
+    try:
+        # `workout_id`, not `identified_by`: the tagging pass writes both, and the matcher
+        # that runs after it may legitimately overwrite `identified_by` when the segment
+        # matches a reference confidently. The tag is what has to have happened.
+        tagged = conn.execute(
+            "SELECT COUNT(*) FROM segments WHERE sitting_id = ? AND workout_id IS NOT NULL",
+            (sitting_id,),
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    assert tagged, "the workout tagging pass must have run, or this proves nothing"
+
+    assert rebuilds["n"] == 0, (
+        "segmenting an unlabelled sitting must not rebuild the references; it derived them "
+        f"{rebuilds['n']} time(s)"
+    )
+
+
+def test_writes_that_are_not_reference_changes_keep_the_cached_references(fresh_db) -> None:
+    """Only the reference set invalidates.
+
+    An unlabelled segment entering, being cut, or leaving is invisible to the derived
+    material — and so is a machine guess written onto one, which sets `piece_id` *and*
+    `identified_by = 'similarity'` and so is still not training data.
+    """
+    piece_a, _piece_b = two_pieces()
+    labelled_drill(0, PIECE_A, piece_a)
+    before = _references()
+    version = _version()
+
+    conn = db.connect(settings.db_path)
+    try:
+        sitting_id = int(conn.execute("SELECT sitting_id FROM segments LIMIT 1").fetchone()[0])
+        cursor = conn.execute(
+            "INSERT INTO segments (sitting_id, start_ms, end_ms) VALUES (?, ?, ?)",
+            (sitting_id, 30_000, 40_000),
+        )
+        inserted = int(cursor.lastrowid)
+        conn.execute("UPDATE segments SET start_ms = ? WHERE id = ?", (30_500, inserted))
+        conn.execute(
+            "UPDATE segments SET piece_id = ?, identified_by = 'similarity' WHERE id = ?",
+            (piece_a, inserted),
+        )
+        conn.execute("DELETE FROM segments WHERE id = ?", (inserted,))
+        conn.commit()
+    finally:
+        conn.close()
+
+    assert _version() == version, "a write the material cannot see must not invalidate it"
+    assert _references()[0] is before[0], "and must not throw the cached material away"
+
+
+def test_every_reference_change_still_invalidates(fresh_db) -> None:
+    """The direction that must not be narrowed: a stale matcher is a silent wrong answer.
+
+    Labelling, unlabelling, moving a reference's window, inserting one (the restore path)
+    and deleting one all change what `_labelled_rows` returns, so each must move the counter.
+    """
+    piece_a, _piece_b = two_pieces()
+    segment_id = labelled_drill(0, PIECE_A, piece_a)
+    other = labelled_drill(1, PIECE_C, piece_a)
+
+    def invalidates(describe: str, mutate) -> None:
+        before = _version()
+        mutate()
+        assert _version() > before, f"{describe} must invalidate the cached references"
+
+    invalidates("unlabelling a reference", lambda: store.assign_piece(segment_id, None))
+    invalidates("labelling a segment", lambda: store.assign_piece(segment_id, piece_a))
+    invalidates("moving a reference's window", lambda: store.split_segment(other, 1_000))
+
+    def insert_a_reference() -> None:
+        conn = db.connect(settings.db_path)
+        try:
+            sitting_id = int(
+                conn.execute(
+                    "SELECT sitting_id FROM segments WHERE id = ?", (other,)
+                ).fetchone()[0]
+            )
+            conn.execute(
+                "INSERT INTO segments (sitting_id, start_ms, end_ms, piece_id)"
+                " VALUES (?, ?, ?, ?)",
+                (sitting_id, 60_000, 70_000, piece_a),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    invalidates("inserting a reference (the restore path)", insert_a_reference)
+
+    def delete_a_reference() -> None:
+        conn = db.connect(settings.db_path)
+        try:
+            conn.execute(
+                "DELETE FROM segments WHERE start_ms = 60000 AND piece_id = ?", (piece_a,)
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    invalidates("deleting a reference", delete_a_reference)
+
+
 def test_init_db_forgets_the_cached_references(fresh_db) -> None:
     """The path may hold a different database afterwards, so nothing may survive it."""
     distinct_library()

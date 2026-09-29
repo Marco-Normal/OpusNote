@@ -5,7 +5,7 @@ Rust app" premise of
 [`INTEGRATION-practice-logger.md`](./INTEGRATION-practice-logger.md), which
 remains accurate about *what exists today* but is no longer the destination.
 
-Status: **decided; Phases 1-13 and 15-23 are landed. Phase 14 is planned.**
+Status: **decided; Phases 1-13 and 15-23 are landed. Phases 14 and 24 are planned.**
 §9 covers Phases 1-7; §10 covers Phases 8-23 and closes with the decisions, the risks and the
 non-goals. Each landed phase names its own evidence in place.
 
@@ -215,6 +215,7 @@ this document carries the rest.
 | 21 | **The log at speed, and the blur you can find** | Blur positions cached beside the count and marked on the sitting strip; and an edit path that applies the server's own answer instead of refetching the matcher's accuracy, the machine's health and the week's ratings after every click. **Landed.** | low |
 | 22 | **Hearing the piece** | Where the playing actually turns over (an adaptive gap with a 2 s floor, plus minimum and maximum sizes), and a matcher that survives a growing library (tempo-invariant local shingles pooled per piece, IDF containment, a hybrid score). Passages and piece-sessions are derived from attempts, so the log shows *n* attempts at one passage rather than *n* unrelated rows. **Landed 22a–22c.** One acceptance number was corrected to its measurement and one decision was dropped after measuring: see § *Phase 22* below. | high |
 | 23 | **The pedal as a quick-action surface** | The sostenuto's one hard-coded action becomes three gestures on the same pedal — single, double, hold — each bound in Setup to one action or to nothing: a review flag, start/finish a workout, arm/stop the take, or finish the sitting. A review flag is a raw mark event in its own table, drawn on the sitting strip beside the blur hairlines. **Landed.** | medium |
+| 24 | **The sitting is ready before you open it** | A finished sitting is segmented, measured and classified by a background worker instead of by the first click that opens it, and a read never waits on work already scheduled: it answers *preparing* and fills in a moment later. Measuring the request found that ~1 s of the wait was not scheduling at all — the matcher's reference cache was being thrown away by writes that cannot change it, so the invalidation rule is narrowed to references. **Planned.** | medium |
 
 Phases 1-2 are the useful minimum: they get the library out of the Rust app's
 directory and into a browser, which is most of what you asked for.

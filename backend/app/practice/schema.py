@@ -192,14 +192,31 @@ CREATE TABLE IF NOT EXISTS segment_metrics (
 -- row is what lets a process keep that answer: the triggers make invalidation the database's
 -- job, so no write path — this build's, an older one's, or the other machine's over the LAN
 -- — can change the references without the version saying so.
+--
+-- The ownership is deliberately *narrow*: a bump means "the reference set could have
+-- changed", and only a segment `_labelled_rows` would return counts. Anything wider throws
+-- away the cache for a write it cannot see, and the widest possible rule — any write at all
+-- — was measured at ~985 ms of the owner's 1,755 ms first click on a fresh sitting, because
+-- segmenting a sitting inserts its new segments and then tags them from workouts, neither of
+-- which can add a reference. Under-bumping would be a stale matcher, which is why the tests
+-- in `test_autotag.py` walk every path that *does* change the set in both directions.
+--
+-- `DROP` before every `CREATE`, because `CREATE TRIGGER IF NOT EXISTS` would leave an
+-- existing database on whatever rule it was created with — the narrow rule has to reach a
+-- database that already exists, and this script runs on every `init_db`.
 CREATE TABLE IF NOT EXISTS reference_state (
     id      INTEGER PRIMARY KEY CHECK (id = 1),
     version INTEGER NOT NULL DEFAULT 0
 );
 INSERT OR IGNORE INTO reference_state (id, version) VALUES (1, 0);
 
-CREATE TRIGGER IF NOT EXISTS trg_segments_reference_insert
+DROP TRIGGER IF EXISTS trg_segments_reference_insert;
+DROP TRIGGER IF EXISTS trg_segments_reference_update;
+DROP TRIGGER IF EXISTS trg_segments_reference_delete;
+
+CREATE TRIGGER trg_segments_reference_insert
 AFTER INSERT ON segments
+WHEN NEW.piece_id IS NOT NULL AND COALESCE(NEW.identified_by, '') <> 'similarity'
 BEGIN
     UPDATE reference_state SET version = version + 1 WHERE id = 1;
 END;
@@ -207,14 +224,23 @@ END;
 -- Only the columns the derived material is a function of. A practice kind or a confidence
 -- is not part of a fingerprint or a content feature, and invalidating on those would throw
 -- the cache away for a whole sitting every time an offer was answered.
-CREATE TRIGGER IF NOT EXISTS trg_segments_reference_update
+--
+-- The guard asks whether *either* side is a reference: a row entering the set and a row
+-- leaving it are both changes, while a write to a row that is not a reference on either side
+-- is not. `identified_by` stays in the column list because it decides membership — a guess
+-- marked `similarity` is deliberately not training data — but a rewrite that leaves a row on
+-- the same side of that line cannot change the derived material.
+CREATE TRIGGER trg_segments_reference_update
 AFTER UPDATE OF piece_id, identified_by, start_ms, end_ms ON segments
+WHEN (OLD.piece_id IS NOT NULL AND COALESCE(OLD.identified_by, '') <> 'similarity')
+  OR (NEW.piece_id IS NOT NULL AND COALESCE(NEW.identified_by, '') <> 'similarity')
 BEGIN
     UPDATE reference_state SET version = version + 1 WHERE id = 1;
 END;
 
-CREATE TRIGGER IF NOT EXISTS trg_segments_reference_delete
+CREATE TRIGGER trg_segments_reference_delete
 AFTER DELETE ON segments
+WHEN OLD.piece_id IS NOT NULL AND COALESCE(OLD.identified_by, '') <> 'similarity'
 BEGIN
     UPDATE reference_state SET version = version + 1 WHERE id = 1;
 END;

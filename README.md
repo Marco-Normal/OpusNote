@@ -345,6 +345,7 @@ deploy/                systemd units, kiosk policy, installer
 | Document | Contents |
 | --- | --- |
 | [docs/PLAN-SLICES1-7.md](docs/PLAN-SLICES1-7.md) | Slices 2-7 of the test strategy — **stalled after Slice 1**; `docs/TESTING.md` (Slice 8) is not yet written |
+| [docs/PLAN-PHASE24.md](docs/PLAN-PHASE24.md) | A finished sitting is prepared in the background, and the matcher's cache stops being invalidated by writes that cannot change it — **planned** |
 
 **The record.**
 
