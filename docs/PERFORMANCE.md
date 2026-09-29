@@ -256,6 +256,42 @@ the document carried. So the import drops both caches itself — the same `forge
 `init_db` calls, for the same reason. Guarded by
 `test_a_restore_drops_the_caches_derived_from_the_rows_it_replaced`.
 
+### 1.9 An export assembled in memory, to be written to a file
+
+**Symptom.** The nightly backup peaked at **2,539 MB** on the owner's 4 GB notebook to produce a
+160 MB document — an out-of-memory kill waiting for the night the library grew, with no cgroup limit
+to catch it. The Download button had the same shape, at 948 MB.
+
+**Cause.** Two costs, multiplied. `export_document` built every row of every table as a list of
+dicts, and `json.dumps(..., indent=1)` then built the document's *text* as a second object on top of
+it. `indent` is the expensive half on CPython: it assembles nested lists of strings before joining,
+which is why the indented form peaked at 1,369 MB where the compact one managed 442 MB on the same
+data. The fix could not be a faster `json.dumps` — the document itself was the problem.
+
+**Fix.** Write the document instead of building it: walk the tables a row at a time, emit JSON
+pieces, flush every 64 KiB. One serializer serves both writers, and the file is staged as `.part`
+and renamed into place, so an interrupted run cannot leave a half-document for the rotation to keep
+or for the status panel to report as the newest good backup.
+
+| | before | after |
+| --- | ---: | ---: |
+| `write_backup`, process peak | 2,539 MB | **81 MB** |
+| `GET /api/backup/export`, server peak RSS | not measured on the old code | **94 MB** |
+| `iter_export_json`, serializer peak | — | 81 MB, in 2,447 pieces |
+| `write_backup`, wall | 8,736 ms | **5,148 ms** |
+| backup file | 206.3 MB | **160.5 MB** |
+
+All of it on the rebuilt local fixture — **512,010 note events, 1,151,770 pedal events, 89 MB**
+([TEST-DATA.md](TEST-DATA.md)) — and the server figure is from a real `uvicorn` process's `VmHWM`
+after a 160.5 MB download, not from `TestClient`, which buffers the body and so reports the *client's*
+peak. That is why the old server-side figure is left unmeasured rather than quoted: the 948 MB was
+that confounded number, and the serializer's actual requirement was measured separately at **425 MB
+in-process on half this library**. An honest gap beats a number that flatters the fix.
+
+**The shape.** A stream that is serialised to one string and then written is not a stream, and
+neither is one whose flush threshold is the document. The guard counts pieces rather than seconds,
+because a timing assertion passes on a fast laptop with the defect present. See R11.
+
 ---
 
 ## 2. The rules
@@ -305,6 +341,12 @@ correlated subquery in the result list is evaluated *before* the limit applies, 
 returns ten rows" is a claim to measure rather than to assume (1.7). Bound the input: choose the
 rows first, then compute over them.
 
+**R11 — An export is written, not assembled.** A backup's cost is the size of the whole database, and
+building the document *and* its text in memory multiplies that by two or three (1.9). Stream it to
+the destination, flush in bounded pieces, and stage-then-rename so a run that dies half way leaves
+nothing where a good backup belongs. The same shape applies to any response whose body is the whole
+library.
+
 ---
 
 ## 3. The map — what must stay cheap
@@ -326,6 +368,7 @@ If you touch one of these, you own its complexity.
 | `store._refresh_metrics` | the sitting's notes and its pedal stream, once each | metric equivalence in `tests/test_practice_metrics.py` |
 | `store._labelled_rows` | the labelled set — **uncapped on purpose** | `test_every_label_is_a_reference_however_lopsided_the_library` |
 | `db.connect` | per request, and per COMMIT (R7) | `test_a_commit_does_not_fsync_the_write_ahead_log` |
+| `backup.iter_export_json` | one row and one 64 KiB buffer — never the document (R11) | `test_the_export_is_written_in_bounded_pieces`, `test_the_nightly_backup_does_not_build_the_whole_document`, `test_the_download_route_does_not_build_the_whole_document` |
 | `db.init_db` | startup only; it may run migrations | `tests/test_migration_upgrade.py` |
 | `practice/api.py` responses | the events in the sitting; gzip is on for ≥1 KB | — |
 

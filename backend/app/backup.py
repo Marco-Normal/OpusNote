@@ -20,10 +20,10 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal, Mapping
+from typing import Any, Iterator, Literal, Mapping
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from . import db
@@ -51,23 +51,103 @@ def table_names(conn: sqlite3.Connection) -> list[str]:
     ]
 
 
-def export_document(conn: sqlite3.Connection) -> dict[str, Any]:
+#: The document's fixed prose, owned once: the streamed and in-memory forms must agree, and
+#: two copies of a sentence is how they stop agreeing.
+_NOTES = [
+    "Recording files are not inside this document. The media rows are, so "
+    "copy the media directory alongside it to restore playback.",
+]
+
+#: How much JSON to hold before handing a piece to the caller. Large enough that even a
+#: 1.7-million-row export is a few thousand pieces rather than a few million — the HTTP path
+#: pays a thread hop per piece — and small enough that a piece is never a meaningful fraction
+#: of the document. See `PERFORMANCE.md` §1.9.
+_CHUNK_BYTES = 64 * 1024
+
+
+def _header(now: datetime | None = None) -> dict[str, Any]:
+    """The keys that describe the document, rather than the ones that hold it."""
+    moment = now or datetime.now(timezone.utc)
+    if moment.tzinfo is None:
+        # `write_backup(now=...)` is called with a naive date to name a file; the stamp has to
+        # mean the same instant, and reading it as local time would move it by the offset.
+        moment = moment.replace(tzinfo=timezone.utc)
+    return {
+        "format": FORMAT,
+        "version": BACKUP_VERSION,
+        "exported_at": moment.astimezone(timezone.utc).replace(microsecond=0).isoformat(),
+        "includes_media_files": False,
+    }
+
+
+def export_document(conn: sqlite3.Connection, *, now: datetime | None = None) -> dict[str, Any]:
+    """The whole document, in memory. The shape's reference; the writers do not use it."""
     tables: dict[str, list[dict[str, Any]]] = {}
     for name in table_names(conn):
         # Table names come from sqlite_master, never from input.
         tables[name] = [dict(row) for row in conn.execute(f"SELECT * FROM {name}")]
     return {
-        "format": FORMAT,
-        "version": BACKUP_VERSION,
-        "exported_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
-        "includes_media_files": False,
+        **_header(now),
         "tables": tables,
         "counts": {name: len(rows) for name, rows in tables.items()},
-        "notes": [
-            "Recording files are not inside this document. The media rows are, so "
-            "copy the media directory alongside it to restore playback.",
-        ],
+        "notes": list(_NOTES),
     }
+
+
+def _iter_export_parts(
+    conn: sqlite3.Connection, *, now: datetime | None = None
+) -> Iterator[str]:
+    """The document as many small strings — the shape of `export_document`, written not built.
+
+    The tables are walked a row at a time, so nothing larger than a single row is ever held.
+    `test_the_streamed_export_is_the_same_document` pins the two forms together, because two
+    traversals of one shape is exactly the arrangement that drifts.
+    """
+    yield "{\n"
+    for key, value in _header(now).items():
+        yield f" {json.dumps(key)}: {json.dumps(value)},\n"
+    yield ' "tables": {\n'
+    counts: dict[str, int] = {}
+    for index, name in enumerate(table_names(conn)):
+        if index:
+            yield ",\n"
+        yield f"  {json.dumps(name)}: ["
+        written = 0
+        for row in conn.execute(f"SELECT * FROM {name}"):
+            yield ("" if written == 0 else ",") + "\n   " + json.dumps(dict(row))
+            written += 1
+        counts[name] = written
+        yield "\n  ]"
+    yield "\n },\n"
+    yield f' "counts": {json.dumps(counts)},\n'
+    yield f' "notes": {json.dumps(list(_NOTES))}\n'
+    yield "}\n"
+
+
+def iter_export_json(
+    conn: sqlite3.Connection,
+    *,
+    now: datetime | None = None,
+    chunk_bytes: int = _CHUNK_BYTES,
+) -> Iterator[str]:
+    """The export as JSON text, in pieces of about `chunk_bytes` characters.
+
+    Both writers go through here, and the reason is memory rather than speed: the in-memory form
+    of the owner's library peaked at **2.5 GB on a 4 GB machine** for the nightly job and 948 MB
+    for the download (`PERFORMANCE.md` §1.9). The fix is to never build the document, not to
+    build it more cheaply — a "faster json.dumps" of the same object would not have helped.
+    """
+    buffer: list[str] = []
+    pending = 0
+    for part in _iter_export_parts(conn, now=now):
+        buffer.append(part)
+        pending += len(part)
+        if pending >= chunk_bytes:
+            yield "".join(buffer)
+            buffer.clear()
+            pending = 0
+    if buffer:
+        yield "".join(buffer)
 
 
 def _validate(document: Mapping[str, Any], known: set[str]) -> dict[str, list[dict]]:
@@ -207,11 +287,17 @@ def write_backup(
     target = directory / f"piano-ecosystem-{stamp}.json"
 
     conn = db.connect(db_path)
+    staging = target.parent / (target.name + ".part")
     try:
-        document = export_document(conn)
+        with staging.open("w", encoding="utf-8") as handle:
+            for piece in iter_export_json(conn, now=now):
+                handle.write(piece)
     finally:
         conn.close()
-    target.write_text(json.dumps(document, indent=1))
+    # Staged then renamed, because the document is now written as it is read. An interrupted run
+    # would otherwise leave a half-file that the rotation keeps and the status panel reports as
+    # the newest good backup. `.part` is deliberately outside the rotation's glob.
+    staging.replace(target)
 
     limit = max(1, int(keep if keep is not None else app_settings.backup_keep))
     # Newest first by name, which is chronological because the name is a date.
@@ -276,19 +362,27 @@ class BackupImportResult(BaseModel):
 router = APIRouter(prefix="/api/backup", tags=["backup"])
 
 
-def get_conn():
-    conn = open_connection()
-    try:
-        yield conn
-    finally:
-        conn.close()
-
-
 @router.get("/export")
-def export(conn: sqlite3.Connection = Depends(get_conn)) -> JSONResponse:
-    document = export_document(conn)
-    return JSONResponse(
-        document,
+def export() -> StreamingResponse:
+    """The whole document, streamed so the server never holds it (`PERFORMANCE.md` §1.9).
+
+    The connection is opened inside the body rather than by a dependency: a dependency's teardown
+    runs when the response is done, and a streamed response is not done until its generator is, so
+    owning it here is the version whose lifetime is obvious. It costs the `Content-Length` header,
+    which is not knowable without building the document first. The browser writes the body to disk
+    either way, so nothing on the far side lost anything.
+    """
+
+    def body() -> Iterator[str]:
+        conn = open_connection()
+        try:
+            yield from iter_export_json(conn)
+        finally:
+            conn.close()
+
+    return StreamingResponse(
+        body(),
+        media_type="application/json",
         headers={
             "Content-Disposition": 'attachment; filename="piano-ecosystem-backup.json"'
         },

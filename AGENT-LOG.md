@@ -4495,3 +4495,33 @@ and names that test in its `# EXPECT`, so reverting the decision cannot be silen
 Impact on the other side: no contract, table, route or field changes. A future test that asserts a
 row survives a hard reset would now be wrong, and there is none.
 
+## 2026-09-29 — performance — the backup is written, not assembled
+
+Scope: `backend/app/backup.py` (`_header`, `_iter_export_parts`, `iter_export_json`, `export_document`,
+`write_backup`, `GET /api/backup/export`), `backend/tests/test_backup.py`, four break scripts
+`backend/tools/falsifications/backup_*.sh`, `docs/PERFORMANCE.md` §1.9 + R11 + the map row, and
+`docs/DEPLOYMENT.md` § *Backup*.
+
+Did: the nightly backup and the Download route each called `export_document` — every row of every
+table as a list of dicts — and then `json.dumps`ed that, the nightly one with `indent=1`. Measured on
+the rebuilt fixture (512,010 notes, 1,151,770 pedals, 89 MB): the nightly job peaked at **2,539 MB to
+produce a 160 MB document**, which on the owner's 4 GB notebook is an OOM kill waiting for the library
+to grow, and the download peaked at 948 MB through `TestClient`. Both now stream: one serializer walks
+the tables a row at a time and flushes every 64 KiB. Nightly **2,539 MB → 81 MB** and 8,736 ms →
+5,148 ms; the server's own peak RSS during a downstream download **94 MB**, measured on a real
+`uvicorn` process serving a 160.5 MB body. The file also shrank to 160.5 MB from 206.3 MB, because
+per-row JSON is compact where `indent=1` was not.
+
+Two consequences worth naming. The backup is staged as `<name>.part` and renamed on success, because
+the document is now written as it is read and an interrupted run would otherwise leave a half-file
+that rotation keeps and `/api/status/system` reports as the newest good backup. And the download no
+longer sends `Content-Length`, which is not knowable without building the document first; the browser
+writes the body to disk either way, so nothing on the far side lost anything.
+
+Impact on the other side: **`BACKUP_VERSION` stays 1.** The shape is unchanged — same keys, same order,
+same values — and only the whitespace differs, so an older reader still reads a file written by this
+build. No table, column, route or field changes. `iter_export_json` is new public surface in
+`app.backup`; `export_document` remains as the shape's reference and is no longer called by either
+writer. Four break scripts guard the four claims, each naming its test.
+
+

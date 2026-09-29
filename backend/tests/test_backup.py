@@ -372,6 +372,114 @@ def test_the_cli_writes_a_backup(tmp_path, fresh_db, capsys) -> None:
 
 
 # --------------------------------------------------------------------------
+# The export is a stream, not a string
+# --------------------------------------------------------------------------
+
+
+def _explode(*args, **kwargs):
+    raise AssertionError("the document must not be materialised to be exported")
+
+
+def _ingest_notes(count: int = 5000) -> None:
+    """Enough notes that the document cannot fit inside a single export piece."""
+    practice_store.ingest(
+        EventBatch(
+            tz_offset_minutes=0,
+            events=[
+                WireNote(
+                    epoch_ms=BASE_MS + index * 100,
+                    pitch=60,
+                    velocity=70,
+                    duration_ms=50,
+                    channel=0,
+                )
+                for index in range(count)
+            ],
+        )
+    )
+
+
+def test_the_streamed_export_is_the_same_document(client) -> None:
+    """One owner for the shape: whatever the stream writes, `export_document` also builds.
+
+    The two traversals are separate on purpose — one holds a whole table, the other one row —
+    so this pins them together rather than trusting them to stay in step.
+    """
+    from datetime import datetime, timezone
+
+    _populate(client)
+    moment = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
+    conn = db.connect()
+    try:
+        streamed = json.loads("".join(backup.iter_export_json(conn, now=moment)))
+        built = backup.export_document(conn, now=moment)
+    finally:
+        conn.close()
+    assert streamed == built
+
+
+def test_the_export_is_written_in_bounded_pieces(client) -> None:
+    """No single piece approaches the size of the document, however large the document is.
+
+    This is the point of the change: the nightly backup used to be one `json.dumps` call over
+    every row, which peaked at **2.5 GB against a 4 GB machine** on the owner's real library.
+    A guard that counted seconds would pass on a fast laptop with that bug present, so this
+    counts the *shape* instead — the pieces a stream is made of.
+    """
+    _ingest_notes()
+    conn = db.connect()
+    try:
+        pieces = list(backup.iter_export_json(conn, chunk_bytes=64 * 1024))
+    finally:
+        conn.close()
+    assert len(pieces) > 3, "the export must arrive as a stream, not one string"
+    assert max(len(piece) for piece in pieces) <= 64 * 1024 + 4096, (
+        "every piece is the flush threshold plus at most one row"
+    )
+
+
+def test_the_nightly_backup_does_not_build_the_whole_document(
+    monkeypatch, tmp_path, fresh_db, client
+) -> None:
+    """`write_backup` streams, and cannot reach `export_document` at all."""
+    _populate(client)
+    _ingest_notes()
+    pieces = {"count": 0}
+    original = backup.iter_export_json
+
+    def counted(*args, **kwargs):
+        for piece in original(*args, **kwargs):
+            pieces["count"] += 1
+            yield piece
+
+    monkeypatch.setattr(backup, "iter_export_json", counted)
+    monkeypatch.setattr(backup, "export_document", _explode)
+    path = backup.write_backup(out_dir=tmp_path, keep=1)
+    assert pieces["count"] > 1, "a backup is written as it is read, not in one string"
+    # Compared against the table rather than a literal: the ingest is deduped, so the number of
+    # notes that landed is the database's business and the backup's job is to match it.
+    conn = db.connect()
+    try:
+        actual = conn.execute("SELECT COUNT(*) FROM note_events").fetchone()[0]
+    finally:
+        conn.close()
+    assert json.loads(path.read_text())["counts"]["note_events"] == actual > 5000
+
+
+def test_the_download_route_does_not_build_the_whole_document(monkeypatch, client) -> None:
+    """The Download button is the same serializer, so it must stream too.
+
+    Its peak was the smaller of the two — 948 MB — and the browser writes the body straight to
+    disk, so the server is the only side that has to hold it.
+    """
+    _populate(client)
+    monkeypatch.setattr(backup, "export_document", _explode)
+    response = client.get("/api/backup/export")
+    assert response.status_code == 200
+    assert response.json()["counts"]["note_events"] == 16
+
+
+# --------------------------------------------------------------------------
 # Shape compatibility, and interrupted work
 # --------------------------------------------------------------------------
 

@@ -198,6 +198,11 @@ that was off at that hour still backs up on the next boot. `SRT_BACKUP_DIR` says
 `SRT_BACKUP_KEEP` (14) bounds how many days are kept. It is a convenience, not a substitute for
 copying an export somewhere else: it lives on the same disk as the database it protects.
 
+Both routes are **streamed**: the server writes the document a row at a time rather than holding it
+in memory, so a backup costs about one row of memory however large the library grows. A run in
+progress appears as `piano-ecosystem-<date>.json.part` and is renamed into place when it finishes —
+a `.part` file left behind is an interrupted run, and is safe to delete.
+
 A useful habit: the JSON export is small (no audio), so it can go somewhere
 versioned or synced. The recordings are the heavy part and almost never change;
 copy `media/` with `rsync -a` and it will only move new files.
