@@ -2388,6 +2388,49 @@ def seed_library(count: int = 4) -> list[dict]:
     return created
 
 
+def seed_same_titled_pair() -> list[dict]:
+    """Two pieces whose names read alike without the catalogue number.
+
+    Beethoven wrote more than one sonata, and a library holding two of them is the case the
+    labels have to survive: a picker offering "Sonata" twice identifies nothing. Created once
+    and found on later runs, so a scenario that runs on its own and one that runs after
+    another both end up with exactly one pair.
+    """
+    composers = {row["name"]: row["id"] for row in api("/api/repertoire/composers")}
+    if "Beethoven" not in composers:
+        composers["Beethoven"] = api(
+            "/api/repertoire/composers", "POST", {"name": "Beethoven"}
+        )["id"]
+    wanted = [("Sonata", "Op. 27 No. 2"), ("Sonata", "Op. 13")]
+    created = []
+    for title, opus in wanted:
+        found = next(
+            (
+                piece
+                for piece in api("/api/repertoire/pieces")
+                if piece["title"] == title
+                and piece["opus"] == opus
+                and piece["composer_id"] == composers["Beethoven"]
+            ),
+            None,
+        )
+        created.append(
+            found
+            if found is not None
+            else api(
+                "/api/repertoire/pieces",
+                "POST",
+                {
+                    "title": title,
+                    "opus": opus,
+                    "composer_id": composers["Beethoven"],
+                    "key": "A",
+                },
+            )
+        )
+    return created
+
+
 def seed_closed_sitting(*, minutes_ago: int = 60) -> int:
     """A sitting that is already closed, so its segments exist to be edited.
 
@@ -2942,6 +2985,9 @@ def scenario_practice_log(browser) -> None:
     # which is why it could not be run on its own.
     if not api("/api/repertoire/pieces"):
         seed_library(4)
+    # Two pieces whose names read alike without the catalogue number. Created before the page
+    # mounts, because the Log reads the library when it does.
+    sonatas = seed_same_titled_pair()
     pieces = api("/api/repertoire/pieces")
     check(len(pieces) > 0, f"the library has pieces to tag with ({len(pieces)})")
     target = next((piece for piece in pieces if piece["status"] != "completed"), pieces[0])
@@ -3039,6 +3085,30 @@ def scenario_practice_log(browser) -> None:
     check(
         page.locator(".block").count() == 2,
         "both are drawn on the timeline strip",
+    )
+
+    # --- the picker names a piece, it does not just title it ---
+    #
+    # The reported problem: two Beethoven sonatas are both "Sonata", and a picker that shows the
+    # title alone offers two rows nobody can choose between. Read from the rendered options
+    # rather than from the payload, because it is the option text the player reads.
+    offered = page.evaluate(
+        """() => {
+             const select = document.querySelector('select[aria-label="Piece for this segment"]');
+             return [...select.options].map((option) => [option.value, option.textContent.trim()]);
+           }"""
+    )
+    by_id = {int(value): label for value, label in offered if value != ""}
+    labels = [label for _value, label in offered if _value != ""]
+    for sonata in sonatas:
+        label = by_id.get(sonata["id"])
+        check(
+            label == f"Sonata · Beethoven · {sonata['opus']}",
+            f"the picker names a sonata by its catalogue number ({label!r})",
+        )
+    check(
+        len(set(labels)) == len(labels),
+        "so no two options in the picker read alike",
     )
 
     # Phase 18b: this sitting was seeded straight into the log, so it has no pedal

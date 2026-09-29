@@ -14,6 +14,7 @@ function seg(id: number, startMs: number, endMs: number, pieceId: number | null 
     piece_id: pieceId,
     piece_title: null,
     composer_name: null,
+    piece_opus: null,
     source: null,
     workout_id: null,
     confidence: null,

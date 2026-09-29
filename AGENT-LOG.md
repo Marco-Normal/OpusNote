@@ -4057,3 +4057,54 @@ The suite total in the entry above (1005 backend tests) was counted before the l
 landed — the backlog-drain test and the sweep-interval floor. The accurate figure on the final tree
 is **1007 backend**, 169 frontend; `docs/ECOSYSTEM.md` carries the corrected number. Appended rather
 than edited, per the rule that this log is never rewritten.
+
+## 2026-09-29 — piece-labels — name a piece by its catalogue number, not just its title
+
+Scope: `frontend/src/lib/pieceLabel.{ts,test.ts}` (new), `frontend/src/components/`
+(`SegmentTimeline.svelte`, `PracticeLogView.svelte`, `CommandPalette.svelte`),
+`frontend/src/lib/types.ts`, `backend/app/practice/{models.py,store.py}`,
+`backend/tests/{test_practice_api.py,test_autotag.py}`, `backend/tools/e2e_browser.py`,
+`backend/tools/falsifications/drop_the_opus_{from_a_pieces_name,from_the_log_payload}.sh` (new),
+`docs/{FEATURES.md,ENGINEERING.md}`, `README.md`.
+
+Reported: *"when I'm going to label a piece, it only shows its title and not its opus number, so for
+example, if I have 2 beethoven Sonatas, with only the Name sonata, how can I distinguish them?"*
+
+The data was already there and the Repertoire list already showed it; the **log** was the part not
+using it. The segment and passage `<select>`s rendered `title · composer`, the matcher's *Maybe*
+buttons rendered the title alone, and the session/passage headings the title plus a muted composer —
+so two Beethoven sonatas were two identical rows in the one place a choice is being made.
+
+Did:
+* `frontend/src/lib/pieceLabel.ts` is the single owner: `pieceLabel` composes
+  `Sonata · Beethoven · Op. 27 No. 2`, `pieceCredits` is the same facts without the title (the bar
+  chart shows the title as the bar), and `uniquePieceLabels` returns one label per piece that is
+  **guaranteed not to repeat** — a label is decorated only when it would otherwise collide, with the
+  key, then the difficulty, then the library id. Eight unit tests, including the invariant over a
+  library shaped like the awkward one (duplicates, missing opuses).
+* Every place the log names a piece now reads that module: both pickers, both headings, the *Maybe*
+  row (which needed the opus on the wire), the timeline strip's tooltip, the command palette, and the
+  Log's time-per-piece and neglected lists.
+* Backend: `SegmentSummary.piece_opus`, `PracticePassageOut.piece_opus`, `SegmentCandidate.opus`,
+  `PiecePractice.opus`, `NeglectedPiece.opus` — all additive with a `None` default, so every
+  pre-existing reader still holds. `SCHEMA_VERSION` did **not** move: nothing is stored, the opus is
+  already a column on `pieces`. `docs/ENGINEERING.md` §2 lists the fields.
+* Contract detail for the other side: the field names are not uniform, deliberately —
+  `piece_opus` on the two segment-shaped payloads (which already prefix `piece_title`), `opus` on
+  `SegmentCandidate` (whose `title`/`composer_name` are unprefixed), and `opus` on the two analytics
+  rows. The browser's `pieceLabel.ts` accepts all of them structurally, so a caller cannot name a
+  piece with the wrong shape and still compile.
+
+Verification: 1009 backend tests (the suite total was 1007), 178 frontend, `svelte-check` clean,
+`./check.sh --fast` green, `scenario_practice_log` green with three new assertions (the picker
+renders each seeded sonata's catalogue number, and no two options in the picker read alike). Two new
+break scripts, `drop_the_opus_from_a_pieces_name.sh` and `drop_the_opus_from_the_log_payload.sh`,
+each declare their own `# CHECK:`/`# EXPECT:`; their `falsify.sh` runs follow this commit, because
+the harness refuses a dirty tree, and their outcomes are appended below.
+
+One measurement trap sprung itself, worth recording: the first `run_e2e.sh practice_log` run failed
+on the new assertion with `'Sonata · Beethoven'` — the *old* rendering, exactly the reported defect.
+The cause was the stale `frontend/dist` the runner serves (it does not build): the bundle was the
+one `--fast` had produced before the edit. Rebuilt, it passed. `falsify.sh` owns the bundle; the
+scenario must be run with a rebuilt one too, which is the standing `frontend/dist` trap in AGENTS.md
+and is now the second time it has produced a wrong answer here.

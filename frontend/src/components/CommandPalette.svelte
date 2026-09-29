@@ -13,6 +13,7 @@
    * trap focus: the app has no other overlay and a partial trap is worse than none.
    */
   import { api } from '../lib/api';
+  import { uniquePieceLabels } from '../lib/pieceLabel';
   import type { JournalEntry, PieceSummary, SittingSummary } from '../lib/types';
   import type { Route } from '../lib/route';
 
@@ -29,6 +30,9 @@
   let sittings = $state<SittingSummary[]>([]);
   let input = $state<HTMLInputElement | null>(null);
   let searching = $state(false);
+
+  /** Named by the same rule as the log's picker, so a search result is identifiable too. */
+  const pieceNames = $derived(uniquePieceLabels(pieces, (piece) => piece.id));
 
   $effect(() => {
     input?.focus();
@@ -112,7 +116,7 @@
               onclick={() =>
                 onnavigate({ name: 'repertoire', entity: { kind: 'piece', id: piece.id } })}
             >
-              {piece.title}{piece.composer_name ? ` · ${piece.composer_name}` : ''}
+              {pieceNames.get(piece.id) ?? piece.title}
             </button>
           </li>
         {/each}

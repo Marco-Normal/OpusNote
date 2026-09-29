@@ -246,6 +246,15 @@ Nothing about the result changes either way; with background preparation switche
   position (a clock value such as `1:30:12`, or seconds), merged with a neighbour, or
   re-segmented. Re-segmenting is the only destructive action and asks first when segments
   carry labels.
+- **Every piece is named, not just titled.** A picker that offers the title alone identifies
+  nothing, because the library can hold two Beethoven sonatas and both are "Sonata". So a piece
+  reads `Sonata · Beethoven · Op. 27 No. 2` — in the segment and passage pickers, on the session
+  and passage headings, on the matcher's *Maybe* row, on the timeline strip's tooltip, in the
+  command palette, and in the Log's time-per-piece and neglected lists. Where two rows would still
+  read alike — the opus was never filled in, or two rows genuinely duplicate one another — the
+  label gains the key and then the library number, so no two options in one list are ever the same
+  string. The composer and the opus were already in the data and already shown in the Repertoire
+  list; what was missing was the log using them where a choice is being made.
 - **The strip is read by colour, and clicked to find rather than to play.** Every labelled
   segment is drawn in its piece's own colour, derived from the piece itself so that a piece is
   the same colour in every sitting, and no two pieces of one sitting share one. A swatch beside

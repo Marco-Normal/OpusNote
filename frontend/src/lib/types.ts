@@ -538,6 +538,8 @@ export interface SegmentCandidate {
   piece_id: number;
   title: string;
   composer_name: string | null;
+  /** The catalogue number — two candidates can share a title. See `pieceLabel`. */
+  opus: string | null;
   score: number;
   pitch_class: number;
   tempo: number;
@@ -559,6 +561,8 @@ export interface SegmentSummary {
   piece_id: number | null;
   piece_title: string | null;
   composer_name: string | null;
+  /** The catalogue number, so two pieces with one title can be told apart. */
+  piece_opus: string | null;
   source: string | null;
   workout_id: number | null;
   confidence: number | null;
@@ -675,6 +679,8 @@ export interface PracticePassage {
   piece_id: number | null;
   piece_title: string | null;
   composer_name: string | null;
+  /** The catalogue number, so two pieces with one title can be told apart. */
+  piece_opus: string | null;
   attempt_ids: number[];
   attempts: number;
   /** Index of the piece-session this passage belongs to, so the view need not re-derive it. */
@@ -729,6 +735,8 @@ export interface PiecePractice {
   piece_id: number;
   title: string;
   composer_name: string | null;
+  /** The catalogue number, so two pieces with one title can be told apart. */
+  opus: string | null;
   minutes: number;
   notes: number;
   segments: number;
@@ -756,6 +764,8 @@ export interface NeglectedPiece {
   piece_id: number;
   title: string;
   composer_name: string | null;
+  /** The catalogue number, so two pieces with one title can be told apart. */
+  opus: string | null;
   days_since: number | null;
   last_played: string | null;
 }

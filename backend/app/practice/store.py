@@ -386,6 +386,7 @@ def _segment_rows(conn: sqlite3.Connection, sitting_id: int) -> list[SegmentSumm
                g.piece_id,
                p.title AS piece_title,
                c.name AS composer_name,
+               p.opus AS piece_opus,
                g.source,
                g.workout_id,
                g.confidence,
@@ -442,6 +443,7 @@ def _segment_rows(conn: sqlite3.Connection, sitting_id: int) -> list[SegmentSumm
                 piece_id=data["piece_id"],
                 piece_title=data["piece_title"],
                 composer_name=data["composer_name"],
+                piece_opus=data["piece_opus"],
                 source=data["source"],
                 workout_id=data["workout_id"],
                 confidence=data["confidence"],
@@ -908,6 +910,7 @@ def _passage_rows(conn: sqlite3.Connection, sitting_id: int) -> list[PracticePas
                 piece_id=found.piece_id,
                 piece_title=label.get("title"),
                 composer_name=label.get("composer_name"),
+                piece_opus=label.get("opus"),
                 attempt_ids=list(found.attempt_ids),
                 attempts=found.attempts,
                 session=session_of.get(index, 0),
@@ -1375,6 +1378,7 @@ def by_piece(conn: sqlite3.Connection, days: int) -> list[PiecePractice]:
         SELECT p.id AS piece_id,
                p.title,
                c.name AS composer_name,
+               p.opus,
                COUNT(g.id) AS segments,
                SUM(m.duration_s) AS seconds,
                SUM(m.note_count) AS notes,
@@ -1397,6 +1401,7 @@ def by_piece(conn: sqlite3.Connection, days: int) -> list[PiecePractice]:
             piece_id=int(row["piece_id"]),
             title=row["title"],
             composer_name=row["composer_name"],
+            opus=row["opus"],
             minutes=_minutes(row["seconds"]),
             notes=int(row["notes"] or 0),
             segments=int(row["segments"]),
@@ -1413,7 +1418,7 @@ def piece_practice(conn: sqlite3.Connection, piece_id: int, days: int = 3650) ->
     row = next((item for item in rows if item.piece_id == piece_id), None)
     if row is None:
         piece = conn.execute(
-            "SELECT p.id, p.title, c.name AS composer_name,"
+            "SELECT p.id, p.title, c.name AS composer_name, p.opus,"
             " (SELECT COALESCE(SUM(j.practice_minutes), 0) FROM piece_journal j"
             "   WHERE j.piece_id = p.id) AS journal_minutes"
             " FROM pieces p LEFT JOIN composers c ON c.id = p.composer_id"
@@ -1426,6 +1431,7 @@ def piece_practice(conn: sqlite3.Connection, piece_id: int, days: int = 3650) ->
             piece_id=int(piece["id"]),
             title=piece["title"],
             composer_name=piece["composer_name"],
+            opus=piece["opus"],
             minutes=0.0,
             notes=0,
             segments=0,
@@ -1447,6 +1453,7 @@ def neglected(conn: sqlite3.Connection, limit: int = 8) -> list[NeglectedPiece]:
         SELECT p.id AS piece_id,
                p.title,
                c.name AS composer_name,
+               p.opus,
                MAX(s.local_date) AS last_played
         FROM pieces p
         LEFT JOIN composers c ON c.id = p.composer_id
@@ -1473,6 +1480,7 @@ def neglected(conn: sqlite3.Connection, limit: int = 8) -> list[NeglectedPiece]:
                 piece_id=int(row["piece_id"]),
                 title=row["title"],
                 composer_name=row["composer_name"],
+                opus=row["opus"],
                 days_since=days_since,
                 last_played=last,
             )
@@ -2055,7 +2063,7 @@ def _piece_labels(conn: sqlite3.Connection, piece_ids: Iterable[int]) -> dict[in
     placeholders = ", ".join("?" for _ in ids)
     rows = conn.execute(
         f"""
-        SELECT p.id, p.title, c.name AS composer_name
+        SELECT p.id, p.title, c.name AS composer_name, p.opus
         FROM pieces p LEFT JOIN composers c ON c.id = p.composer_id
         WHERE p.id IN ({placeholders})
         """,
@@ -2082,6 +2090,7 @@ def _candidate_out(
                 piece_id=candidate.piece_id,
                 title=label.get("title") or f"piece {candidate.piece_id}",
                 composer_name=label.get("composer_name"),
+                opus=label.get("opus"),
                 score=round(candidate.score, 4),
                 pitch_class=round(candidate.pitch_class, 4),
                 tempo=round(candidate.tempo, 4),

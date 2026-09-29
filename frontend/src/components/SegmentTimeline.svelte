@@ -18,6 +18,7 @@
   import { formatClock, parseClock } from '../lib/clock';
   import { PRACTICE_KINDS, kindCounts, practiceKindLabel } from '../lib/kinds';
   import { pieceColorSlots, segmentAtMs } from '../lib/timelineStrip';
+  import { pieceLabel, uniquePieceLabels } from '../lib/pieceLabel';
   import {
     type PieceSummary,
     type PracticeKind,
@@ -132,6 +133,44 @@
     if (pieceId === null) return null;
     const slot = pieceSlots.get(pieceId);
     return slot === undefined ? null : `var(--piece-${slot + 1})`;
+  }
+
+  /**
+   * What each piece in this library is called, guaranteed not to repeat.
+   *
+   * Built once from the whole library rather than per row: two pieces can share a title — two
+   * Beethoven sonatas are both "Sonata" — and whether a label needs its catalogue number to be
+   * told apart is a fact about the list, not about the row. The picker, the "Maybe" buttons and
+   * the passage heading all read it, so they cannot disagree about what a piece is called.
+   */
+  const pieceNames = $derived(uniquePieceLabels(pieces, (piece) => piece.id));
+
+  /**
+   * The name of one piece, from the library's own label when it has one.
+   *
+   * The fallback composes from the row's own fields, so a label whose piece was deleted — or has
+   * not arrived in the library list yet — still reads as a name instead of as "unidentified".
+   */
+  function nameOf(
+    pieceId: number | null,
+    fields: { title: string | null; composer_name?: string | null; opus?: string | null },
+  ): string | null {
+    if (pieceId === null) return null;
+    return (
+      pieceNames.get(pieceId) ??
+      pieceLabel({ title: fields.title, composer_name: fields.composer_name, opus: fields.opus })
+    );
+  }
+
+  /** The label for a stored segment. */
+  function segmentName(segment: SegmentSummary): string {
+    return (
+      nameOf(segment.piece_id, {
+        title: segment.piece_title,
+        composer_name: segment.composer_name,
+        opus: segment.piece_opus,
+      }) ?? 'unidentified'
+    );
   }
 
   /**
@@ -400,7 +439,11 @@
           kind: 'session',
           key: `session-${passage.session}`,
           session: passage.session,
-          piece: passage.piece_title,
+          piece: nameOf(passage.piece_id, {
+            title: passage.piece_title,
+            composer_name: passage.composer_name,
+            opus: passage.piece_opus,
+          }),
           pieceId: passage.piece_id,
         });
       }
@@ -538,7 +581,7 @@
             0.6,
             ((segment.end_ms - segment.start_ms) / total) * 100,
           )}%; --piece: {pieceColor(segment.piece_id) ?? 'var(--good)'}"
-          title="{segment.piece_title ?? 'unidentified'} · {formatClock(
+          title="{segmentName(segment)} · {formatClock(
             (segment.end_ms - segment.start_ms) / 1000,
           )} · click to jump to this segment"
         ></span>
@@ -612,10 +655,13 @@
               {#if tint}
                 <span class="swatch" style="background: {tint}" aria-hidden="true"></span>
               {/if}
-              <strong>{row.passage.piece_title ?? 'unidentified'}</strong>
-              {#if row.passage.composer_name}
-                <span class="muted small">{row.passage.composer_name}</span>
-              {/if}
+              <strong>{row.passage.piece_id === null
+                ? 'unidentified'
+                : nameOf(row.passage.piece_id, {
+                    title: row.passage.piece_title,
+                    composer_name: row.passage.composer_name,
+                    opus: row.passage.piece_opus,
+                  })}</strong>
             </div>
             <!-- Labelling the passage labels every member attempt: the label lives on the
                  segments, so this is the route that already exists sent once per member, and
@@ -635,9 +681,7 @@
               >
                 <option value="">— label all {row.passage.attempts} —</option>
                 {#each pieces as piece (piece.id)}
-                  <option value={piece.id}>
-                    {piece.title}{piece.composer_name ? ` · ${piece.composer_name}` : ''}
-                  </option>
+                  <option value={piece.id}>{pieceNames.get(piece.id) ?? pieceLabel(piece)}</option>
                 {/each}
               </select>
               <span class="muted small">
@@ -769,6 +813,13 @@
               </span>
             </div>
           {:else if suggested(segment)}
+            <!-- Two candidates can share a title — "Sonata" twice — so the guesses are named by
+                 the same rule as the picker below, and the confidence does not have to carry the
+                 whole burden of telling them apart. -->
+            {@const candidateNames = uniquePieceLabels(
+              segment.candidates,
+              (candidate) => candidate.piece_id,
+            )}
             <div class="row wrap suggest" data-suggest={segment.id}>
               <span class="muted small">Maybe</span>
               {#each segment.candidates as candidate (candidate.piece_id)}
@@ -781,9 +832,9 @@
                   )} · register {percent(candidate.register_overlap)}"
                   onclick={() => onassign(segment.id, candidate.piece_id)}
                 >
-                  {candidate.title}{candidate.from_context ? ' · this sitting' : ''} · {percent(
-                    candidate.score,
-                  )}
+                  {candidateNames.get(candidate.piece_id) ?? pieceLabel(candidate)}{candidate.from_context
+                    ? ' · this sitting'
+                    : ''} · {percent(candidate.score)}
                 </button>
               {/each}
               <button class="ghost tiny" disabled={busy} onclick={() => onidentify(segment.id, 'dismiss')}>
@@ -836,9 +887,7 @@
             >
               <option value="">— unidentified —</option>
               {#each pieces as piece (piece.id)}
-                <option value={piece.id}>
-                  {piece.title}{piece.composer_name ? ` · ${piece.composer_name}` : ''}
-                </option>
+                <option value={piece.id}>{pieceNames.get(piece.id) ?? pieceLabel(piece)}</option>
               {/each}
             </select>
 

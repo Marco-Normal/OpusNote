@@ -165,6 +165,9 @@ class SegmentSummary(BaseModel):
     piece_id: int | None = None
     piece_title: str | None = None
     composer_name: str | None = None
+    #: The catalogue number, so two pieces with one title can be told apart. Additive with a
+    #: default, so every pre-existing reader of a segment still holds.
+    piece_opus: str | None = None
     source: str | None = None
     workout_id: int | None = None
     confidence: float | None = None
@@ -191,6 +194,9 @@ class SegmentCandidate(BaseModel):
     piece_id: int
     title: str
     composer_name: str | None = None
+    #: The catalogue number. Two candidates can share a title — "Sonata" twice over — and a
+    #: suggestion the player cannot identify is not a suggestion. Additive with a default.
+    opus: str | None = None
     score: float
     pitch_class: float
     tempo: float
@@ -343,6 +349,8 @@ class PracticePassageOut(BaseModel):
     piece_id: int | None = None
     piece_title: str | None = None
     composer_name: str | None = None
+    #: Additive with a default, like `piece_title`, so every pre-existing reader still holds.
+    piece_opus: str | None = None
     attempt_ids: list[int] = Field(default_factory=list)
     attempts: int = 0
     session: int = 0
@@ -406,6 +414,9 @@ class PiecePractice(BaseModel):
     piece_id: int
     title: str
     composer_name: str | None = None
+    #: The catalogue number. Two pieces can share a title, and a bar labelled "Sonata" twice
+    #: attributes the time to nobody. Additive with a default.
+    opus: str | None = None
     minutes: float
     notes: int
     segments: int
@@ -417,6 +428,8 @@ class NeglectedPiece(BaseModel):
     piece_id: int
     title: str
     composer_name: str | None = None
+    #: Additive with a default, for the same reason as `PiecePractice.opus`.
+    opus: str | None = None
     days_since: int | None = None
     last_played: str | None = None
 

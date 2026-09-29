@@ -246,6 +246,32 @@ def test_assign_then_read_back_over_http(client) -> None:
     assert reread["segments"][0]["piece_title"] == "Intermezzo"
 
 
+def test_the_log_names_a_piece_by_its_catalogue_number(client) -> None:
+    """A title alone does not identify a piece, and the log must not pretend it does.
+
+    Two Beethoven sonatas are both "Sonata", so every place the log names a piece — the segment,
+    the passage it groups into, and the analytics rows that attribute time to it — has to carry
+    the catalogue number, or the player is picking between two rows they cannot tell apart.
+    """
+    offsets = phrase_offsets(-400_000, 8) + phrase_offsets(-371_000, 8)
+    sitting_id = record_now(offsets).sitting_id
+    segments = client.get(f"/api/practice/sittings/{sitting_id}").json()["segments"]
+    piece_id = client.post(
+        "/api/repertoire/pieces", json={"title": "Sonata", "opus": "Op. 27 No. 2", "key": "A"}
+    ).json()["id"]
+    client.patch(f"/api/practice/segments/{segments[0]['id']}", json={"piece_id": piece_id})
+
+    reread = client.get(f"/api/practice/sittings/{sitting_id}").json()
+    assert reread["segments"][0]["piece_opus"] == "Op. 27 No. 2"
+    passage = next(row for row in reread["passages"] if row["piece_id"] == piece_id)
+    assert passage["piece_opus"] == "Op. 27 No. 2"
+
+    summary = client.get("/api/practice/analytics/summary?days=365").json()
+    assert summary["by_piece"][0]["opus"] == "Op. 27 No. 2"
+    neglected = next(row for row in summary["neglected"] if row["piece_id"] == piece_id)
+    assert neglected["opus"] == "Op. 27 No. 2"
+
+
 def test_unknown_segment_is_404_and_unknown_piece_is_422(client) -> None:
     sitting_id = record([0, 500, 1_000]).sitting_id
     segment_id = client.get(f"/api/practice/sittings/{sitting_id}").json()["segments"][0]["id"]

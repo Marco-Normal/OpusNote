@@ -68,6 +68,15 @@ server is already preparing that sitting in the background (Phase 24). The clien
 moment later. When nothing is scheduled the same route materialises the sitting itself, exactly as
 it always did — so the field reports a state, it never becomes a requirement on the caller.
 
+Every payload that names a library piece carries the three fields that name it, because a title
+alone does not identify one: `SegmentSummary.piece_title`/`composer_name`/**`piece_opus`**,
+`PracticePassageOut.piece_opus`, `SegmentCandidate.opus` (`title`/`composer_name` unprefixed there,
+matching the rest of that shape), and `PiecePractice.opus`/`NeglectedPiece.opus` on
+`/api/practice/analytics/summary`. All of them are additive with a `None` default, so a reader that
+predates them still holds. The browser composes the label in one place —
+`frontend/src/lib/pieceLabel.ts` — which is also where the guarantee lives that no two labels in one
+list are the same string; see `docs/FEATURES.md` § 6.
+
 ## 3. Difficulty model
 
 Nine independent skills, each on a level from 1 to 10. `backend/app/skills_data.py` is the single

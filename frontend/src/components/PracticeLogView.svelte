@@ -28,6 +28,7 @@
   import SittingList from './SittingList.svelte';
   import { formatClock } from '../lib/clock';
   import { practiceKindLabel } from '../lib/kinds';
+  import { pieceCredits, pieceLabel } from '../lib/pieceLabel';
   import { inverseOf, type UndoAction } from '../lib/segmentUndo';
 
   let summary = $state<AnalyticsSummary | null>(null);
@@ -471,7 +472,7 @@
         <BarChart
           items={summary.by_piece.slice(0, 8).map((piece) => ({
             label: piece.title,
-            sublabel: piece.composer_name ?? undefined,
+            sublabel: pieceCredits(piece) || undefined,
             value: piece.minutes,
             hint: `${piece.segments} segment${piece.segments === 1 ? '' : 's'} · last played ${piece.last_played ?? '—'}`,
           }))}
@@ -487,12 +488,7 @@
         <ul class="neglected">
           {#each summary.neglected as piece (piece.piece_id)}
             <li>
-              <span>
-                {piece.title}
-                {#if piece.composer_name}
-                  <span class="muted small">· {piece.composer_name}</span>
-                {/if}
-              </span>
+              <span>{pieceLabel(piece)}</span>
               <span class="pill" class:warn={(piece.days_since ?? 999) > 14}>
                 {piece.days_since === null ? 'never logged' : `${piece.days_since} d ago`}
               </span>

@@ -66,7 +66,9 @@ Selected capabilities:
 - **The log shows what you actually did.** Adjacent attempts at the same material are grouped into
   a **passage** — "six goes at this bit" is one row with its attempts beneath it, not six — under a
   heading naming the piece that stretch of the sitting was about. Labelling a passage labels every
-  attempt in it, so a session of drilling is a handful of decisions rather than one per pause.
+  attempt in it, so a session of drilling is a handful of decisions rather than one per pause. A
+  piece is named by its title, its composer **and its catalogue number** — the library can hold two
+  Beethoven sonatas and both are *Sonata* — and no two options in one list ever read alike.
 - **Piece recognition.** Hand-tagged segments become training data, and the matcher offers the
   piece it believes was played, with a way to disagree. It compares *local content* — the notes,
   chords and melodic shapes themselves — not a whole-segment average, so a drill that is a snippet

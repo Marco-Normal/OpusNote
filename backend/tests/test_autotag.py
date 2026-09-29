@@ -534,8 +534,41 @@ def test_the_offer_route_ranks_a_segment_through_the_api(client):
     detail = client.get(f"/api/practice/sittings/{sitting_id}").json()
     candidates = detail["segments"][0]["candidates"]
     assert candidates
-    assert {"piece_id", "title", "score", "band", "reason"} <= set(candidates[0])
+    assert {"piece_id", "title", "composer_name", "opus", "score", "band", "reason"} <= set(
+        candidates[0]
+    )
     assert candidates[0]["band"] == "suggest"
+
+
+def test_a_suggestion_carries_the_catalogue_number(client):
+    """"Maybe Sonata 84%" is not a suggestion when the library holds two of them.
+
+    The matcher ranks by sound and knows nothing about titles, so the pieces it is choosing
+    between can share one. The opus is what makes the offer answerable.
+    """
+    conn = db.connect(settings.db_path)
+    try:
+        first = conn.execute(
+            "INSERT INTO pieces (title, opus) VALUES ('Sonata', 'Op. 27 No. 2')"
+        ).lastrowid
+        second = conn.execute(
+            "INSERT INTO pieces (title, opus) VALUES ('Sonata', 'Op. 13')"
+        ).lastrowid
+        conn.commit()
+    finally:
+        conn.close()
+    labelled_drill(0, PIECE_A, first)
+    labelled_drill(1, PIECE_A, first)
+    labelled_drill(2, PIECE_A, second)
+    labelled_drill(3, PIECE_A, second)
+    sitting_id = make_drill(10, PIECE_A)
+
+    candidates = client.get(f"/api/practice/sittings/{sitting_id}").json()["segments"][0][
+        "candidates"
+    ]
+    assert len(candidates) >= 2, "both pieces explain this drill equally well"
+    assert {candidate["title"] for candidate in candidates[:2]} == {"Sonata"}
+    assert {candidate["opus"] for candidate in candidates[:2]} == {"Op. 27 No. 2", "Op. 13"}
 
 
 def test_the_identification_routes_round_trip(client):
