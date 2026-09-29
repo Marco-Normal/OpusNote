@@ -193,11 +193,6 @@ def fingerprint(notes: Sequence[Note], *, attack_window_ms: int) -> Fingerprint:
     )
 
 
-def attack_count(notes: Sequence[Note], *, attack_window_ms: int) -> int:
-    """Distinct attacks, for callers that want to size a passage by hand."""
-    return len(attacks(list(notes), attack_window_ms))
-
-
 def cosine(left: Sequence[float], right: Sequence[float]) -> float:
     """Cosine similarity of two non-negative vectors, in 0..1.
 
@@ -444,9 +439,3 @@ def identify(
         return Identification(tuple(candidates), "auto", "confident match")
 
     return Identification(tuple(candidates), "suggest", "worth a look")
-
-
-def top_piece(identification: Identification) -> int | None:
-    """The piece a match would name, for callers that only want the answer."""
-    best = identification.best
-    return None if best is None else best.piece_id

@@ -3858,3 +3858,26 @@ parameter types of the exported functions beside them, so the runtime contract i
 
 Impact on the other side: none. No value, component or emitted type changed; `--chart-*` tokens and
 the type ramp were left alone.
+
+## 2026-09-28 — sanitize-dead-code — retire the nine functions dead in both directions
+
+Scope: `backend/app/adaptive/selector.py`, `db.py`, `music/events.py`, `music/expected.py`,
+`practice/similarity.py`, `skills_data.py`, `store.py`; `docs/TEST-STRATEGY.md` §Appendix.
+
+Did: the nine symbols `docs/TEST-STRATEGY.md` inventoried as "0% covered *and* referenced by
+nothing" are gone, with their appendix table and the three prose mentions updated:
+
+- `adaptive/selector.py` `available_levels` (and its now-unused `rating_for_level` import)
+- `db.py` `row_to_dict`
+- `music/events.py` `even_durations`, `melody_events_to_pitches`
+- `music/expected.py` `expected_to_dicts`
+- `practice/similarity.py` `attack_count`, `top_piece`
+- `skills_data.py` `keys_at_level`
+- `store.py` `performance_count`
+
+`piano.py` `fetch` is untouched: intentional network seam, not dead code. `docs/TEST-STRATEGY.md`
+now records the removal in place of the inventory. `./check.sh --fast` passed.
+
+Impact on the other side: a contract removal. Any agent importing one of the nine names above by
+hand will now get an ImportError/AttributeError; nothing in `app/`, `tests/`, `tools/` or
+`frontend/` did. No route, field, tunable or player-visible behaviour changed.

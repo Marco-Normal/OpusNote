@@ -223,10 +223,6 @@ def init_db(db_path: Path | None = None) -> None:
     forget_references()
 
 
-def row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
-    return dict(row) if row is not None else None
-
-
 class CorruptJSON(ValueError):
     """Stored JSON text is damaged, so the row cannot be read as the shape it claims.
 

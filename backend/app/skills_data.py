@@ -223,10 +223,6 @@ def level_for_key(key_name: str) -> int | None:
     return KEY_LEVELS.get(key_name)
 
 
-def keys_at_level(level: int) -> tuple[str, ...]:
-    return KEY_SIGNATURE_LEVELS.get(level, ())
-
-
 #: Meters available at each level. Levels 9-10 return *sequences*: the
 #: generator alternates them bar by bar.
 METER_LEVELS: dict[int, tuple[str, ...]] = {

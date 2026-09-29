@@ -507,11 +507,6 @@ def performance_detail(conn, performance_id: int, user_id: int) -> dict[str, Any
     return data
 
 
-def performance_count(conn, user_id: int) -> int:
-    row = conn.execute("SELECT COUNT(*) AS n FROM performances WHERE user_id = ?", (user_id,)).fetchone()
-    return int(row["n"]) if row else 0
-
-
 def performances_since(conn, user_id: int, days: int = 120) -> list[dict[str, Any]]:
     cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat(sep=" ")
     rows = conn.execute(

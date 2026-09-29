@@ -99,14 +99,6 @@ def pulse_durations(bar_length: Fraction, unit: Fraction) -> list[Fraction]:
     return durations
 
 
-def even_durations(bar_length: Fraction, count: int) -> list[Fraction]:
-    """Split a bar into ``count`` equal parts that sum exactly to it."""
-    if count <= 0:
-        return [bar_length]
-    step = Fraction(bar_length, count)
-    return [step] * count
-
-
 def fit_to_length(events: Sequence[Event], length: Fraction) -> list[Event]:
     """Force a sequence of events to occupy exactly ``length``.
 
@@ -131,7 +123,3 @@ def fit_to_length(events: Sequence[Event], length: Fraction) -> list[Event]:
     if total < length:
         fitted.append(Event(duration=length - total, rest=True))
     return fitted
-
-
-def melody_events_to_pitches(events: Sequence[Event]) -> tuple[int, ...]:
-    return tuple(pitch for event in events for pitch in event.pitches)

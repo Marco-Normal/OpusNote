@@ -202,9 +202,5 @@ def extract_expected_from_musicxml(xml: str, tempo_bpm: float | None = None) -> 
     return extract_expected(score, tempo_bpm), float(tempo_bpm)
 
 
-def expected_to_dicts(notes: Iterable[ExpectedNote]) -> list[dict[str, Any]]:
-    return [note.to_dict() for note in notes]
-
-
 def expected_from_dicts(data: Iterable[dict[str, Any]]) -> list[ExpectedNote]:
     return [ExpectedNote.from_dict(item) for item in data]

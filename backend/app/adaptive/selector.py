@@ -13,7 +13,7 @@ from typing import Mapping, Sequence
 from ..config import Settings, settings as default_settings
 from ..skills_data import HAND_CHOICES, HAND_LABELS, SKILL_SLUGS, level_for_key
 from . import elo
-from .elo import MAX_LEVEL, MIN_LEVEL, exercise_elo, rating_for_level
+from .elo import MAX_LEVEL, MIN_LEVEL, exercise_elo
 
 
 @dataclass
@@ -181,8 +181,3 @@ def calibration_plan(step: int, *, ratings: Mapping[str, float], config: Setting
         rationale=f"Calibration {step + 1}/{len(CALIBRATION_LADDER)}: {focus} at level {level}",
         calibration=True,
     )
-
-
-def available_levels(config: Settings | None = None) -> list[int]:
-    cfg = config or default_settings
-    return [level for level in range(MIN_LEVEL, MAX_LEVEL + 1) if rating_for_level(level, cfg) >= 0]

@@ -156,12 +156,9 @@ the catalogue row inside `db.transaction`, and `media_pipeline.py:213-218` docum
 rollback can leave a stray file on disk. Only the database half is atomic, which is the
 real gap and not the one this paragraph first claimed.
 
-**Nine functions are dead in both directions** — 0% covered *and* referenced by nothing in
-`app/` or `tests/`: `selector.available_levels`, `db.row_to_dict`,
-`events.even_durations`, `events.melody_events_to_pitches`, `expected.expected_to_dicts`,
-`similarity.attack_count`, `similarity.top_piece`, `skills_data.keys_at_level`,
-`store.performance_count` (`piano.fetch` is an intentional network seam). They rot outside
-every test and every call graph.
+**Nine functions were dead in both directions** — 0% covered *and* referenced by nothing in
+`app/` or `tests/`. They were removed on 2026-09-28, in a dedicated dead-code pass rather than
+as part of this plan (see the appendix); `piano.fetch` is an intentional network seam and stays.
 
 **Two owners for one value, with divergent test depth** — the project's own recurring
 defect class, found twice more: `services._streak_days` (`:363`, key branch unrun) versus
@@ -579,9 +576,8 @@ hand-write badly.
   *graded*; the survivors of that grading get attention.
 - **A CI service.** There is none today and this does not add one. The gate is
   `check.sh --full` plus the standing rule below.
-- **Removing the dead code in this plan.** Nine functions are dead in both directions. They
-  are inventoried in Slice 0 and retired deliberately, with their own evidence, rather than
-  swept up here.
+- **Removing the dead code in this plan.** The nine functions dead in both directions were
+  removed on 2026-09-28 in a dedicated pass, with their own evidence, rather than swept up here.
 
 ---
 
@@ -689,27 +685,12 @@ nothing either way and is reported as a gap to investigate. `undeclared` is a br
 *Line numbers here are as of 2026-09-20, when Slice 0 took the inventory; symbols may have moved
 since (`practice/store.py`'s `streak_days` is now `streak`).*
 
-Inventoried in Slice 0 and **deliberately not removed**. Deletion is a decision with its own
+Inventoried in Slice 0 as **deliberately not removed** — deletion is a decision with its own
 evidence, and sweeping it into a test-strategy slice would be exactly the "while here" work
-this document argues against. Each entry names what would justify keeping it.
+this document argues against. **Removed 2026-09-28** in a dedicated dead-code pass; the exact
+list is in the `AGENT-LOG.md` entry for that commit.
 
-### Dead in both directions — 0% covered *and* referenced by nothing
-
-Verified by grep: no non-definition reference anywhere in `app/` or `tests/`.
-
-| Function | Note |
-| --- | --- |
-| `adaptive/selector.py:147` `available_levels` | superseded by the level table it derives from |
-| `db.py:184` `row_to_dict` | a one-line adapter nothing calls |
-| `music/events.py:102` `even_durations` | an exact-`Fraction` bar divider, never entered |
-| `music/events.py:136` `melody_events_to_pitches` | never entered |
-| `music/expected.py:205` `expected_to_dicts` | an orphaned serialiser; callers use `note.to_dict()` inline in three modules |
-| `practice/similarity.py:196` `attack_count` | superseded by `metrics.attacks` |
-| `practice/similarity.py:399` `top_piece` | superseded by the ranked candidate list |
-| `skills_data.py:226` `keys_at_level` | never entered |
-| `store.py:482` `performance_count` | never entered |
-
-`piano.py:120 fetch` is **not** on this list: it is the deliberate network seam that
+`piano.py:120 fetch` was **not** on that list: it is the deliberate network seam that
 `load_piano` wraps, and its `OSError`/`URLError` handlers are unreachable in tests only because
 every test monkeypatches around the network. That is a coverage gap, not dead code, and
 Slice 5 owns it.
@@ -727,8 +708,6 @@ apart in how well they are tested.
 | | `practice/store.py:124 local_date` | tested |
 | the upload cap | `repertoire/api.py:349` | fires through the route; tested in Slice 0 |
 | | `repertoire/api.py:361` | unreachable through the route; tested directly in Slice 0 with the finding recorded |
-| serialisation | `music/expected.py:205 expected_to_dicts` | dead |
-| | inline `[n.to_dict() for n in …]` | three call sites, none of which round-trip |
 
 The first two rows are the same shape: the copy that is *used* is the copy that is *untested*.
 Retiring one of each pair is the fix, and Slice 5's environment work touches the same files.
