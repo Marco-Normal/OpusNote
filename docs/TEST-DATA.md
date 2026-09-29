@@ -15,8 +15,8 @@ Three items, all **siblings of this repository's root** rather than inside it:
 
 | Item | Path, relative to this repo | Size |
 | --- | --- | --- |
-| Database document | `../piano-ecosystem-backup(3).json` | 61.1 MiB |
-| Media blobs | `../media/` | 55.2 MiB |
+| Database document | `../piano-ecosystem-backup(3).json` | 130.4 MiB |
+| Media blobs | `../media/` | 56 MiB |
 | Git bundle of an earlier state | `../opusnote-backup-20260920-2144.bundle` | 1.8 MiB |
 
 As of writing that is `/home/marco_normal/tmp/SighRTracker/`. **If these move, update this
@@ -36,7 +36,7 @@ at any depth.
 
 ## 2. What it is
 
-A real export from the running piano server, `exported_at` **2026-09-21T17:27:37+00:00**, format
+A real export from the running piano server, `exported_at` **2026-09-29T20:27:52+00:00**, format
 `piano-ecosystem-backup` version **1**. That is the same `BACKUP_VERSION` that
 `backend/app/backup.py` reads today, so it imports without translation — but note that it is a
 *snapshot of a schema*, and a future `BACKUP_VERSION` bump is exactly the event that would make
@@ -44,15 +44,20 @@ this fixture stop loading. Check the version before assuming it still works.
 
 | Table | Rows | | Table | Rows |
 | --- | ---: | --- | --- | ---: |
-| `note_events` | 238,665 | | `segments` | 68 |
-| `pedal_events` | 539,726 | | `performances` | 58 |
+| `note_events` | 512,010 | | `segments` | 732 |
+| `pedal_events` | 1,151,770 | | `performances` | 58 |
 | `exercise_skills` | 459 | | `exercises` | 51 |
-| `rating_events` | 369 | | `pieces` | 20 |
-| `media` | 17 | | `sittings` | 17 |
+| `rating_events` | 369 | | `pieces` | 21 |
+| `media` | 17 | | `sittings` | 38 |
 | `composers` | 9 | | `skills` / `user_skills` | 9 / 9 |
 | `workouts` | 9 | | `piece_journal` | 7 |
-| `identification_outcomes` | 6 | | `users` | 1 |
-| `segment_metrics` | 48 | | `piece_passages` | 0 |
+| `identification_outcomes` | 204 | | `users` | 1 |
+| `segment_metrics` | 712 | | `piece_passages` | 0 |
+| `sitting_marks` | 2 | | `reference_state` | 1 |
+
+Rebuilt through the app's own path — `db.init_db` for the schema, `backup.import_document` for the
+rows — that is **1,666,488 rows** into an **89 MB** database in about nine seconds. Row counts are
+what a measurement quotes; byte size is a symptom.
 
 Completeness was verified, not assumed: all 17 `media` rows resolve to a file in `../media/`,
 with no row missing its file and no file unreferenced. The `media` rows are 15 audio and 2

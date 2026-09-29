@@ -859,7 +859,9 @@ def ensure_segments(
         return _segment_rows(conn, sitting_id)
 
 
-def _passage_rows(conn: sqlite3.Connection, sitting_id: int) -> list[PracticePassageOut]:
+def _passage_rows(
+    conn: sqlite3.Connection, sitting_id: int, *, note_count: int | None = None
+) -> list[PracticePassageOut]:
     """The sitting's passages and the piece-session each belongs to.
 
     Derived on read from the attempts and their labels, so nothing is stored and nothing has to
@@ -870,6 +872,12 @@ def _passage_rows(conn: sqlite3.Connection, sitting_id: int) -> list[PracticePas
     asked is "is this the same material as the one before it, out of what this sitting contains"
     — and so that a library with no labels yet, which is where grouping is worth the most, can
     still group anything at all.
+
+    The *derivation* is cached — see `_passages_derived` — because it is a pass over the
+    sitting's notes and nothing else in this read is: 130 ms of a 165 ms open on the owner's
+    largest sitting, paid again on every open, every edit's re-read and every dashboard poll.
+    What is cached is `passages.derive`'s own output. The rows below are deliberately not,
+    because they carry each piece's *title*, and a renamed piece must not serve a stale name.
     """
     rows = conn.execute(
         f"SELECT {_SEGMENT_COLUMNS} FROM segments g"
@@ -878,6 +886,77 @@ def _passage_rows(conn: sqlite3.Connection, sitting_id: int) -> list[PracticePas
     ).fetchall()
     if not rows:
         return []
+    derived, session_of = _passages_derived(conn, sitting_id, rows, note_count=note_count)
+    labels = _piece_labels(conn, [row.piece_id for row in derived if row.piece_id is not None])
+    out: list[PracticePassageOut] = []
+    for index, found in enumerate(derived):
+        label = labels.get(found.piece_id) or {}
+        out.append(
+            PracticePassageOut(
+                start_ms=found.start_ms,
+                end_ms=found.end_ms,
+                piece_id=found.piece_id,
+                piece_title=label.get("title"),
+                composer_name=label.get("composer_name"),
+                piece_opus=label.get("opus"),
+                attempt_ids=list(found.attempt_ids),
+                attempts=found.attempts,
+                session=session_of.get(index, 0),
+            )
+        )
+    return out
+
+
+#: Passages derived for one sitting, per database file: ``{database: {sitting_id: entry}}``.
+#:
+#: Keyed on the *inputs* rather than on ``reference_state.version``, and that difference is the
+#: whole point. The version counts changes to the *reference set*, so a re-segment that deletes
+#: segments nobody had labelled leaves it still — while changing exactly the rows this is a
+#: function of (PERFORMANCE.md §1.5). A rule stated as "the inputs have not moved" cannot be
+#: forgotten by a write path that does not exist yet, which is the property that made the
+#: reference cache correct in the first place.
+_PASSAGES: dict[str, dict[int, tuple[tuple, list[passages.Passage], dict[int, int]]]] = {}
+
+#: How many sittings' derivations to keep per database. A miss costs the derivation, never an
+#: answer, so this is a memory bound rather than a cap on what the app can see: nothing here is
+#: data, it is a copy of something recomputed on demand, so nothing can be lost by evicting it.
+_PASSAGES_KEEP = 64
+
+
+def _passages_derived(
+    conn: sqlite3.Connection,
+    sitting_id: int,
+    rows: list[sqlite3.Row],
+    *,
+    note_count: int | None = None,
+) -> tuple[list[passages.Passage], dict[int, int]]:
+    """`passages.derive` for one sitting, recomputed only when its inputs have moved.
+
+    The key is the two things the answer is a function of: the sitting's segment rows (their
+    ids, boundaries and pieces) and how many notes the sitting holds. Notes are only ever
+    appended — nothing deletes or edits a note event — so the count is exact rather than a
+    proxy for the notes. A piece's *name* is in neither the key nor the cached value, and is
+    read fresh by the caller, so renaming a piece is answered immediately.
+
+    ``note_count`` is passed in by `sitting_detail`, which has already counted the notes for its
+    own response; callers that have not counted them get the indexed count here.
+    """
+    if note_count is None:
+        note_count = int(
+            conn.execute(
+                "SELECT COUNT(*) FROM note_events WHERE sitting_id = ?", (sitting_id,)
+            ).fetchone()[0]
+        )
+    key = (
+        int(note_count),
+        tuple(
+            (int(row["id"]), int(row["start_ms"]), int(row["end_ms"]), row["piece_id"])
+            for row in rows
+        ),
+    )
+    cached = _PASSAGES.get(_database_name(conn), {}).get(sitting_id)
+    if cached is not None and cached[0] == key:
+        return cached[1], cached[2]
 
     features = _segment_features(conn, rows)
     weights = shingles.idf(features)
@@ -899,24 +978,11 @@ def _passage_rows(conn: sqlite3.Connection, sitting_id: int) -> list[PracticePas
         for position, (_piece_id, members) in enumerate(passages.piece_sessions(derived))
         for index in members
     }
-    labels = _piece_labels(conn, [row.piece_id for row in derived if row.piece_id is not None])
-    out: list[PracticePassageOut] = []
-    for index, found in enumerate(derived):
-        label = labels.get(found.piece_id) or {}
-        out.append(
-            PracticePassageOut(
-                start_ms=found.start_ms,
-                end_ms=found.end_ms,
-                piece_id=found.piece_id,
-                piece_title=label.get("title"),
-                composer_name=label.get("composer_name"),
-                piece_opus=label.get("opus"),
-                attempt_ids=list(found.attempt_ids),
-                attempts=found.attempts,
-                session=session_of.get(index, 0),
-            )
-        )
-    return out
+    per_database = _PASSAGES.setdefault(_database_name(conn), {})
+    per_database[sitting_id] = (key, derived, session_of)
+    while len(per_database) > _PASSAGES_KEEP:
+        per_database.pop(next(iter(per_database)))
+    return derived, session_of
 
 
 def sitting_detail(
@@ -989,7 +1055,7 @@ def sitting_detail(
             closed=closed,
             segments=segments,
             preparing=not materialise and not segments and closed and int(note_count) > 0,
-            passages=_passage_rows(conn, sitting_id),
+            passages=_passage_rows(conn, sitting_id, note_count=note_count),
             review_marks_ms=review_marks_ms,
         )
     finally:
@@ -1301,20 +1367,34 @@ def _today():
 
 
 def calendar(conn: sqlite3.Connection, days: int) -> list[CalendarDay]:
+    """One entry per day in the window, including the days nothing happened on.
+
+    ``days`` bounds the *queries*, not only the list they produce. It used to be applied by
+    `_fill_days` at the end alone, so a one-day calendar still grouped every note event in the
+    database — 20 ms flat for any window, on a poll, which is a cost that grows with the log
+    while the request does not (R1). The filter is the same one `sources` and `by_piece`
+    already use, and `_fill_days` reads only the days inside the window, so every window's
+    answer is unchanged.
+    """
+    since = (_today() - timedelta(days=days - 1)).isoformat()
     days_rows = conn.execute(
         """
         SELECT local_date AS date,
                COUNT(*) AS sittings,
                SUM(ended_ms - started_ms) / 60000.0 AS minutes
         FROM sittings
+        WHERE local_date >= ?
         GROUP BY local_date
         ORDER BY local_date
-        """
+        """,
+        (since,),
     ).fetchall()
     note_rows = conn.execute(
         "SELECT s.local_date AS date, COUNT(*) AS notes"
         " FROM note_events e JOIN sittings s ON s.id = e.sitting_id"
-        " GROUP BY s.local_date"
+        " WHERE s.local_date >= ?"
+        " GROUP BY s.local_date",
+        (since,),
     ).fetchall()
     notes_by_date = {row["date"]: int(row["notes"]) for row in note_rows}
     # What was written down, kept as its own series. The practice domain reads the
@@ -1326,9 +1406,10 @@ def calendar(conn: sqlite3.Connection, days: int) -> list[CalendarDay]:
                COALESCE(SUM(practice_minutes), 0) AS minutes,
                COUNT(*) AS entries
         FROM piece_journal
-        WHERE practice_minutes IS NOT NULL
+        WHERE practice_minutes IS NOT NULL AND entry_date >= ?
         GROUP BY entry_date
-        """
+        """,
+        (since,),
     ).fetchall()
     written_by_date = {
         row["date"]: (round(float(row["minutes"] or 0.0), 1), int(row["entries"]))
@@ -1697,22 +1778,39 @@ def summary(conn: sqlite3.Connection, days: int = 30, recent: int = 10) -> Analy
 
 
 def list_sittings_conn(conn: sqlite3.Connection, limit: int) -> list[SittingSummary]:
-    """``list_sittings`` for a caller that already holds a connection."""
+    """``list_sittings`` for a caller that already holds a connection.
+
+    The rows are chosen *first*, then counted, and both halves of that matter.
+
+    ``LIMIT`` does not bound an aggregate: the join form grouped every note event in the
+    database and sorted the result with a temp B-tree before the limit applied, so the
+    dashboard's ten-row list cost the same as its thousand-row list — a flat 65 ms on the
+    owner's 512k-note library, a cost that grows with the log while the request does not (R1).
+
+    Correlated subqueries alone do not fix that, which is worth knowing before rewriting them
+    back. They are part of the *result list*, so a plain ``ORDER BY ... LIMIT`` still evaluates
+    one per sitting scanned and then throws most away: with 400 notes added to a sitting this
+    list does not return, the work went 660 → 1,857 VM steps. Materialising the limited set into
+    a CTE first is what makes the limit load-bearing — 686 → 686 on the same fixture.
+    """
     rows = conn.execute(
         """
-        SELECT s.id,
-               s.started_at,
-               s.ended_at,
-               s.local_date,
-               s.source,
-               COUNT(DISTINCT e.id) AS note_count,
-               (SELECT COUNT(*) FROM segments g WHERE g.sitting_id = s.id) AS segment_count,
-               (s.ended_ms - s.started_ms) / 1000.0 AS duration_s
-        FROM sittings s
-        LEFT JOIN note_events e ON e.sitting_id = s.id
-        GROUP BY s.id
-        ORDER BY s.started_ms DESC
-        LIMIT ?
+        WITH recent AS MATERIALIZED (
+            SELECT id, started_at, ended_at, local_date, source, started_ms, ended_ms
+            FROM sittings
+            ORDER BY started_ms DESC
+            LIMIT ?
+        )
+        SELECT r.id,
+               r.started_at,
+               r.ended_at,
+               r.local_date,
+               r.source,
+               (SELECT COUNT(*) FROM note_events e WHERE e.sitting_id = r.id) AS note_count,
+               (SELECT COUNT(*) FROM segments g WHERE g.sitting_id = r.id) AS segment_count,
+               (r.ended_ms - r.started_ms) / 1000.0 AS duration_s
+        FROM recent r
+        ORDER BY r.started_ms DESC
         """,
         (limit,),
     ).fetchall()
@@ -1943,13 +2041,18 @@ _REFERENCES: dict[
 
 
 def forget_references() -> None:
-    """Drop every cached reference set.
+    """Drop every cached derivation.
 
     Called by ``init_db``: it may have just created or replaced the file a cache entry was
     built from, and a version of zero in a brand-new database must not match an entry left
     over from the one that was there before.
+
+    Both caches go, because both are keyed on facts about a file that no longer exists: the
+    reference set by ``reference_state.version``, and the passages by the sitting's own rows
+    and note count, which a rebuilt file can reproduce exactly while meaning something else.
     """
     _REFERENCES.clear()
+    _PASSAGES.clear()
 
 
 def _database_name(conn: sqlite3.Connection) -> str:

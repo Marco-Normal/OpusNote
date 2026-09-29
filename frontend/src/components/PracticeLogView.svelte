@@ -338,10 +338,25 @@
    * selection exactly as it was — including none at all.
    */
   $effect(() => {
-    const timer = setInterval(() => {
+    // A hidden tab asks for nothing. The poll exists so the person *looking at the screen* sees
+    // the newest sitting without pressing F5, and a tab behind another window was paying the
+    // same server cost for nobody: 110 ms of SQLite per poll on the owner's library, on the slow
+    // laptop that is also capturing the piano.
+    const tick = () => {
+      if (document.visibilityState === 'hidden') return;
       void refreshQuietly();
-    }, POLL_MS);
-    return () => clearInterval(timer);
+    };
+    const timer = setInterval(tick, POLL_MS);
+    // And catch up the moment it is looked at again, so coming back to the tab is instant rather
+    // than up to a full interval stale.
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void refreshQuietly();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   });
 
   /** The poll: same reads as `load`, minus anything that touches the selection. */

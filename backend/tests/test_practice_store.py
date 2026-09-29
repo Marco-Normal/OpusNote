@@ -6,6 +6,8 @@ app brings: metrics, real piece foreign keys, and sight-reading tagging.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 import pytest
 
 from app.config import settings
@@ -1020,3 +1022,242 @@ def test_a_blur_position_is_measured_from_the_sitting_not_its_segment(fresh_db) 
             "a position must lie inside its own segment, which is only true if it is measured"
             f" from the sitting's start ({at} not in {second.start_ms}..{second.end_ms})"
         )
+
+
+# --- what a read costs ----------------------------------------------------
+#
+# PERFORMANCE.md owns the rule these guard: a click's cost is a function of the *request*, never
+# of how large the log has grown. They count work rather than milliseconds, because a timing
+# assertion passes on a quiet laptop with the defect present and fails on a loaded machine with
+# it absent (R6).
+
+
+#: One day, for building sittings that fall in different calendar windows.
+DAY_MS = 24 * 60 * 60 * 1000
+
+
+def _work(conn, call, *, step: int = 200) -> int:
+    """The work SQLite did, in deterministic units of `step` VM instructions.
+
+    ``set_progress_handler`` is called every N virtual-machine instructions, so this counts work
+    performed rather than time spent: the same number on a fast laptop and on the piano machine,
+    which is what makes it safe to assert on.
+    """
+    ticks = 0
+
+    def tick() -> int:
+        nonlocal ticks
+        ticks += 1
+        return 0
+
+    conn.set_progress_handler(tick, step)
+    try:
+        call()
+    finally:
+        conn.set_progress_handler(None, 0)
+    return ticks
+
+
+def _local_offset_minutes() -> int:
+    """The server's own UTC offset, so a fixture's ``local_date`` is the day it really was.
+
+    The wire format carries the client's offset and the store derives ``local_date`` from it.
+    Building a recent-day fixture with an offset of zero would date it by UTC, and `calendar`
+    asks about *server-local* days — so the newest sitting would land outside its own window.
+    """
+    offset = datetime.now().astimezone().utcoffset() or timedelta()
+    return int(offset.total_seconds() // 60)
+
+
+def _notes_at(epoch_ms: int, count: int) -> EventBatch:
+    """`count` distinct notes inside one sitting's window, so they all join one sitting."""
+    return EventBatch(
+        tz_offset_minutes=_local_offset_minutes(),
+        events=[
+            WireNote(
+                epoch_ms=epoch_ms + index * 50,
+                pitch=60 + index % 12,
+                velocity=70,
+                duration_ms=40,
+                channel=0,
+            )
+            for index in range(count)
+        ],
+    )
+
+
+def _recent_sitting(days_ago: int, *, notes: int = 2) -> int:
+    """A sitting on a real recent day, so a calendar window actually contains it.
+
+    ``BASE_MS`` is in 2023 and every window ends today, so the fixtures above sit outside every
+    window — which is why a calendar test cannot use them.
+    """
+    epoch = int((datetime.now() - timedelta(days=days_ago, hours=1)).timestamp() * 1000)
+    return store.ingest(_notes_at(epoch, notes)).sitting_id
+
+
+def test_reading_a_sitting_again_does_not_derive_its_passages_again(
+    fresh_db, monkeypatch
+) -> None:
+    """The passages are a pass over the sitting's notes, and every open paid for them again.
+
+    Measured on the owner's library: 130 ms of a 165 ms open on the largest sitting — and an
+    edit re-reads the detail, and the dashboard poll re-reads it too, so it was paid several
+    times a minute. Counted rather than timed (R6): an unchanged sitting must not derive twice.
+    """
+    sitting_id = store.ingest(batch(phrase_offsets(0, 8) + phrase_offsets(30_000, 8))).sitting_id
+    store.ensure_segments(sitting_id, now_ms=LATER_MS)
+
+    derivations = {"n": 0}
+    original = store._segment_features
+
+    def counted(conn, rows):
+        derivations["n"] += 1
+        return original(conn, rows)
+
+    monkeypatch.setattr(store, "_segment_features", counted)
+
+    store.sitting_detail(sitting_id, now_ms=LATER_MS, materialise=False)
+    first = derivations["n"]
+    assert first >= 1, "the first read has to derive them, or this asserts nothing"
+
+    store.sitting_detail(sitting_id, now_ms=LATER_MS, materialise=False)
+    assert derivations["n"] == first, (
+        "an unchanged sitting must not be derived again: "
+        f"{first} derivation(s) on the first read, {derivations['n'] - first} more on the second"
+    )
+
+
+def test_a_label_written_after_a_read_is_answered_not_remembered(fresh_db, client) -> None:
+    """What is cached is `passages.derive`'s output, not the rows it was derived from.
+
+    Both halves matter, and the second is the subtle one: the segment rows carry each piece's
+    *title*, so caching them beside the derivation would serve a renamed piece under its old
+    name. The rows are read fresh on every call for exactly that reason.
+    """
+    sitting_id = store.ingest(batch(phrase_offsets(0, 8) + phrase_offsets(30_000, 8))).sitting_id
+    segments = store.ensure_segments(sitting_id, now_ms=LATER_MS)
+    piece_id = _piece(client, "Ballade No. 1")
+
+    before = store.sitting_detail(sitting_id, now_ms=LATER_MS, materialise=False).passages
+    assert before and all(passage.piece_id is None for passage in before)
+
+    store.assign_piece(segments[0].id, piece_id)
+    after = store.sitting_detail(sitting_id, now_ms=LATER_MS, materialise=False).passages
+    assert any(passage.piece_id == piece_id for passage in after), (
+        "a label written after the first read must be answered, not remembered"
+    )
+    assert any(passage.piece_title == "Ballade No. 1" for passage in after)
+
+    renamed = client.patch(
+        f"/api/repertoire/pieces/{piece_id}", json={"title": "Ballade No. 2"}
+    )
+    assert renamed.status_code == 200, renamed.text
+    again = store.sitting_detail(sitting_id, now_ms=LATER_MS, materialise=False).passages
+    assert any(passage.piece_title == "Ballade No. 2" for passage in again), (
+        "a renamed piece must not be served under its old name out of the cache"
+    )
+
+
+def test_listing_the_newest_sittings_does_not_read_the_older_ones(fresh_db, conn) -> None:
+    """The dashboard's list is ten rows, so its work must be ten rows' worth.
+
+    The join form grouped every note event in the database and sorted the result with a temp
+    B-tree *before* ``LIMIT`` applied, so a ten-row list cost what a thousand-row one did: work
+    that grows with the log while the request does not (R1). Counted rather than timed (R6) —
+    notes on a sitting the list does not return must not change the work it does.
+    """
+    for index in range(12):
+        offset = index * 600_000
+        store.ingest(batch([offset, offset + 500]))
+
+    store.list_sittings_conn(conn, 10)  # warm the statement cache before counting
+    before = _work(conn, lambda: store.list_sittings_conn(conn, 10))
+
+    # 400 more notes on the *oldest* sitting, which the ten newest rows do not include.
+    store.ingest(_notes_at(BASE_MS, 400))
+    # The write moved the WAL on, so the next read re-reads its index whatever the query is.
+    # Warm that away too: it is not the cost this test is about.
+    store.list_sittings_conn(conn, 10)
+
+    after = _work(conn, lambda: store.list_sittings_conn(conn, 10))
+    assert after <= before * 1.25, (
+        "the list must not read notes it does not return: "
+        f"{before} units before, {after} after 400 notes below the returned window"
+    )
+
+
+def test_the_calendar_only_reads_its_own_window(fresh_db, conn) -> None:
+    """``days`` has to bound the *queries*, not only the list they produce.
+
+    It used to filter nothing at all: a one-day calendar grouped every note event in the
+    database and then kept a single day, so a narrow window cost exactly what a wide one did —
+    20 ms flat on the owner's library, on a poll, which is a cost that grows with the log while
+    the request does not (R1).
+    """
+    for days_ago in range(20):
+        _recent_sitting(days_ago)
+
+    store.calendar(conn, 40)  # warm the statement cache before counting
+    one_day = _work(conn, lambda: store.calendar(conn, 1))
+    wide = _work(conn, lambda: store.calendar(conn, 40))
+    assert wide > 0, "the fixture must give the wide window something to read"
+    assert one_day * 2 < wide, (
+        "a narrow window must be less work than a wide one: "
+        f"1 day cost {one_day} units, 40 days cost {wide}"
+    )
+
+
+def test_the_calendar_still_answers_exactly_its_window(fresh_db, conn, client) -> None:
+    """Equivalence, for a filter whose whole intent was to be invisible.
+
+    The oracle is the unfiltered grouping the old code did, computed from the tables here and
+    sliced to the window — so it agrees only if the `WHERE` clause neither drops a day inside
+    the window nor admits one outside it. A prose-only day is included on purpose: it is
+    filtered by a *different* column, and it still has to appear.
+    """
+    for days_ago in range(5):
+        _recent_sitting(days_ago)
+    piece_id = _piece(client, "Ballade No. 1")
+    today = store._today()
+    prose_day = (today - timedelta(days=2)).isoformat()
+    written = client.post(
+        f"/api/repertoire/pieces/{piece_id}/journal",
+        json={
+            "entry_date": prose_day,
+            "content": "read through the exposition",
+            "practice_minutes": 20,
+        },
+    )
+    assert written.status_code == 201, written.text
+
+    # The whole log, grouped the way the old code grouped it, before any window is applied.
+    by_date: dict[str, list] = {}
+    for row in conn.execute(
+        "SELECT local_date AS date, COUNT(*) AS sittings,"
+        " SUM(ended_ms - started_ms) / 60000.0 AS minutes FROM sittings GROUP BY local_date"
+    ):
+        by_date[row["date"]] = [round(float(row["minutes"] or 0.0), 1), 0, int(row["sittings"])]
+    for row in conn.execute(
+        "SELECT s.local_date AS date, COUNT(*) AS notes FROM note_events e"
+        " JOIN sittings s ON s.id = e.sitting_id GROUP BY s.local_date"
+    ):
+        if row["date"] in by_date:
+            by_date[row["date"]][1] = int(row["notes"])
+
+    for days in (1, 3, 7, 30):
+        expected = []
+        for offset in range(days - 1, -1, -1):
+            key = (today - timedelta(days=offset)).isoformat()
+            minutes, notes, sittings = by_date.get(key, [0.0, 0, 0])
+            expected.append((key, minutes, notes, sittings))
+
+        got = store.calendar(conn, days)
+        assert [(day.date, day.minutes, day.notes, day.sittings) for day in got] == expected, (
+            f"the {days}-day window disagrees with the whole-log grouping"
+        )
+        if days >= 3:
+            prose = next(day for day in got if day.date == prose_day)
+            assert (prose.written_minutes, prose.written_entries) == (20.0, 1), (
+                "a day with prose and no notes must still appear in the window"
+            )

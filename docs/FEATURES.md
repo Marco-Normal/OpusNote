@@ -294,7 +294,9 @@ Nothing about the result changes either way; with background preparation switche
 - **A sitting ends when the piano does.** Switching the instrument off is taken as "I am done",
   so the sitting closes immediately rather than five minutes later. Turning it off mid-playing
   is not treated as a boundary — the server waits out a second and a half of silence first — so
-  a USB interruption does not split a session. The Log refreshes itself while open.
+  a USB interruption does not split a session. The Log refreshes itself while open — and only
+  while somebody is looking at it: a tab in the background stops asking, and returning to it
+  catches up at once rather than waiting out the interval.
 - **Piece recognition.** Tagging a segment by hand makes it a reference; the next time similar
   material is played, the timeline offers the piece it believes it was, with the confidence and
   the arithmetic behind it. A sufficiently confident match is filled in automatically and

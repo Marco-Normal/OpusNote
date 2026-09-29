@@ -4381,3 +4381,68 @@ unchanged by this work.
 For the record, the totals at this revision: backend **1068 passing**, frontend **187 passing**,
 `--fast` 89-90 s, `--full` 680 s, tree clean. Counts are dated because they are true only of this
 tree.
+
+## 2026-09-29 — performance — three reads that were a function of the log, not of the request
+
+A sweep of the hot paths against the owner's real library found three reads whose cost grew with
+something that grows for ever, all of them on a click or a poll. `docs/PERFORMANCE.md` §1.7 and
+§1.8 are the case studies and R10 is the rule; this is the record of what was measured, what was
+changed, and the half-fix the work test caught on the way.
+
+**The fixture was rebuilt first, because every number depends on it.** The document the owner keeps
+had been re-exported and is now **130.4 MiB**: `note_events` **512,010** (was 238,665),
+`pedal_events` 1,151,770, `sittings` 38, `segments` 732, `pieces` 21, and two tables the old fixture
+did not have at all (`sitting_marks`, `reference_state`). Rebuilt through the app's own path —
+`db.init_db` then `backup.import_document` — as 1,666,488 rows into an 89 MB database.
+`docs/TEST-DATA.md` §1 and §2 carry the new counts. Measuring against the old fixture would have
+understated every one of these costs by roughly half.
+
+**Passages were derived on every read of a sitting.** `_passage_rows` computes a content feature per
+segment in a pass over the sitting's notes: 130 ms of a 165 ms open on the largest sitting (33k
+notes, 60 segments), 52 ms on the median one, and every open, every edit's re-read and every
+dashboard poll paid it. It is now cached under the thing it is a function of — the sitting's segment
+rows and its note count — rather than under `reference_state.version`, which moves only for
+*references* and would therefore have served boundaries from before an unlabelled re-segment. The
+measured result is `_passage_rows` 130.2 → **0.7 ms** and `sitting_detail` 165.0 → **37.9 ms** on the
+largest sitting, 52.8 → **1.1 ms** on the median. A label written after a read is answered, and a
+renamed piece is read fresh, both asserted.
+
+**The dashboard's sitting list aggregated the whole table before its limit.** `LIMIT` does not bound
+a `GROUP BY`: the join form grouped every note event and sorted the result with a temp B-tree, then
+took ten rows — 65.2 ms whether the list asked for one row or a thousand. It is now a materialised
+CTE of the limited rows with a correlated count per returned row: **2.9 ms** at ten, and the limit is
+load-bearing again (0.2 / 3.0 / 10.1 ms at 1 / 10 / 1000). **My first attempt at this was a
+half-fix and I nearly shipped it**: plain correlated subqueries, no CTE, return identical rows and
+measure 10 ms, but a subquery in the result list is still evaluated for every row the scan visits,
+thrown-away rows included — 660 → 1,857 VM steps when 400 notes were added to a sitting the list
+does not return. The work test I wrote for it is what said so.
+
+**`calendar` applied its window in Python.** It grouped every sitting and joined every note event,
+and `_fill_days` kept the requested days at the end, so a one-day calendar cost what a thirty-day one
+did — 20.3 ms flat, on a poll. It now filters by the same `since` that `sources` and `by_piece`
+already used: **0.0 ms** at one day, 20.2 ms at thirty, and the answer is unchanged for every window,
+asserted against the unfiltered grouping as an oracle.
+
+**A hidden tab asked for all of it every twenty seconds.** The Log's poll exists so the newest
+sitting appears without pressing F5, and a tab behind another window was paying 110 ms of SQLite per
+poll for nobody on the laptop that is also capturing the piano. The interval now returns early when
+`document.visibilityState` is `hidden`, and a `visibilitychange` listener refreshes at once on the
+way back, so returning to the tab is faster than before rather than stale. `FEATURES.md` §6 owns the
+sentence and now says so.
+
+Together that is `summary(days=30)` 110.1 → **47.1 ms**, on a poll, on a 4 GB laptop.
+
+**No contract changed.** No table, column, migration, route, response field or tunable moved;
+`SCHEMA_VERSION` is untouched. The one thing a player can see is the poll pausing in a background
+tab, which is in `FEATURES.md`.
+
+Four falsifications, each proven to catch its own break and each naming the assertion it must fail:
+`recompute_the_passages_on_every_read`, `read_every_note_to_list_sittings`,
+`count_every_note_for_any_calendar_window`, and — against the rebuilt frontend —
+`poll_a_hidden_log_tab`.
+
+What is *not* claimed: `sitting_detail` on the largest sitting still takes about 38 ms, and about
+36 ms of that is the matcher's pass in `candidates_for_sitting`. That is now the deepest remaining
+cost on the open path, it is a separate question with its own owner, and it has not been measured to
+a conclusion. `PERFORMANCE.md` §6 says so rather than leaving the old "deepest remaining cost"
+sentence standing, which the cache had stopped being true.

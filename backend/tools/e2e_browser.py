@@ -3449,17 +3449,36 @@ def scenario_practice_log(browser) -> None:
     play_phrase(page, [77, 79, 81])
     page.wait_for_timeout(2_600)
     page.evaluate("() => window.__fakeMidi.unplugAll()")
-    # Wait on the counter rather than outlasting the interval. The poll is 20 s, and this
-    # used to sleep a fixed 22 s — the counter it had just installed was right there to wait
-    # on. Same proof, and it returns as soon as the poll happens instead of always costing
-    # the full interval.
+    # A hidden tab must ask for nothing. The refresh exists so somebody *looking at the screen*
+    # sees the newest sitting without pressing F5, and a tab behind another window was paying the
+    # same server cost for nobody — 110 ms of SQLite per poll on the owner's library. The wait is
+    # a full interval, which is the only way to prove the *absence* of a request.
+    page.evaluate(
+        """() => {
+             Object.defineProperty(document, 'visibilityState',
+                                   {value: 'hidden', configurable: true});
+             document.dispatchEvent(new Event('visibilitychange'));
+           }"""
+    )
+    page.wait_for_timeout(21_000)
+    hidden = page.evaluate("() => window.__logPolls || 0")
+    check(hidden == 0, f"a hidden tab asks the server for nothing ({hidden} reads in 21 s)")
+
+    # And looking at it again catches up at once, rather than staying up to an interval stale.
+    page.evaluate(
+        """() => {
+             Object.defineProperty(document, 'visibilityState',
+                                   {value: 'visible', configurable: true});
+             document.dispatchEvent(new Event('visibilitychange'));
+           }"""
+    )
     try:
-        page.wait_for_function("() => (window.__logPolls || 0) > 0", timeout=30_000)
+        page.wait_for_function("() => (window.__logPolls || 0) > 0", timeout=5_000)
     except PlaywrightTimeout:
         pass
 
     polls = page.evaluate("() => window.__logPolls || 0")
-    check(polls > 0, f"the dashboard refreshes itself while it is open ({polls} polled reads)")
+    check(polls > 0, f"and returning to it refreshes at once ({polls} polled reads)")
     newest_again = api("/api/practice/sittings")[0]
     check(
         newest_again["id"] != newest["id"],

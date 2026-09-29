@@ -169,6 +169,85 @@ calls when nothing is scheduled. It owns *when*, never *what*, so it is an optim
 that still works — which is also why a job that fails is survivable and why turning it off
 (`SRT_BACKGROUND_JOBS=0`) is the old behaviour rather than a degraded one.
 
+### 1.7 A limit that does not bound the work
+
+**Symptom.** The Log dashboard's poll cost **110 ms**, and its ten-row sitting list cost the same
+as a thousand-row one.
+
+**Cause.** Two queries whose bound was decorative.
+
+`list_sittings_conn` counted notes with a `LEFT JOIN ... GROUP BY s.id` and put the `LIMIT` on the
+outside. An aggregate is not bounded by a limit: SQLite grouped every note event in the database,
+sorted the result with a temp B-tree, and *then* took ten rows. The list was a function of the log
+rather than of the page:
+
+| the join form | work |
+| --- | ---: |
+| `LIMIT` 1 | 65.3 ms |
+| `LIMIT` 1000 | 65.4 ms |
+
+`calendar` was the same defect with the bound applied in Python instead: it grouped **every** sitting
+and joined **every** note event, and `_fill_days` kept the requested days at the end. A one-day
+calendar cost 20.3 ms and a thirty-day calendar cost 20.3 ms.
+
+**The fix is to choose the rows first and count them second.** A correlated subquery per *returned*
+row is answered from `idx_events_sitting` — but only once the limited set is materialised:
+
+```sql
+WITH recent AS MATERIALIZED (
+    SELECT id, started_at, ended_at, local_date, source, started_ms, ended_ms
+    FROM sittings ORDER BY started_ms DESC LIMIT ?
+)
+SELECT r.id, (SELECT COUNT(*) FROM note_events e WHERE e.sitting_id = r.id) AS note_count, ...
+FROM recent r ORDER BY r.started_ms DESC
+```
+
+`calendar` got the window filter `sources` and `by_piece` already had.
+
+| | before | after |
+| --- | ---: | ---: |
+| `list_sittings_conn(10)` | 65.2 ms | **2.9 ms** |
+| … at `LIMIT` 1 / 10 / 1000 | 65.3 / 65.2 / 65.4 | **0.2 / 3.0 / 10.1** |
+| `calendar(1)` | 20.3 ms | **0.0 ms** |
+| `calendar(30)` | 20.3 ms | 20.2 ms |
+| `summary(days=30)` | 110.1 ms | **47.1 ms** |
+
+**The shape, and the trap inside it.** "Bound the query" is not the same as "add a `LIMIT`", and the
+obvious correction is not sufficient on its own. Plain correlated subqueries — no CTE — look right,
+return identical rows, and measure 10 ms on the real library, and they are *still* a function of the
+log: a subquery in the result list is evaluated for every row the scan visits, including the ones
+the limit throws away. The work test caught exactly that, at 400 notes added to a sitting the list
+does not return: 660 → 1,857 VM steps. Materialised first, it is 686 → 686.
+
+### 1.8 A cache key borrowed from a narrower rule
+
+**Symptom.** Opening the largest sitting took **165 ms**, 130 ms of it deriving the sitting's
+passages, and every open, every edit's re-read and every poll paid it again.
+
+**Cause.** `_passage_rows` derived a content feature for each segment, in a pass over the sitting's
+notes, on every read. The obvious key was the one the reference cache already uses,
+`reference_state.version`. It would have been wrong in the dangerous direction: that counter moves
+only when a *reference* changes (§1.5), and a re-segment which deletes segments nobody had labelled
+leaves it still — while changing exactly the rows the passages are a function of. A cache keyed on
+it would have served the boundaries from before the edit.
+
+**Fix.** Key it on the inputs: the sitting's segment rows (ids, boundaries, pieces) and the sitting's
+note count. Notes are only ever appended, so the count is exact rather than a proxy. A key that *is*
+the inputs cannot be forgotten by a write path that does not exist yet — the property that made the
+trigger-owned reference cache correct — and a piece's *name* is deliberately in neither the key nor
+the value, so renaming a piece is answered rather than remembered.
+
+| | before | after |
+| --- | ---: | ---: |
+| `_passage_rows`, largest sitting (33k notes, 60 segments) | 130.2 ms | **0.7 ms** |
+| `sitting_detail`, that sitting | 165.0 ms | **37.9 ms** |
+| `sitting_detail`, median sitting | 52.8 ms | **1.1 ms** |
+
+**The shape.** R4 says to let the database own the invalidation, which is the right instinct and an
+incomplete instruction: a database can only own a counter it maintains, and a counter maintained for
+a *different* question is narrower than yours. When the derived value is a function of rows rather
+than of a labelled set, key it on those rows.
+
 ---
 
 ## 2. The rules
@@ -209,6 +288,11 @@ contract. It is not in the code, and that is the right answer.
 one. `note_events(sitting_id, onset_ms)` and `segments(sitting_id, start_ms)` are why the per-sitting
 reads are cheap; check the query plan before assuming.
 
+**R10 — A `LIMIT` bounds a result, not the work that produced it.** An aggregate, a sort, or a
+correlated subquery in the result list is evaluated *before* the limit applies, so "cheap, it only
+returns ten rows" is a claim to measure rather than to assume (1.7). Bound the input: choose the
+rows first, then compute over them.
+
 ---
 
 ## 3. The map — what must stay cheap
@@ -220,6 +304,9 @@ If you touch one of these, you own its complexity.
 | `pedal.blur_attacks` | the segment's notes and stretches, O((N+S) log N) | `tests/test_pedal.py`, `falsifications/drop_blur_positions.sh` |
 | `store._notes_for_segments` | one query per sitting; the notes in the group's range | `test_reading_a_sitting_does_not_read_its_notes_once_per_open_section` |
 | `store.cached_references` | nothing on a hit; the labelled set only when the version moves | the invalidation tests in `tests/test_autotag.py` |
+| `store._passages_derived` | nothing on a hit; one sitting's segments and notes when they move | `test_reading_a_sitting_again_does_not_derive_its_passages_again`, `test_a_label_written_after_a_read_is_answered_not_remembered` |
+| `store.list_sittings_conn` | the returned rows and *their* notes — never the log | `test_listing_the_newest_sittings_does_not_read_the_older_ones` |
+| `store.calendar` | the days in the requested window | `test_the_calendar_only_reads_its_own_window`, `test_the_calendar_still_answers_exactly_its_window` |
 | `store.awaiting_segments` | one indexed probe per sitting, on a **tick** (Phase 24) — never a click | `tests/test_jobs.py` |
 | `practice/jobs.py` | the work `ensure_segments` already costs, once per sitting, and only while it is queued or running | `tests/test_jobs.py` |
 | `store.segment_identification` | what the caller hands it; accept `examples`, `signatures`, `notes` rather than re-deriving | — |
@@ -283,6 +370,33 @@ Two traps in that idiom, both hit while writing it: **warm any cache before you 
 first read legitimately costs an extra build, which looks like scaling), and count the *helper you
 changed*, not the wall clock.
 
+**SQLite has a work counter built in.** `set_progress_handler` is called every N virtual-machine
+instructions, so a callback that counts its own calls measures work performed rather than time spent
+— the same number on a laptop and on the piano machine:
+
+```python
+def work(conn, call, *, step: int = 200) -> int:
+    ticks = 0
+
+    def tick() -> int:
+        nonlocal ticks
+        ticks += 1
+        return 0
+
+    conn.set_progress_handler(tick, step)
+    try:
+        call()
+    finally:
+        conn.set_progress_handler(None, 0)
+    return ticks
+```
+
+Use it when the cost is inside a *statement* rather than inside a Python helper, which the
+monkeypatch idiom cannot see at all. It is what caught the half-fix in §1.7: "identical rows, six
+times faster" was still a function of the log, and only a count of VM steps showed it. Warm the
+statement cache first, and warm away the WAL re-read a previous write causes — neither is the cost
+being measured.
+
 **Prove equivalence when the change is meant to be invisible.** For a pure refactor, copy the old
 implementation into a scratch harness as the reference and compare: thousands of randomized cases
 plus every real row. That is stronger evidence than the suite passing, because the suite only covers
@@ -312,10 +426,14 @@ check.
 - **A cap that discards data** to bound work (R5). Bound the caller instead — for the accuracy report
   that is `settings.autotag_quality_limit`, which caps how many segments are evaluated and says so in
   the report rather than sampling silently.
-- **A read that a write makes unnecessary.** The deepest remaining cost here is that every edit
-  re-reads the whole sitting detail so the derived passages stay honest; returning the passages with
-  the edit's own response would remove the re-read. That is a contract change, not a fix, and it
-  belongs in a plan rather than in a quick patch.
+- **A read that a write makes unnecessary.** Every edit re-reads the whole sitting detail so the
+  derived passages stay honest; returning the passages with the edit's own response would remove the
+  re-read. That is a contract change, not a fix, and it belongs in a plan rather than in a quick
+  patch. Its *cost* is no longer the reason to want it — §1.8 cached the derivation, so what is left
+  is the read itself, a couple of milliseconds. The deepest remaining cost on that path is now the
+  matcher's pass in `candidates_for_sitting`, about 36 ms of the 38 ms `sitting_detail` still takes
+  on the largest sitting. That is a separate question with its own owner, and it has not been
+  measured to a conclusion yet.
 
 ---
 
