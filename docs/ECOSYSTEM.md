@@ -1969,7 +1969,7 @@ what lets an existing database adopt the narrow rule. One field is added to a re
 state instead of waiting) widen the runtime boundary the deployment chapter describes. This document
 plus its decisions table is the record, per § *Phase 9*; nothing here creates a second authority.
 
-**Verified.** Backend **1005 passed**; frontend **169 passed**; `svelte-check` clean; build clean.
+**Verified.** Backend **1007 passed**; frontend **169 passed**; `svelte-check` clean; build clean.
 Four falsifications, each seen to fail and to name its assertion:
 `widen_the_reference_invalidation`, `the_runner_segments_an_open_sitting`,
 `the_close_route_forgets_to_prepare`, `the_read_waits_for_a_scheduled_job`. The browser tier's

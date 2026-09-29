@@ -4050,3 +4050,10 @@ worker enabled. Ten pass. Two fail, and neither is this phase:
 Impact on the other side: the browser tier is red on two assertions that predate this phase, and the
 full tier cannot reach past the first one until it is fixed. The next agent should fix
 `heightBudget()` as its own slice; everything else in the tier is verified.
+
+## 2026-09-29 — async-sitting-preparation — correction
+
+The suite total in the entry above (1005 backend tests) was counted before the last two guards
+landed — the backlog-drain test and the sweep-interval floor. The accurate figure on the final tree
+is **1007 backend**, 169 frontend; `docs/ECOSYSTEM.md` carries the corrected number. Appended rather
+than edited, per the rule that this log is never rewritten.
