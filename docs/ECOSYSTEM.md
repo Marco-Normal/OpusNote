@@ -5,7 +5,7 @@ Rust app" premise of
 [`INTEGRATION-practice-logger.md`](./INTEGRATION-practice-logger.md), which
 remains accurate about *what exists today* but is no longer the destination.
 
-Status: **decided; Phases 1-13 and 15-24 are landed. Phase 14 is planned.**
+Status: **decided; Phases 1-13 and 15-24 are landed. Phases 14 and 25 are planned.**
 §9 covers Phases 1-7; §10 covers Phases 8-24 and closes with the decisions, the risks and the
 non-goals. Each landed phase names its own evidence in place.
 
@@ -222,6 +222,7 @@ this document carries the rest.
 | 22 | **Hearing the piece** | Where the playing actually turns over (an adaptive gap with a 2 s floor, plus minimum and maximum sizes), and a matcher that survives a growing library (tempo-invariant local shingles pooled per piece, IDF containment, a hybrid score). Passages and piece-sessions are derived from attempts, so the log shows *n* attempts at one passage rather than *n* unrelated rows. **Landed 22a–22c.** One acceptance number was corrected to its measurement and one decision was dropped after measuring: see § *Phase 22* below. | high |
 | 23 | **The pedal as a quick-action surface** | The sostenuto's one hard-coded action becomes three gestures on the same pedal — single, double, hold — each bound in Setup to one action or to nothing: a review flag, start/finish a workout, arm/stop the take, or finish the sitting. A review flag is a raw mark event in its own table, drawn on the sitting strip beside the blur hairlines. **Landed.** | medium |
 | 24 | **The sitting is ready before you open it** | A finished sitting is segmented, measured and classified by a background worker instead of by the first click that opens it, and a read never waits on work already scheduled: it answers *preparing* and fills in a moment later. Measuring the request found that ~1 s of the wait was not scheduling at all — the matcher's reference cache was being thrown away by writes that cannot change it, so the invalidation rule is narrowed to references. **Landed.** | medium |
+| 25 | **Only what changed is re-derived** | The matcher's reference cache stops re-deriving every labelled segment when one label moves: the cache entry learns the inputs each segment's derivation is a function of, a version move is diffed, and only the segments that moved are read — from their own range on `idx_events_sitting` — and moved between the per-piece pooled signatures by subtraction. **1,753 ms → 1.1 ms** of derivation per label click. No schema, trigger, route or tunable change, and no cap on the reference set. **Planned.** | medium |
 
 Phases 1-2 are the useful minimum: they get the library out of the Rust app's
 directory and into a browser, which is most of what you asked for.
@@ -1998,6 +1999,41 @@ finishes before a browser can observe the state, so an assertion on it would be 
 behaviour it depends on *is* asserted — `tests/test_jobs.py` requires a scheduled sitting to answer
 `preparing` with no work done, and the same request to be complete after one `tick()`. The gap and
 what closing it would cost are in [`PLAN-PHASE24.md`](./PLAN-PHASE24.md) § *Execution record*.
+
+### Phase 25 — planned (only what changed is re-derived)
+
+Phase 24 made the matcher's reference cache be thrown away only by real reference changes. It did not
+make a rebuild cheap. Any label click bumps `reference_state.version`, and the miss path re-derives
+**every** labelled segment — reading each labelled sitting's notes whole — before answering. On the
+current real-data fixture (682 segments, 443 labelled, 512,010 note events, 7 pieces) that is
+**1,753 ms**; and because the view writes a label and then reads the sitting back, it is paid *inside
+the click*: **1,979 ms** per tag, for exactly as long as that sitting still has an undecided segment
+to suggest for. Labelling the last one drops it to ~58 ms, which is why the stall has such a sharp
+edge — `PERFORMANCE.md` §1.4's switch.
+
+The fix is to make a rebuild proportional to what moved rather than to the library. The cache entry
+learns the four facts each segment's derivation is a function of, so a version move is diffed rather
+than obeyed; only the segments whose inputs moved have their notes read — from the segment's own
+range on `idx_events_sitting`, 141 notes instead of the sitting's 30,000 — and their features move
+between the per-piece pooled signatures by subtraction instead of by re-pooling all 443. Measured on
+that fixture: **1,753 ms → 1.1 ms** of derivation per click, and **1,979 ms → 167 ms** for the click
+itself. The remaining 162 ms is the matcher ranking the sitting's undecided segments against the
+references: the useful work, and not the thing this phase removes.
+
+**What is deliberately not done.** No new trigger, table, column, route or tunable — the database
+still owns invalidation exactly as Phase 24 left it, and this changes what a *miss* costs, not when
+one happens. No cap on the reference set: `R5` in [`PERFORMANCE.md`](./PERFORMANCE.md), and Phase
+22b's measurement, forbid bounding this by discarding data. And no write queue in the browser — it
+was measured against this fix and moves the derivation off the click without making it cheaper
+(29,796 ms of work per 17 clicks either way).
+
+**The requirement that decides the design is equivalence, not speed.** The incremental answer must
+be *equal* to a full rebuild, pooled key sets included, because the failure mode is a silently wrong
+suggestion rather than a slow one. One trap is named in the plan for that reason: a piece that loses
+its last label must leave the pooled signatures entirely, since `shingles.idf` counts documents, and
+an empty `Counter` left behind would shift every IDF weight and therefore every score.
+
+**Implementation plan:** [`PLAN-PHASE25.md`](./PLAN-PHASE25.md).
 
 ### Still open, from the earlier brainstorm
 

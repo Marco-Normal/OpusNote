@@ -350,6 +350,7 @@ deploy/                systemd units, kiosk policy, installer
 | Document | Contents |
 | --- | --- |
 | [docs/PLAN-SLICES1-7.md](docs/PLAN-SLICES1-7.md) | Slices 2-7 of the test strategy — **stalled after Slice 1**; `docs/TESTING.md` (Slice 8) is not yet written |
+| [docs/PLAN-PHASE25.md](docs/PLAN-PHASE25.md) | The matcher's reference cache re-derives only the segments whose inputs moved, instead of the whole labelled set on every label click — **planned** |
 
 **The record.**
 
