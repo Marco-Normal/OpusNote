@@ -4525,3 +4525,47 @@ build. No table, column, route or field changes. `iter_export_json` is new publi
 writer. Four break scripts guard the four claims, each naming its test.
 
 
+## 2026-09-29 — performance — only the reference inputs that moved are re-derived
+
+Scope: `backend/app/practice/store.py` (the reference-cache section: new `_notes_in_range`,
+`_reference_inputs`, `_updated_features`, `_adjust_pooled`, `_incremental_references`; the widened
+`_REFERENCES` entry and the miss path of `cached_references`), `backend/tests/test_autotag.py`,
+`backend/tools/falsifications/{rebuild_every_reference_for_one_label,forget_the_old_piece_when_a_label_moves,keep_an_empty_piece_in_the_pooled_signatures}.sh`,
+`docs/PERFORMANCE.md` §1.10 + R4 + two map rows, `docs/ECOSYSTEM.md` (status line, phase row, §Phase
+25 heading and body, decisions 25-D1…25-D6), `docs/PLAN-PHASE25.md`, `README.md`.
+
+Did: Phase 24 made the trigger exact but left the miss path re-deriving **every** labelled segment.
+Re-tagging one segment on the owner's library therefore cost **1,808 ms** of derivation — 1,010 ms of
+`_notes_for_segments` reads over all 443 references (396,219 `Note` objects) and ~1,700 ms of
+fingerprints and content features — and it landed inside the click, because the view writes a label and
+then reads the sitting back. The cache entry now carries `{segment_id: (sitting_id, start_ms, end_ms,
+piece_id)}`, the four facts a segment's derivation is a function of, so a version miss is **diffed**
+instead of obeyed: only the segments whose inputs moved have their notes read, from their own range on
+`idx_events_sitting` (606 notes in 1.0 ms, against ~14 ms for a whole-sitting read), and their features
+move between the pooled per-piece signatures by subtraction rather than by re-pooling all 443.
+Measured on the fixture (512,010 notes, 1,151,770 pedals, 38 sittings, 682 segments of which 443 are
+references, 7 pooled pieces): **derivation 1,808 ms → 3.4 ms per label click**. `identified_by` is
+deliberately *not* in the key: it decides membership, which `_labelled_rows` has already applied, and
+it is not an input to a fingerprint or a content feature.
+
+The equivalence **tests caught two real defects** in the first implementation, which is why they exist
+rather than the phase resting on the measurement: a segment that *moves* between pieces was not
+subtracted from the piece it left (its features were counted under both), and the pool prune used
+`if counts` when `Counter.subtract` leaves zeroed keys in place — an all-zero `Counter` is still
+truthy, so a piece that lost its last label stayed put and would have shifted every IDF weight.
+That second one is silent and library-wide: `shingles.idf` counts pooled keys as documents.
+
+The worst case was **measured, not assumed**: every one of the 682 labels changed at once is 1,530 ms
+incremental against 1,985 ms rebuild, and incremental leads at every size from 10 up. There is no
+crossover, so no fallback threshold was added; the margin narrows from ~500× to ~1.3× and that is
+recorded as the measurement to revisit. Three break scripts, each seen to catch its own test; the
+first was rewritten after its initial version inverted the diff and broke 43 tests rather than
+isolating the one property.
+
+Impact on the other side: **none — no contract changes.** No table, column, index, trigger, route,
+request or response field, no new tunable, and **`SCHEMA_VERSION` stays 5** with `BACKUP_VERSION`
+untouched. `cached_references` keeps returning its same 3-tuple, so no caller or client moves; the
+only observable difference is that a label click no longer stalls. The database still owns
+invalidation exactly as Phase 24 left it. Anyone who later makes the derivation a function of
+something that can *decrease* must revisit the no-lock argument (§3.5, 25-D4), because
+copy-on-write plus a forward-only version check is what makes it safe without a mutex today.

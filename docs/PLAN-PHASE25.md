@@ -3,7 +3,7 @@
 **Parent spec:** [`ECOSYSTEM.md`](./ECOSYSTEM.md) § *Phase 25*, which owns the *what* and the
 *why*. This document owns the *how*.
 
-**Status: planned.**
+**Status: landed.**
 
 **Goal.** A label click stops paying for the whole reference set. `store.cached_references` keeps
 its derivation **per labelled segment** and, when `reference_state.version` moves, re-derives only
@@ -353,3 +353,87 @@ Execution Route:
 - User confirmation required: no — the scope was approved ("implement A"), and this document is
   the plan that approval asked for.
 ```
+
+---
+
+## 9. Execution record
+
+Landed as three commits: `d44360a` (the incremental cache), `390f787` (three falsifiers), `df1819b`
+(a precise rewrite of the first one).
+
+**Every task landed with the tests it named, and the RED was watched for each.** T1's
+`test_one_label_change_re_derives_only_that_segment` failed first with `AttributeError` (the helper
+did not exist), then with `['sitting']` (the plumbing was in but the miss path still rebuilt
+everything) — which is the sequence this plan's T1/T2 split predicted, and the reason the two were
+committed as one verified unit rather than a deliberately red tree.
+
+**One deviation from this plan's test list, recorded rather than smoothed over.** §T2 predicted the
+four equivalence tests would be RED. Three of them cannot be: an equivalence guard ("incremental ==
+full rebuild") is satisfied trivially while a full rebuild is still the implementation, so they passed
+before the incremental path existed and then **failed against my first implementation** — which is
+where they earned their keep, catching two real defects (below). Because they cannot be the RED
+driver, a fifth test was added to pin the property the whole design rests on and which *can* fail:
+`test_the_range_read_returns_the_slice_a_whole_sitting_read_would`, asserting the range query returns
+exactly the notes, in the same order, that the binary-searched slice returns. The work-count test from
+T1 is the RED-anchored performance guard, as the plan intended.
+
+**Two real defects the equivalence tests caught, both in my first implementation:**
+
+1. A segment that **moves** between pieces was not subtracted from the piece it left — I subtracted
+   only `removed`, so a moved segment's features were counted under both pieces. This is exactly the
+   defect `forget_the_old_piece_when_a_label_moves.sh` breaks deliberately.
+2. The pool prune used `if counts`, and `Counter.subtract` leaves the keys it zeroed in place — an
+   all-zero Counter is still *truthy*, so a piece that had lost its last label stayed in the pooled
+   map and would have shifted every IDF weight (§3.4). The prune is now `any(counts.values())`.
+
+A third gap the tests caught was structural rather than arithmetic: a base entry built when the library
+had **no labels** holds no examples, so the first label after that could not be looked up in the
+fingerprint map. The moved set is now driven off `cached_inputs`, not off `examples`.
+
+**§T3's numbers were re-measured on the current fixture and differ from §1's projections, which were
+taken on an earlier build.** The measured series, on **512,010 note events, 1,151,770 pedal events, 38
+sittings, 682 segments of which 443 are references, 7 pooled pieces**:
+
+| | this plan's projection | measured |
+| --- | ---: | ---: |
+| derivation per label click | 1.1 ms | **3.4 ms** |
+| the click itself | 167 ms | **79.0 ms** |
+| today's click, for comparison | 1,979 ms | 80.7 ms |
+
+The derivation target is met in substance (1,808 ms → 3.4 ms). The click figure is *better* than
+projected and for a different reason than the plan assumed: `sitting_detail` now reads in ~73 ms on
+this fixture rather than the ~1,975 ms §1 recorded, so the reference derivation was never the whole
+click and the click was already fast before this phase. The honest statement of the value — recorded
+in `ECOSYSTEM.md` and `PERFORMANCE.md` rather than only here — is that the derivation stops growing
+with the library and a ~1.8 s stall disappears, not that a click improves from 1,979 ms to 167 ms.
+
+**The worst case was measured as §T3 required.** Every one of the 682 labels moved at once: **1,530 ms
+incremental against 1,985 ms rebuild**, with incremental ahead at every size from 10 up. There is no
+crossover, so no threshold was added — per §T3's own instruction not to add one on speculation. The
+margin narrowing from ~500× to ~1.3× is recorded as the measurement to revisit.
+
+**The measurement probe** is `backend/.scratch/probe_phase25_incremental.py` (gitignored, as §T3
+specifies), re-runnable against the fixture; it calls the shipped implementation and instruments the
+real miss rather than modelling it.
+
+**Falsifiers, all three proven to catch their break:**
+
+| Script | Test it must catch |
+| --- | --- |
+| `rebuild_every_reference_for_one_label.sh` | `test_one_label_change_re_derives_only_that_segment` — **1 failed, 44 passed** |
+| `forget_the_old_piece_when_a_label_moves.sh` | `test_moving_a_label_between_pieces_moves_its_contribution_only` (3 failed, 42 passed) |
+| `keep_an_empty_piece_in_the_pooled_signatures.sh` | `test_a_piece_that_loses_its_last_label_leaves_the_pooled_signatures` — **1 failed, 44 passed** |
+
+The first falsifier was **rewritten** after its first version inverted the input diff: that broke 43
+tests, so it certified the work-count assertion without isolating it. It now restores the exact
+pre-Phase-25 miss path — correct answers, every equivalence test still green, and only the
+read-counting test able to tell the difference.
+
+**No lock was added**, on §3.5's argument (copy-on-write plus a conservative version check), and the
+revisit trigger is recorded in this plan and in `ECOSYSTEM.md` 25-D4: if the derivation ever comes to
+depend on something that can *decrease*, that argument stops holding.
+
+**Existing tests stayed green unmodified**, including all six invalidation-contract tests §5 named.
+
+<!-- historical-record -->
+This plan is a record of work that has landed, not a specification. Current behaviour is in docs/FEATURES.md; current status is the status line in ECOSYSTEM.md. See docs/archive/README.md.

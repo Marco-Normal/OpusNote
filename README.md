@@ -342,15 +342,15 @@ deploy/                systemd units, kiosk policy, installer
 | [docs/PLAN-PHASE21.md](docs/PLAN-PHASE21.md), [docs/PLAN-PHASE22.md](docs/PLAN-PHASE22.md) | The blur and the edit path; hearing the piece — landed |
 | [docs/PLAN-PHASE23.md](docs/PLAN-PHASE23.md) | The pedal as a quick-action surface: three configurable gestures on the sostenuto, and a review flag — landed |
 | [docs/PLAN-PHASE24.md](docs/PLAN-PHASE24.md) | A finished sitting is prepared in the background, and the matcher's cache stops being invalidated by writes that cannot change it — landed |
+| [docs/PLAN-PHASE25.md](docs/PLAN-PHASE25.md) | Only what changed is re-derived: the matcher's reference cache updates the segments whose inputs moved instead of rebuilding the whole labelled set — landed |
 | [docs/PLAN-OPUS-NOTE-IDENTITY.md](docs/PLAN-OPUS-NOTE-IDENTITY.md) | The rename, the visual identity and the navigation declutter |
 | [docs/PLAN-SLICE0.md](docs/PLAN-SLICE0.md), [docs/PLAN-SLICE1.md](docs/PLAN-SLICE1.md) | Slices 0 and 1 of the test strategy — landed |
 
-**Open work** — the only plan in this tree that describes anything not yet done.
+**Open work** — plans in this tree that describe something not yet done.
 
 | Document | Contents |
 | --- | --- |
 | [docs/PLAN-SLICES1-7.md](docs/PLAN-SLICES1-7.md) | Slices 2-7 of the test strategy — **stalled after Slice 1**; `docs/TESTING.md` (Slice 8) is not yet written |
-| [docs/PLAN-PHASE25.md](docs/PLAN-PHASE25.md) | The matcher's reference cache re-derives only the segments whose inputs moved, instead of the whole labelled set on every label click — **planned** |
 
 **The record.**
 

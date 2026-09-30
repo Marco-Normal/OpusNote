@@ -15,8 +15,10 @@ cost grew with something that grows forever — the library, the sitting, the nu
 — on a path that runs on every click.
 
 Measured numbers below are from the owner's real library, rebuilt from the local backup that
-[docs/TEST-DATA.md](TEST-DATA.md) owns — 238,665 note events, 539,726 pedal events, 68 segments, 54
-of them labelled. They are shapes, not promises: re-measure on your own data before quoting one.
+[docs/TEST-DATA.md](TEST-DATA.md) owns — 512,010 note events, 1,151,770 pedal events, 38 sittings,
+732 segments of which 443 are references. Older figures quoted inside a section were taken on an
+earlier, smaller rebuild of the same library and say so in place. They are shapes, not promises:
+re-measure on your own data before quoting one.
 
 ---
 
@@ -294,6 +296,79 @@ because a timing assertion passes on a fast laptop with the defect present. See 
 
 ---
 
+### 1.10 A whole derivation rebuilt for one changed input
+
+**Symptom.** Re-tagging one segment — from one piece to another — took **1,808 ms** on the owner's
+library, 1,010 ms of it reading notes and 1,700 ms deriving from them, to apply a one-row change. The
+view writes a label and then reads the sitting back, so it landed *inside* the click, and only while
+that sitting still had an undecided segment to suggest for (§1.4's switch).
+
+**Cause.** Invalidation was exact and the rebuild was not. Phase 24 had already narrowed the trigger
+to the columns the derivation is a function of, so the version moved for the right reason — and the
+miss path then answered it by starting over: `_notes_for_segments` read **every** labelled sitting
+whole, `fingerprints`/`shingles.features` ran over all 443 references (396,219 `Note` objects), and
+`_pool_features` re-pooled all seven pieces. A version counter can say *that* something moved. It
+cannot say *what*, and the cache entry was not recording the difference.
+
+**Fix.** Keep the inputs. The entry gained a `{segment_id: (sitting_id, start_ms, end_ms, piece_id)}`
+map — the four facts a segment's derivation is a function of — and a version miss is diffed against
+it instead of obeyed. Three things follow, and each is load-bearing:
+
+* Only the segments whose inputs moved are read, from their **own range** on
+  `idx_events_sitting(sitting_id, onset_ms)` rather than from the sitting's whole list (R9 applied
+  honestly): **606 notes in 1.0 ms** where the sitting-wide read is 14 ms for one segment.
+* The pool is adjusted in O(1): subtract the moved segment's features from the piece it left, add
+  them to the piece it joined, copying only those pieces' `Counter`s because `subtract` mutates.
+* `examples` is rebuilt from `_labelled_rows`' own order rather than patched in place, because the
+  matcher sees a *list* and a tie broken differently is a different answer.
+
+`identified_by` is deliberately **not** among the four inputs. It decides membership, which
+`_labelled_rows` has already applied, and it is not an input to a fingerprint or a content feature —
+the same reasoning Phase 24 used one level up.
+
+| | before | after |
+| --- | ---: | ---: |
+| the derivation a label click causes | 1,808 ms | **3.4 ms** |
+| a click, end to end | 80.7 ms | **79.0 ms** |
+| derivation work over 17 tag clicks | 30,736 ms | **58 ms** |
+
+Measured on the rebuilt local fixture — **512,010 note events, 1,151,770 pedal events, 38 sittings,
+682 segments of which 443 are references, 7 pooled pieces** ([TEST-DATA.md](TEST-DATA.md)) — with the
+miss instrumented rather than modelled. The cold rebuild is unchanged at ~1,800 ms; what changed is
+that a label click no longer pays it. **The click is 79 ms rather than the ~5 ms the derivation alone
+would suggest** because the reference derivation was never the whole click: `sitting_detail` is ~73 ms
+of it, and that is a different cost this phase did not touch.
+
+**The shape.** R4's inversion has a second half, and this is it: *the rebuild must be proportional to
+what changed*. A trigger that says "something moved" is a correct instruction to expire and a useless
+instruction to rebuild — the entry has to record which inputs it was built from, or a miss can only
+start over. R4 is extended below rather than duplicated.
+
+**Two traps, both found by the tests rather than by reading.** A segment that *moves* between pieces
+must be subtracted from the piece it left and not only a segment that is deleted, or its features are
+counted under both pieces and the old piece keeps a signature it no longer owns. And
+`Counter.subtract` leaves the keys it zeroed in place — a Counter whose values are all zero is still
+*truthy*, so the obvious `if counts` keeps a piece that has just lost its last label. That piece is
+not inert: `shingles.idf` counts `max(1, len(signatures))` documents, so one extra empty "document"
+shifts every IDF weight and therefore every score, silently and library-wide, with no crash and no
+visible symptom. The prune tests the values, and the equivalence guard compares **key sets**, because
+a comparison that normalised empty signatures away could not see it.
+
+**The worst case was measured, not assumed.** "Always incremental" is only justified if nothing is
+lost at high churn, so every labelled segment was changed at once: **1,530 ms incremental against
+1,985 ms rebuild at all 682**, and incremental won at every size from 10 up. There is no crossover, so
+there is deliberately no threshold — deciding that by feel is what R8 exists to prevent. The margin
+does narrow (≈500× at one changed segment, ≈1.3× at full churn), and if a future workload is ever
+found where incremental loses, that is the measurement to revisit rather than a number to guess now.
+
+**No lock, deliberately.** The background worker and request threads both reach this, and copy-on-write
+makes it safe without one: a published entry is never mutated, so a reader sees the old entry or the
+new one and never a torn one, and the version check is conservative in the right direction — an entry
+is served only while the database still reports the version it was filed under, and versions never move
+backwards while `note_events` is append-only. If a future change makes the derivation depend on
+something that can *decrease*, that argument stops holding and a lock becomes necessary; that is the
+trigger to revisit, recorded here so it is not rediscovered.
+
 ## 2. The rules
 
 **R1 — Cost is a function of the request, not of the library.** If a click's cost grows with the
@@ -308,7 +383,10 @@ rows down (1.2). Check every caller of the helper, not just the one you found.
 **R4 — Cache derived material; let the database own the invalidation.** A version the writes maintain
 (triggers) beats a list of call sites to remember (1.3) — and the trigger must count *only* what the
 cached material is a function of, or it is the database throwing the cache away on the cache's own
-read path (1.5).
+read path (1.5). **And caching is not enough: the rebuild must be proportional to what changed.** A
+counter can say *that* something moved; it cannot say *what*, so the entry must record the inputs each
+part of the derivation came from and a miss must re-derive only those (1.10). Where the derived value
+is one row per input, the read is that row's own range on its index (R9), not its parent's whole list.
 
 **R5 — Never bound cost by discarding data.** A newest-N cap on the matcher's references is a
 *correctness* change wearing a performance fix's clothes: measured on the owner's library, a newest-10
@@ -357,7 +435,8 @@ If you touch one of these, you own its complexity.
 | --- | --- | --- |
 | `pedal.blur_attacks` | the segment's notes and stretches, O((N+S) log N) | `tests/test_pedal.py`, `falsifications/drop_blur_positions.sh` |
 | `store._notes_for_segments` | one query per sitting; the notes in the group's range | `test_reading_a_sitting_does_not_read_its_notes_once_per_open_section` |
-| `store.cached_references` | nothing on a hit; the labelled set only when the version moves | the invalidation tests in `tests/test_autotag.py` |
+| `store._notes_in_range` | one segment's notes on `idx_events_sitting` — never its sitting's | `test_the_range_read_returns_the_slice_a_whole_sitting_read_would` |
+| `store.cached_references` | nothing on a hit; **only the inputs that moved** when the version moves (1.10) | `test_one_label_change_re_derives_only_that_segment`, `test_the_incremental_references_equal_a_full_rebuild`, `forget_the_old_piece_when_a_label_moves.sh`, `keep_an_empty_piece_in_the_pooled_signatures.sh` |
 | `store._passages_derived` | nothing on a hit; one sitting's segments and notes when they move | `test_reading_a_sitting_again_does_not_derive_its_passages_again`, `test_a_label_written_after_a_read_is_answered_not_remembered` |
 | `store.list_sittings_conn` | the returned rows and *their* notes — never the log | `test_listing_the_newest_sittings_does_not_read_the_older_ones` |
 | `store.calendar` | the days in the requested window | `test_the_calendar_only_reads_its_own_window`, `test_the_calendar_still_answers_exactly_its_window` |
