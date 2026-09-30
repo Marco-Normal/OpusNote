@@ -24,20 +24,17 @@ import pathlib, sys
 
 path = pathlib.Path(sys.argv[1])
 text = path.read_text()
-needle = """    moved = [
-        segment_id
-        for segment_id, inputs in current.items()
-        if cached_inputs.get(segment_id) != inputs
-    ]
+needle = """    removed = cached_inputs.keys() - current.keys()
 """
-assert needle in text, "the input diff is not where this script expects it"
-# Every known segment counts as moved unless it is provably unchanged, and an unknown segment
-# is treated as unchanged too — so the set collapses to nothing and the full rebuild runs.
-break_it = """    moved = [
-        segment_id
-        for segment_id, inputs in current.items()
-        if segment_id in cached_inputs and cached_inputs[segment_id] == inputs
-    ]
+assert needle in text, "the incremental diff is not where this script expects it"
+# Put the pre-Phase-25 miss path back, and only that: derive every labelled segment from the
+# whole-sitting read and pool from scratch. That is the exact shape this phase replaced, so the
+# answer it produces is *correct*, and every equivalence assertion still passes — only the
+# work-count test can tell the difference. That is precisely why the guard counts reads.
+break_it = """    examples, local = references_from(conn, rows)
+    pooled = _pool_features(rows, local)
+    return examples, local, pooled, current
+    removed = cached_inputs.keys() - current.keys()
 """
 path.write_text(text.replace(needle, break_it, 1))
 PY
