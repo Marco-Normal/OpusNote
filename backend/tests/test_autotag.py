@@ -11,6 +11,7 @@ slowly, sometimes one hand — because that is what the log actually contains.
 
 from __future__ import annotations
 
+import collections
 import dataclasses
 
 import pytest
@@ -695,6 +696,80 @@ def test_relabelling_a_segment_invalidates_the_cached_references(fresh_db) -> No
     assert {example.piece_id for example in after[0]} == {piece_b}
 
 
+def test_one_label_change_re_derives_only_that_segment(fresh_db, monkeypatch) -> None:
+    """A miss must cost what moved, not the size of the training set.
+
+    Phase 24 made the *trigger* exact, but the miss path still started over: one relabelled
+    segment re-read every labelled sitting and re-derived all of them, which is ~1,010 ms of
+    database reads and ~700 ms of arithmetic on the owner's library to apply a one-row change.
+
+    Counted, not timed — a duration assertion passes on a fast machine with the bug present.
+    The read that the fix introduces is the range query on `idx_events_sitting`, so what this
+    asserts is that exactly one segment's notes were read, and that the whole-sitting read the
+    old path performed did not run at all.
+    """
+    piece_a, piece_b = two_pieces()
+    segment_id = labelled_drill(0, PIECE_A, piece_a)
+    _references()  # warm, so the relabel below is a version miss with a usable base entry
+
+    calls: list[tuple[str, int]] = []
+
+    def range_read(conn, sitting_id, start_ms, end_ms):
+        calls.append(("range", int(sitting_id)))
+        return original_range(conn, sitting_id, start_ms, end_ms)
+
+    def whole_sitting(conn, rows):
+        calls.append(("sitting", len(rows)))
+        return original_sitting(conn, rows)
+
+    original_range = store._notes_in_range
+    original_sitting = store._notes_for_segments
+    monkeypatch.setattr(store, "_notes_in_range", range_read)
+    monkeypatch.setattr(store, "_notes_for_segments", whole_sitting)
+
+    store.assign_piece(segment_id, piece_b)
+    _references()
+
+    assert [kind for kind, _ in calls].count("range") == 1, (
+        "one changed segment must read one segment's notes; it read "
+        f"{[kind for kind, _ in calls].count('range')} segment(s)"
+    )
+    assert not [kind for kind, _ in calls if kind == "sitting"], (
+        "the whole-sitting read must not run for a one-segment change"
+    )
+
+
+def test_the_range_read_returns_the_slice_a_whole_sitting_read_would(fresh_db) -> None:
+    """The property the whole fix rests on, pinned directly rather than assumed.
+
+    The incremental path replaces `_notes_for_segments` (a whole-sitting read, then a binary
+    search per segment) with a bounded range query. That is only legitimate if the two return
+    the same notes, in the same order, for the same segment — inclusive bounds, the index's own
+    ORDER BY, and the same Note fields. If they ever diverge, the incremental answer drifts from
+    a rebuild and the equivalence tests above start failing for a reason that would otherwise
+    look like a pool bug.
+    """
+    piece_a, piece_b = two_pieces()
+    first = labelled_drill(0, PIECE_A, piece_a)
+    second = labelled_drill(1, PIECE_C, piece_b)
+
+    conn = db.connect(settings.db_path)
+    try:
+        rows = store._labelled_rows(conn)
+        sliced = store._notes_for_segments(conn, rows)
+        for row in rows:
+            direct = store._notes_in_range(
+                conn, int(row["sitting_id"]), int(row["start_ms"]), int(row["end_ms"])
+            )
+            assert direct == sliced[int(row["id"])], (
+                f"segment {row['id']}: the range read differs from the whole-sitting slice"
+            )
+            assert direct, "an empty slice would make this comparison vacuous"
+    finally:
+        conn.close()
+    assert {first, second} == {int(row["id"]) for row in rows}
+
+
 def test_answering_a_practice_kind_keeps_the_cached_references(fresh_db) -> None:
     """A kind is not an input to a fingerprint or a content feature, so it may not evict."""
     piece_a, _piece_b = two_pieces()
@@ -705,6 +780,114 @@ def test_answering_a_practice_kind_keeps_the_cached_references(fresh_db) -> None
 
     after = _references()
     assert after[0] is before[0], "a practice kind must not throw the references away"
+
+
+def _full_rebuild():
+    """The same triple, derived from scratch, as the answer to be equal to."""
+    store.forget_references()
+    return _references()
+
+
+def test_the_incremental_references_equal_a_full_rebuild(fresh_db) -> None:
+    """The incremental path is required to be *equal* to starting over, not merely close.
+
+    A drifting cache is a silently wrong matcher, so this walks the four write shapes that can
+    move a reference and compares the incremental triple against `forget_references()` plus a
+    full rebuild — including the `pooled` and `local` **key sets** and the `examples` list
+    element for element in order. `rank` and `identify` see a list, not a set, so an order
+    difference is a real difference.
+    """
+    piece_a, piece_b = two_pieces()
+    first = labelled_drill(0, PIECE_A, piece_a)
+    second = labelled_drill(1, PIECE_A, piece_a)
+    third = labelled_drill(2, PIECE_C, piece_a)
+    _references()  # warm, so each step below is a version miss against a base entry
+
+    def agree(describe: str) -> None:
+        incremental = _references()
+        rebuilt = _full_rebuild()
+        assert incremental[0] == rebuilt[0], f"{describe}: the examples differ from a rebuild"
+        assert incremental[1] == rebuilt[1], f"{describe}: the local features differ"
+        assert incremental[2] == rebuilt[2], f"{describe}: the pooled signatures differ"
+        assert set(incremental[1]) == set(rebuilt[1]), f"{describe}: local key sets differ"
+        assert set(incremental[2]) == set(rebuilt[2]), f"{describe}: pooled key sets differ"
+
+    labelled_drill(3, PIECE_B, piece_b)  # add a label
+    agree("adding a label")
+
+    store.assign_piece(third, piece_b)  # relabel to another piece
+    agree("relabelling to another piece")
+
+    store.split_segment(second, 1_000)  # change a boundary
+    agree("changing a boundary")
+
+    conn = db.connect(settings.db_path)
+    try:
+        conn.execute("DELETE FROM segments WHERE id = ?", (first,))  # delete a labelled segment
+        conn.commit()
+    finally:
+        conn.close()
+    agree("deleting a labelled segment")
+
+
+def test_moving_a_label_between_pieces_moves_its_contribution_only(fresh_db) -> None:
+    """The O(1) pool adjustment: subtract from the old piece, add to the new one, nothing else."""
+    piece_a, piece_b = two_pieces()
+    mover = labelled_drill(0, PIECE_A, piece_a)
+    stayer = labelled_drill(1, PIECE_C, piece_a)
+    _references()
+
+    conn = db.connect(settings.db_path)
+    try:
+        features = store._segment_features(conn, store._labelled_rows(conn))
+    finally:
+        conn.close()
+    assert features[mover], "a segment with no features would make this prove nothing"
+
+    store.assign_piece(mover, piece_b)
+    _examples, local, pooled = _references()
+
+    assert local[stayer] == features[stayer], "an untouched segment's features were disturbed"
+    expected_old = collections.Counter(features[stayer])
+    expected_new = collections.Counter(features[mover])
+    assert pooled[piece_a] == expected_old, "the old piece kept the moved segment's features"
+    assert pooled[piece_b] == expected_new, "the new piece did not gain exactly that segment"
+
+
+def test_a_piece_that_loses_its_last_label_leaves_the_pooled_signatures(fresh_db) -> None:
+    """`Counter.subtract` leaves zero-valued keys, and an *empty* piece is not inert.
+
+    `shingles.idf` counts each key of the pooled map as a document, so a piece left behind as an
+    empty Counter shifts every IDF weight — and therefore every score — silently and
+    library-wide. The key set must be exactly what a full rebuild would produce, which is why
+    this compares key sets rather than only the counters.
+    """
+    piece_a, piece_b = two_pieces()
+    only = labelled_drill(0, PIECE_A, piece_a)
+    labelled_drill(1, PIECE_C, piece_b)
+    _references()
+
+    store.assign_piece(only, piece_b)  # piece_a loses its only label
+    _examples, _local, pooled = _references()
+
+    assert piece_a not in pooled, "a piece with no labels left must leave the pooled signatures"
+    assert set(pooled) == set(_full_rebuild()[2]), (
+        "the pooled key set must match a full rebuild, or every IDF weight shifts"
+    )
+
+
+def test_a_cold_cache_still_builds_from_scratch(fresh_db) -> None:
+    """No base entry is the cold case, not an error, and it must produce the whole answer."""
+    piece_a, _piece_b = two_pieces()
+    labelled_drill(0, PIECE_A, piece_a)
+    labelled_drill(1, PIECE_C, piece_a)
+
+    store.forget_references()
+    examples, local, pooled = _references()
+
+    assert len(examples) == 2, "a cold read must build the full reference set"
+    assert set(local) == {example.segment_id for example in examples}
+    assert set(pooled) == {piece_a}
 
 
 def _version() -> int:
