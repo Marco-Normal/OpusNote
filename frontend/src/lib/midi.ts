@@ -73,9 +73,10 @@ export interface MonitorPedal {
  * any handler saw it. This is the raw stream, for callers that decide for themselves
  * what a message means.
  *
- * It is deliberately **not** the stream the practice log consumes. `pedal_events` has no
- * controller column and is read as CC64 by `practice/pedal.py`, so widening that stream
- * would record the sostenuto as sustain and corrupt the blur and basis figures.
+ * It is deliberately **not** the stream the practice log consumes. The stored pedal stream
+ * keeps a channel and a value, not a controller, and is read as CC64 by `practice/pedal.py`,
+ * so widening it would record the sostenuto as sustain and corrupt the blur and basis
+ * figures.
  */
 export interface MonitorController {
   /** Absolute time, ms since the Unix epoch. */

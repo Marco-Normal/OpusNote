@@ -33,6 +33,13 @@ what makes the generator and the scorer replaceable without touching the browser
 Technology: Python 3.11 / FastAPI / SQLite / music21 on the server; Svelte 5 / TypeScript / Vite
 in the browser, with OpenSheetMusicDisplay for engraving and Tone.js for audio.
 
+**Storage is rows except where a row costs more than its fact.** The sustain pedal's raw CC64 stream
+is packed — 6-byte records in chunks of at most 512, never split inside one millisecond — because a
+continuous controller writes about fifteen values a second and a row plus two indexes cost 51 bytes
+each. `backend/app/practice/pedal_stream.py` owns the codec, the chunk invariant and the dedupe rule;
+`store.sitting_notes` and `store._refresh_metrics` are its only readers. See
+[PERFORMANCE.md](PERFORMANCE.md) § 1.12 before changing it.
+
 ## 2. The API contract
 
 Two endpoints carry the whole interaction:

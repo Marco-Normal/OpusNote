@@ -89,7 +89,7 @@ def test_an_export_covers_every_table(client) -> None:
         "piece_journal",
         "sittings",
         "note_events",
-        "pedal_events",
+        "pedal_stream",
         "segments",
         "identification_outcomes",
         "workouts",
@@ -133,7 +133,7 @@ def test_a_backup_round_trips_through_a_wipe(client) -> None:
 
     reread = client.get("/api/backup/export").json()
     assert reread["counts"] == before, "every table came back with the same row count"
-    assert reread["counts"]["pedal_events"] == 1, "including the pedalling"
+    assert reread["counts"]["pedal_stream"] == 1, "including the pedalling, as one chunk"
 
     detail = client.get(f"/api/repertoire/pieces/{piece_id}").json()
     assert detail["title"] == "Intermezzo"

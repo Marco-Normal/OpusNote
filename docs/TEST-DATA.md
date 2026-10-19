@@ -37,15 +37,17 @@ at any depth.
 ## 2. What it is
 
 A real export from the running piano server, `exported_at` **2026-09-29T20:27:52+00:00**, format
-`piano-ecosystem-backup` version **1**. That is the same `BACKUP_VERSION` that
-`backend/app/backup.py` reads today, so it imports without translation — but note that it is a
-*snapshot of a schema*, and a future `BACKUP_VERSION` bump is exactly the event that would make
-this fixture stop loading. Check the version before assuming it still works.
+`piano-ecosystem-backup` version **1**. The app now writes version **2**, so this fixture imports
+*through the v1 translation* rather than without one — its `pedal_events` rows are re-encoded into
+`pedal_stream` on the way in, which is the one upgrade path that rewrites data rather than adding a
+column, and it now runs on every load of this fixture. That is useful and also a warning: it is a
+*snapshot of a schema*, so a future `BACKUP_VERSION` bump is exactly the event that would make this
+fixture stop loading. Check the version before assuming it still works.
 
 | Table | Rows | | Table | Rows |
 | --- | ---: | --- | --- | ---: |
 | `note_events` | 512,010 | | `segments` | 732 |
-| `pedal_events` | 1,151,770 | | `performances` | 58 |
+| `pedal_events` (v1 doc) | 1,151,770 | | `performances` | 58 |
 | `exercise_skills` | 459 | | `exercises` | 51 |
 | `rating_events` | 369 | | `pieces` | 21 |
 | `media` | 17 | | `sittings` | 38 |
@@ -56,8 +58,9 @@ this fixture stop loading. Check the version before assuming it still works.
 | `sitting_marks` | 2 | | `reference_state` | 1 |
 
 Rebuilt through the app's own path — `db.init_db` for the schema, `backup.import_document` for the
-rows — that is **1,666,488 rows** into an **89 MB** database in about nine seconds. Row counts are
-what a measurement quotes; byte size is a symptom.
+rows — that is **1,666,488 rows** into an **89 MB** database in about nine seconds, and the pedal
+translation turns the 1,151,770 pedal rows into **2,265 chunks**, which brings the file to **37 MB**.
+Row counts are what a measurement quotes; byte size is a symptom.
 
 Completeness was verified, not assumed: all 17 `media` rows resolve to a file in `../media/`,
 with no row missing its file and no file unreferenced. The `media` rows are 15 audio and 2

@@ -128,12 +128,20 @@ One database, three domains:
 
 ```
 repertoire     composers, pieces, piece_journal, piece_passages, media
-practice       sittings, note_events, pedal_events, identification_outcomes, segments,
+practice       sittings, note_events, pedal_stream, identification_outcomes, segments,
                segment_metrics, reference_state
 workout        workouts
 sight-reading  users, skills, user_skills, exercises, exercise_skills, performances,
                rating_events
 ```
+
+**One practice table is not a row per fact.** The sustain pedal's raw CC64 moves live in
+`pedal_stream`, packed by `backend/app/practice/pedal_stream.py`: 6-byte records, chunks of at most
+512, and no chunk ever splits one millisecond. What a `UNIQUE(sitting_id, onset_ms, value)` index
+used to enforce now lives in `insert_moves` — that function is what makes a retried batch store
+nothing, and it is asserted in `backend/tests/test_pedal_stream.py`. The reasoning and the measured
+cost are [PERFORMANCE.md](PERFORMANCE.md) § 1.12. A backup written before the change still carries
+`pedal_events` rows and is re-encoded on import.
 
 **The word "note" currently means three different things** across the projects,
 and one of them is already in the Rust schema:
@@ -746,10 +754,9 @@ buried in a large change.
   waveform at all. Decoding is declined past 64 MB with a message that says so, because
   expanding a compressed recording into raw samples is how a practice machine starts
   swapping to draw a picture.
-- **Sustain pedal captured.** CC64 was parsed and thrown away. Now a `pedal_events`
-  table stores the raw value stream (onset + value), the ingest batch takes an optional
-  `pedals` list, and `sustained()` in the client extends each note to the pedal-up that
-  covers its release. A pedal move never opens or extends a sitting — a foot resting on
+- **Sustain pedal captured.** CC64 was parsed and thrown away. Now the raw value stream
+  (onset + value) is stored, the ingest batch takes an optional `pedals` list, and
+  `sustained()` in the client extends each note to the pedal-up that covers its release. A pedal move never opens or extends a sitting — a foot resting on
   the pedal is not practice — so a move with no music around it is dropped and counted
   rather than invented into one, and a pedal-only batch is accepted so a client's queued
   flush cannot block the notes behind it.
@@ -1048,8 +1055,8 @@ is mostly *finishing* what capture already produces.
 
 Two slices, split the way Phase 13 was, because they are independently shippable and
 independently verifiable. The organising finding is the same in both: **the app already
-records facts it never reads.** `pedal_events` is written on every CC64 move and read by
-exactly one caller — `sitting_notes`, for playback. `mean_velocity` and
+records facts it never reads.** The pedal stream is written on every CC64 move and read by
+exactly two callers — `sitting_notes`, for playback, and `_refresh_metrics`. `mean_velocity` and
 `velocity_stddev` are computed per segment, persisted, served in `SegmentMetricsOut`, and
 rendered nowhere. `identification_outcomes` keeps four columns
 (`guessed_piece_id`, `resolved_piece_id`, `accepted`, `score`) that no query reads.
@@ -1136,7 +1143,7 @@ intervals are a projection, never a second stored truth.
 
 - `pedal_changes`, `pedal_down_ratio`, and **pedal blur**.
 - **"No pedal recorded" is a third state, not a zero.** `legacy.py` imports `note_events`
-  and never reads a pedal table, so imported sittings have no `pedal_events` at all. A
+  and never reads a pedal table, so imported sittings have no pedal stream at all. A
   pedal figure computed over them would report a fault that was never observed. The metric
   therefore distinguishes *not recorded* from *recorded and none used*, the same
   distinction `media.state` already makes between *pending* and *missing*.
@@ -1208,7 +1215,7 @@ explicitly-stated proxy for hands, because the piano sends both hands on one cha
 
 - Pedal intervals derived from the raw stream match the raw moves for a fixture, and a
   pedal-down with no matching up closes at the end of the sitting rather than being lost.
-- A sitting with no `pedal_events` reports *not recorded*; it never reports zero changes.
+- A sitting with no pedal stream reports *not recorded*; it never reports zero changes.
 - Blur is computed for the `observed` basis and the basis is persisted. Re-running the
   derivation with a different basis leaves existing rows' basis untouched.
 - `mean_velocity`, `velocity_stddev` and `median_velocity` are rendered, and nothing
@@ -1314,7 +1321,7 @@ The suspicion was right, and the honest answer has two halves.
 **It is captured continuously.** All 128 CC values are present in the log, spread across the
 range — this is a genuine continuous pedal streaming its position, not a switch with
 occasional intermediate values. Nothing collapses it on the way to the database, and
-`pedal_events.value` is stored raw.
+the value in each record is stored raw.
 
 **Then every consumer collapses it at `value >= 64`,** which is the MIDI specification's
 own rule for a switch controller: 0–63 is off, 64–127 is on. That is the correct
@@ -1500,8 +1507,8 @@ be overloaded to carry this one.
 
 **Implementation plan:** [`PLAN-PHASE20B.md`](./PLAN-PHASE20B.md). Two things it settles that this
 section left open: `midi.ts` drops every controller but CC64, so the sostenuto needs a second,
-**read-only** stream rather than a widened pedal stream (`pedal_events` has no controller column and
-is read as CC64); and routing is by **hash** (`#/repertoire/piece/12`), which needs no server change
+**read-only** stream rather than a widened pedal stream (the sustain stream has no controller column
+and is read as CC64); and routing is by **hash** (`#/repertoire/piece/12`), which needs no server change
 and behaves the same on `localhost:8000` and `piano.local:8000`.
 
 **Landed after 20e, so one mapping the plan left open had to be settled here.** The plan was written
@@ -1890,8 +1897,8 @@ blurs… a little flag saying 'you should review near here'." A blur is a place 
 flag is a place a person *asserted*. It travels as a raw mark event — its own table
 (`sitting_marks`), an optional `EventBatch.marks` field, `review_marks_ms` on the sitting detail — so
 the **server** assigns the sitting (a client cannot know it) and a retried batch stays idempotent,
-exactly as `pedal_events` works. It is deliberately *not* a JSON column on `sittings` (a retried
-press could land in the wrong sitting) and *not* a widened `pedal_events` (every CC64 reader would
+exactly as the pedal stream works. It is deliberately *not* a JSON column on `sittings` (a retried
+press could land in the wrong sitting) and *not* a widened pedal stream (every CC64 reader would
 have to learn to filter, and `midi.ts` warns that routing CC66 down the sustain path records the
 middle pedal as sustain and corrupts `pedal_basis` and `pedal_blur`).
 

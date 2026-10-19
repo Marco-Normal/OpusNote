@@ -415,6 +415,61 @@ touched.
 *cheaply* whether anything changed. A periodic reader with neither property is a load amplifier: it
 cannot degrade gracefully, because the slower the server gets the more work it queues behind itself.
 
+### 1.12 A continuous stream stored one row per event
+
+**Symptom.** Two thirds of the database was a table nothing renders. On the rebuild fixture
+(512,010 notes, 38 sittings) the practice log's `pedal_events` held **1,151,770 rows for 1,240
+minutes of pedalling**, and `dbstat` attributed **59.1 MB of the 89.1 MB file** to it: 19.7 MB of
+table and two indexes totalling 39.4 MB. **51.3 bytes to store a 6-byte fact**, most of it index
+maintained so a query could find one move by its millisecond.
+
+**Why it is that big.** A continuous pedal is not a switch. Measured over the owner's own log: **15.5
+messages a second, mean interval 64.6 ms**, and **72.2% of messages arrive within 25 ms of the one
+before** — a foot resting on a pedal streams its position. Only 41.9% of consecutive values differ by
+1, and a half-pedal exercises 119,771 real travels of 8 counts or more.
+
+**The obvious fix was measured and rejected.** Collapsing moves closer than 2 counts within 25 ms
+(saved 0/64/127 always) removes **20.0% of the rows and 13% of the file** — 89.1 → 77.4 MB — and
+moves `pedal_partial_ratio` by at most 0.11 points. A 13% saving for the only lossy change on the
+list, against a database of 1.15 million moves, is not worth it: *88% of the size is the row, not the
+movement.*
+
+**The fix that was taken.** The moves are packed. `pedal_stream.py` owns a 6-byte record
+(`onset_ms` as a 32-bit offset from the first move in the chunk, the value, and the channel or
+`-1`), and the table stores those records in chunks of at most 512 with their first and last
+millisecond. Two properties make it safe rather than clever:
+
+* **A chunk never splits one onset.** The merge finds duplicates by looking only at chunks whose
+  time range the batch touches, so a move straddling a boundary could sit in a chunk it never reads.
+* **The uniqueness guarantee moved into the writer.** `UNIQUE(sitting_id, onset_ms, value)` was the
+  old table's answer to a retried batch; now `insert_moves` dedupes by that key and answers with how
+  many moves were *new*, which is what makes a repeated ingest store nothing (`test_pedal_stream.py`).
+
+Measured on the same fixture, converted by `db.init_db` and then `VACUUM`ed:
+
+| | per-row `pedal_events` | chunked `pedal_stream` |
+| --- | ---: | ---: |
+| file | 89.1 MB | **37.1 MB** (−58%) |
+| pedal bytes | 59.1 MB | 9.3 MB (+0.03 index) |
+| the largest sitting's 67,181 moves, read | 40.44 ms | **6.17 ms** |
+| the moves, after conversion | 1,151,770 | 1,151,770, digest identical |
+| conversion, on 89 MB | — | 1.9 s including the vacuum |
+
+**The claim that had to be checked, not assumed.** The stored `segment_metrics` are a *cache* written
+by whichever code version last materialised a sitting, so comparing them after the conversion proves
+nothing. The check recomputes them twice — `_refresh_metrics` with the reader pointed at
+`pedal_events`, then at the stream — and requires every column of every segment to match: **58
+segment rows, 7 columns, identical.** The stored cache itself differed in 4 rows (a sitting never
+materialised with pedal data) and filled `pedal_partial_ratio` on all 58, which the column's arrival
+in schema 6 had left NULL.
+
+**What this deliberately does not claim.** The stream is smaller per move, not free: a chunk that is
+appended to is decoded and re-encoded, so a batch that lands inside the tail costs O(512) instead of
+one INSERT. Paying that on the write side is the point — the old table paid it on every read and on
+every byte of the file. The vacuum is the other cost: dropping a table that was two thirds of the
+file leaves that much free space inside it, and only `VACUUM` returns it, which needs disk equal to
+the file's size. It runs once, from `init_db`, only when the conversion actually ran.
+
 ## 2. The rules
 
 **R1 — Cost is a function of the request, not of the library.** If a click's cost grows with the
@@ -477,6 +532,14 @@ slowness makes the client ask for more, and the poll never catches up while the 
 overlapping run, and compare the few facts the cheap read already returned before paying for the
 expensive one.
 
+**R13 — A raw event stream is packed, not a row per event (1.12).** A continuous controller writes
+about fifteen values a second; 51 bytes of row and index to store a 6-byte fact makes a table of the
+log rather than a log of the playing. Store fixed-width records in chunks and keep the stream's
+ordering rules in the module that writes them — and move the uniqueness guarantee the schema used to
+carry into that writer, asserted, because a `UNIQUE` index is exactly what you give up. Never reach
+for the lossy version first: deadbanding the stream saved 13% where packing it saved 58%, and only
+one of the two can drop a move.
+
 ---
 
 ## 3. The map — what must stay cheap
@@ -498,6 +561,8 @@ If you touch one of these, you own its complexity.
 | `store.segment_identification` | what the caller hands it; accept `examples`, `signatures`, `notes` rather than re-deriving | — |
 | `store.candidates_for_sitting` | the sitting's own segments, and its notes **once** | the note-read guard above |
 | `store._refresh_metrics` | the sitting's notes and its pedal stream, once each | metric equivalence in `tests/test_practice_metrics.py` |
+| `pedal_stream.moves` | the sitting's chunks, and nothing else — a concatenation, never a sort (1.12) | `tests/test_pedal_stream.py` |
+| `pedal_stream.insert_moves` | the batch, the chunks it overlaps, and one chunk's worth of re-encoding | `tests/test_pedal_stream.py`, `falsifications/let_a_retried_pedal_batch_double.sh`, `falsifications/search_only_the_tail_pedal_chunk.sh` |
 | `store._labelled_rows` | the labelled set — **uncapped on purpose** | `test_every_label_is_a_reference_however_lopsided_the_library` |
 | `db.connect` | per request, and per COMMIT (R7) | `test_a_commit_does_not_fsync_the_write_ahead_log` |
 | `backup.iter_export_json` | one row and one 64 KiB buffer — never the document (R11) | `test_the_export_is_written_in_bounded_pieces`, `test_the_nightly_backup_does_not_build_the_whole_document`, `test_the_download_route_does_not_build_the_whole_document` |

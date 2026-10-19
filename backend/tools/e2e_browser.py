@@ -2306,7 +2306,7 @@ def clear_practice() -> None:
         # the accuracy counters depend on how many times the suite has been run.
         for table in (
             "identification_outcomes",
-            "pedal_events",
+            "pedal_stream",
             "sitting_marks",
             "segment_metrics",
             "segments",
@@ -2335,7 +2335,7 @@ DATA_TABLES = (
     "media",
     "sittings",
     "note_events",
-    "pedal_events",
+    "pedal_stream",
     "sitting_marks",
     "segments",
     "segment_metrics",

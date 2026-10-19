@@ -64,6 +64,7 @@ wants and the `README`'s directory layout does not give — the directory is not
 | Grouping attempts into passages | [`backend/app/practice/passages.py`](backend/app/practice/passages.py) |
 | Recognising which piece was played | [`backend/app/practice/similarity.py`](backend/app/practice/similarity.py) and [`shingles.py`](backend/app/practice/shingles.py) for the content match; the writing of a guess lives in [`store.py`](backend/app/practice/store.py) (`autotag_sitting`) |
 | Per-segment measurements, the pedal, blur | [`backend/app/practice/metrics.py`](backend/app/practice/metrics.py), [`backend/app/practice/pedal.py`](backend/app/practice/pedal.py) |
+| How a pedal move is stored, and the stream's chunk invariant | [`backend/app/practice/pedal_stream.py`](backend/app/practice/pedal_stream.py) — read its header before touching `pedal_stream` |
 | The library: pieces, journal, passages, media, takes | [`backend/app/repertoire/`](backend/app/repertoire) |
 | Workouts | [`backend/app/workout/`](backend/app/workout) |
 | The repertoire → sight-reading seam | [`backend/app/bridge.py`](backend/app/bridge.py) — the only module that knows both domains |

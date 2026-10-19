@@ -30,7 +30,7 @@ from .workout.schema import WORKOUT_SCHEMA, migrate as migrate_workouts
 #: *end* of :func:`init_db`, so a database can say which version of the app made it and
 #: an older build can refuse it instead of reading columns it does not understand. Bump
 #: this whenever a migration changes the shape an older reader could not honour.
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -211,13 +211,21 @@ def init_db(db_path: Path | None = None) -> None:
         conn.executescript(SCHEMA)
         migrate_repertoire(conn)
         conn.executescript(REPERTOIRE_SCHEMA)
-        migrate_practice(conn)
+        practice_work = migrate_practice(conn)
         conn.executescript(PRACTICE_SCHEMA)
         migrate_workouts(conn)
         conn.executescript(WORKOUT_SCHEMA)
         # Last, and as text: SQLite rejects a bound parameter in a PRAGMA, and the version
         # must describe a schema that finished building rather than one about to.
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        # The pedal conversion drops a table that was two thirds of the file. SQLite keeps
+        # those pages on a freelist — later writes reuse them, but the file never shrinks on
+        # its own, so the database would keep the old pedal table's footprint until someone
+        # ran `VACUUM` by hand. Done here, once, after the transaction that dropped the table
+        # has committed (VACUUM cannot run inside one). It needs free space equal to the
+        # file's size, which is why it is not run on every start.
+        if any(step.startswith("pedal_events -> pedal_stream") for step in practice_work):
+            conn.execute("VACUUM")
     finally:
         conn.close()
     # The path may now hold a different database than it did (a wipe before a test, a

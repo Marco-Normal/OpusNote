@@ -2,8 +2,8 @@
 
 Pure functions over a note list and the stored CC64 stream, in the same shape and
 with the same guarantee as :mod:`app.practice.metrics`: everything here is
-recomputable from ``note_events`` and ``pedal_events``, so a stored value is a cache
-and never the truth.
+recomputable from ``note_events`` and the ``pedal_stream`` moves, so a stored value is a
+cache and never the truth.
 
 The raw CC64 stream stays raw in the database. Intervals are a projection of it, and
 one that has to be closed at the end of a sitting, because a pedal-up that never

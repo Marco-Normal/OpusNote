@@ -33,6 +33,7 @@ from ..config import settings
 from . import capture_status
 from . import kinds
 from . import passages
+from . import pedal_stream
 from . import schema as practice_schema
 from . import segment
 from . import shingles
@@ -246,24 +247,23 @@ def ingest(batch: EventBatch, db_path: Path | None = None) -> IngestResult:
         # Nothing here extends a sitting. A pedal is not practice — a foot resting
         # on it for an hour would otherwise hold a sitting open — so a move with
         # no sitting around it is dropped and counted, not invented into one.
+        #
+        # Collected per sitting and written once: the stream's unit is a chunk, so
+        # `insert_moves` merges the batch into one chunk rather than one row at a time.
+        pending: dict[int, list[pedal_stream.Move]] = {}
         for pedal in pedals:
             row = _find_sitting(conn, pedal.epoch_ms, gap_ms)
             if row is None:
                 pedals_ignored += 1
                 continue
             pedal_sitting = int(row["id"])
-            cursor = conn.execute(
-                "INSERT OR IGNORE INTO pedal_events"
-                " (sitting_id, onset_ms, value, channel) VALUES (?1, ?2, ?3, ?4)",
-                (
-                    pedal_sitting,
-                    pedal.epoch_ms - int(row["started_ms"]),
-                    pedal.value,
-                    pedal.channel,
-                ),
+            pending.setdefault(pedal_sitting, []).append(
+                (pedal.epoch_ms - int(row["started_ms"]), pedal.value, pedal.channel)
             )
-            if cursor.rowcount:
-                pedals_accepted += 1
+        for pedal_sitting, moves in pending.items():
+            added = pedal_stream.insert_moves(conn, pedal_sitting, moves)
+            pedals_accepted += added
+            if added:
                 sitting_id = pedal_sitting
 
         # Marks last, for the same reason the pedals are second: a batch that opens a sitting must
@@ -475,16 +475,12 @@ def _refresh_metrics(conn: sqlite3.Connection, sitting_id: int) -> None:
     # notes inside it. Re-reading that prefix per segment read the same rows once for every
     # segment of the sitting — on a long pedalled sitting, one pass over the stream against
     # one per boundary.
-    pedal_rows = conn.execute(
-        "SELECT onset_ms, value FROM pedal_events WHERE sitting_id = ? ORDER BY onset_ms",
-        (sitting_id,),
-    ).fetchall()
-    pedal_onsets = [int(row["onset_ms"]) for row in pedal_rows]
-    pedal_moves_all = [(int(row["onset_ms"]), int(row["value"])) for row in pedal_rows]
-    # Any row at all is the same question as "has this sitting any pedal rows" — and that is
-    # not the same as whether the pedal was pressed: imported history has none, and reporting
-    # a zero there would be reporting a fault that was never observed.
-    pedals_recorded = bool(pedal_rows)
+    pedal_moves_all = pedal_stream.moves(conn, sitting_id)
+    pedal_onsets = [onset for onset, _value, _channel in pedal_moves_all]
+    # Any move at all is the same question as "has this sitting any pedal history" — and that
+    # is not the same as whether the pedal was pressed: imported history has none, and
+    # reporting a zero there would be reporting a fault that was never observed.
+    pedals_recorded = bool(pedal_moves_all)
     for segment in segments:
         rows = conn.execute(
             "SELECT onset_ms, duration_ms, pitch, velocity, channel FROM note_events"
@@ -509,7 +505,12 @@ def _refresh_metrics(conn: sqlite3.Connection, sitting_id: int) -> None:
         )
         # Clipped to the segment, out of the stream read above: a stretch that began before
         # the boundary is still holding notes inside it.
-        pedal_moves = pedal_moves_all[: bisect_right(pedal_onsets, int(segment["end_ms"]))]
+        pedal_moves = [
+            (onset, value)
+            for onset, value, _channel in pedal_moves_all[
+                : bisect_right(pedal_onsets, int(segment["end_ms"]))
+            ]
+        ]
         pedalling = segment_pedal(notes, pedal_moves, recorded=pedals_recorded)
         median = median_velocity(notes)
         spread = velocity_range(notes)
@@ -1086,16 +1087,15 @@ def sitting_notes(sitting_id: int, db_path: Path | None = None) -> SittingNotes:
             " WHERE sitting_id = ? ORDER BY onset_ms, pitch",
             (sitting_id,),
         ).fetchall()
-        pedals = conn.execute(
-            "SELECT onset_ms, value, channel FROM pedal_events"
-            " WHERE sitting_id = ? ORDER BY onset_ms",
-            (sitting_id,),
-        ).fetchall()
+        pedals = [
+            LoggedPedal(onset_ms=onset, value=value, channel=channel)
+            for onset, value, channel in pedal_stream.moves(conn, sitting_id)
+        ]
         return SittingNotes(
             sitting_id=int(sitting["id"]),
             started_ms=int(sitting["started_ms"]),
             notes=[LoggedNote(**dict(row)) for row in rows],
-            pedals=[LoggedPedal(**dict(row)) for row in pedals],
+            pedals=pedals,
         )
     finally:
         conn.close()

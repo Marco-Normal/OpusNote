@@ -12,10 +12,16 @@ adds a table, and a backup that quietly omits a table is worse than no backup.
 That also means an unknown table in an incoming document is refused rather than
 skipped: it means the file came from a different version, and half-importing it
 would be the same silent loss from the other direction.
+
+A binary column travels base64-encoded, because JSON has no bytes: the pedal stream is
+6 bytes a move in the database and 8 characters a move in the document, where the row per
+move it replaced cost 68 (`PERFORMANCE.md` §1.13). A version-1 document, written before that
+stream existed, still imports — its ``pedal_events`` rows are re-encoded on the way in.
 """
 
 from __future__ import annotations
 
+import base64
 import json
 import sqlite3
 from datetime import datetime, timezone
@@ -28,12 +34,18 @@ from pydantic import BaseModel, Field
 
 from . import db
 from .hostinfo import require_loopback
+from .practice import pedal_stream
 from .store import open_connection
 
 #: Bumped whenever the document's shape changes in a way an older reader could
-#: not honour. Refusing a newer version is the point of having it.
-BACKUP_VERSION = 1
+#: not honour. Refusing a newer version is the point of having it. Version 2 replaced the
+#: per-move ``pedal_events`` rows with the base64 ``pedal_stream`` chunks; version 1 still
+#: reads, because the owner's own history is written in it.
+BACKUP_VERSION = 2
 FORMAT = "piano-ecosystem-backup"
+
+#: Columns that are bytes in the database and therefore need encoding in the document.
+_BLOB_COLUMNS: dict[str, tuple[str, ...]] = {"pedal_stream": ("data",)}
 
 
 class BackupError(Exception):
@@ -85,7 +97,9 @@ def export_document(conn: sqlite3.Connection, *, now: datetime | None = None) ->
     tables: dict[str, list[dict[str, Any]]] = {}
     for name in table_names(conn):
         # Table names come from sqlite_master, never from input.
-        tables[name] = [dict(row) for row in conn.execute(f"SELECT * FROM {name}")]
+        tables[name] = [
+            _document_row(name, row) for row in conn.execute(f"SELECT * FROM {name}")
+        ]
     return {
         **_header(now),
         "tables": tables,
@@ -114,7 +128,9 @@ def _iter_export_parts(
         yield f"  {json.dumps(name)}: ["
         written = 0
         for row in conn.execute(f"SELECT * FROM {name}"):
-            yield ("" if written == 0 else ",") + "\n   " + json.dumps(dict(row))
+            yield ("" if written == 0 else ",") + "\n   " + json.dumps(
+                _document_row(name, dict(row))
+            )
             written += 1
         counts[name] = written
         yield "\n  ]"
@@ -168,6 +184,7 @@ def _validate(document: Mapping[str, Any], known: set[str]) -> dict[str, list[di
     tables = document.get("tables")
     if not isinstance(tables, Mapping) or not tables:
         raise BackupError("the document has no tables")
+    tables = _absorb_retired_tables(tables, known)
     unknown = sorted(set(tables) - known)
     if unknown:
         raise BackupError(
@@ -180,10 +197,85 @@ def _validate(document: Mapping[str, Any], known: set[str]) -> dict[str, list[di
     return {name: [dict(row) for row in rows] for name, rows in tables.items()}
 
 
+def _document_row(table: str, row: Mapping[str, Any]) -> dict[str, Any]:
+    """A row as the document holds it: bytes become base64 text."""
+    columns = _BLOB_COLUMNS.get(table)
+    if not columns:
+        return dict(row)
+    out = dict(row)
+    for column in columns:
+        out[column] = base64.b64encode(out[column]).decode("ascii")
+    return out
+
+
+def _absorb_retired_tables(
+    tables: Mapping[str, Any], known: set[str]
+) -> Mapping[str, Any]:
+    """Rewrite a version-1 document's pedal rows as the stream they became.
+
+    The old document held one object per pedal move; the stream holds chunks. The
+    translation is exact — the same moves, grouped and in order — so an import of the
+    owner's own history restores the same performance, not a filtered version of it.
+    """
+    if "pedal_events" not in tables or "pedal_events" in known:
+        return tables
+    if "pedal_stream" not in known:
+        raise BackupError(
+            "the document carries pedal rows and this database has no pedal stream table"
+        )
+    rows = tables["pedal_events"]
+    grouped: dict[int, list[tuple[int, int, int | None]]] = {}
+    for row in rows:
+        grouped.setdefault(int(row["sitting_id"]), []).append(
+            (int(row["onset_ms"]), int(row["value"]), row.get("channel"))
+        )
+    written: list[dict[str, Any]] = []
+    for sitting_id, moves in grouped.items():
+        for chunk_no, chunk in enumerate(pedal_stream.chunks(pedal_stream.ordered(moves))):
+            written.append(
+                {
+                    "sitting_id": sitting_id,
+                    "chunk_no": chunk_no,
+                    "n": len(chunk),
+                    "first_ms": chunk[0][0],
+                    "last_ms": chunk[-1][0],
+                    "data": base64.b64encode(pedal_stream.encode(chunk)).decode("ascii"),
+                }
+            )
+    rest = {name: value for name, value in tables.items() if name != "pedal_events"}
+    rest["pedal_stream"] = written
+    return rest
+
+
+def _merge_pedal_stream(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> int:
+    """Merge a document's pedal chunks as *moves*, not as chunks.
+
+    A chunk number is unique only within a sitting and the chunk layout is an
+    implementation detail, so merging chunks by primary key would either collide and be
+    ignored or duplicate the same moves under new numbers. Merging the moves is what the
+    old row-per-move table did with `INSERT OR IGNORE`: a document imported twice adds
+    nothing the second time, and a document describing part of a sitting slots in beside
+    what is already stored.
+    """
+    grouped: dict[int, list[pedal_stream.Move]] = {}
+    for row in rows:
+        blob = row["data"]
+        if isinstance(blob, str):
+            blob = base64.b64decode(blob, validate=True)
+        grouped.setdefault(int(row["sitting_id"]), []).extend(pedal_stream.decode(blob))
+    return sum(
+        pedal_stream.insert_moves(conn, sitting_id, moves)
+        for sitting_id, moves in grouped.items()
+    )
+
+
 def _insert(conn: sqlite3.Connection, table: str, rows: list[dict], *, merge: bool) -> int:
     if not rows:
         return 0
     columns = [row[1] for row in conn.execute(f"PRAGMA table_info({table})")]
+    blob_columns = _BLOB_COLUMNS.get(table, ())
+    if table == "pedal_stream" and merge:
+        return _merge_pedal_stream(conn, rows)
     written = 0
     for row in rows:
         unknown = sorted(set(row) - set(columns))
@@ -195,11 +287,17 @@ def _insert(conn: sqlite3.Connection, table: str, rows: list[dict], *, merge: bo
         names = [name for name in columns if name in row]
         if not names:
             continue
+        values = []
+        for name in names:
+            value = row[name]
+            if name in blob_columns and isinstance(value, str):
+                value = base64.b64decode(value, validate=True)
+            values.append(value)
         placeholders = ", ".join("?" for _ in names)
         verb = "INSERT OR IGNORE" if merge else "INSERT"
         cursor = conn.execute(
             f"{verb} INTO {table} ({', '.join(names)}) VALUES ({placeholders})",
-            tuple(row[name] for name in names),
+            tuple(values),
         )
         written += max(cursor.rowcount, 0)
     return written

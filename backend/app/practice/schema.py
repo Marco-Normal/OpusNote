@@ -1,6 +1,6 @@
 """Practice domain schema.
 
-Owns six tables and one column-set, executed by the single initialiser in
+Owns the practice tables and one column-set, executed by the single initialiser in
 :mod:`app.db`. Times are epoch milliseconds — authoritative — alongside
 human-readable UTC text, because re-deriving a session start from a
 second-precision timestamp would round every onset and quietly destroy every
@@ -12,6 +12,28 @@ first insert.
 """
 
 from __future__ import annotations
+
+from . import pedal_stream
+
+PEDAL_STREAM_DDL = """
+-- Sustain-pedal moves, raw CC64, as a chunked binary stream rather than a row per
+-- move. A continuous controller sends ~15 values a second while a foot rests on it, and
+-- one row per value cost 51 bytes — two thirds of the whole file, most of it in indexes
+-- asked to find one move by its millisecond. The codec, the chunk invariant and the
+-- reasoning are `pedal_stream.py`'s; this table is its storage.
+--
+-- Nothing here is recomputable from the notes: intervals would need an up that may never
+-- arrive (a device unplugged mid-passage), which is why the raw values are what is kept.
+CREATE TABLE IF NOT EXISTS pedal_stream (
+    sitting_id INTEGER NOT NULL REFERENCES sittings(id) ON DELETE CASCADE,
+    chunk_no   INTEGER NOT NULL,
+    n          INTEGER NOT NULL,         -- moves in this chunk
+    first_ms   INTEGER NOT NULL,         -- so a merge can find overlapping chunks
+    last_ms    INTEGER NOT NULL,         -- without decoding them
+    data       BLOB NOT NULL,            -- `pedal_stream.encode`, exactly n records
+    PRIMARY KEY (sitting_id, chunk_no)
+);
+"""
 
 PRACTICE_SCHEMA = """
 -- One continuous stretch at the piano, inferred from silence. Called a
@@ -57,26 +79,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_events_dedupe
     ON note_events(sitting_id, onset_ms, pitch);
 CREATE INDEX IF NOT EXISTS idx_events_sitting ON note_events(sitting_id, onset_ms);
 
--- Sustain-pedal moves, raw CC64. Stored as a stream of values rather than as
--- derived "pedal down from X to Y" intervals: intervals need an up that may
--- never arrive (a device unplugged mid-passage), and playback can close the last
--- one at the end of the sitting. Nothing here is recomputable from the notes.
-CREATE TABLE IF NOT EXISTS pedal_events (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    sitting_id   INTEGER NOT NULL REFERENCES sittings(id) ON DELETE CASCADE,
-    onset_ms     INTEGER NOT NULL,       -- ms since the sitting start
-    value        INTEGER NOT NULL,       -- the CC value; 64 and above is down
-    channel      INTEGER
-);
--- The same idempotence as note_events: a retried batch must not double a pedal
--- move, and two genuine moves at one millisecond with one value cannot happen.
-CREATE UNIQUE INDEX IF NOT EXISTS idx_pedals_dedupe
-    ON pedal_events(sitting_id, onset_ms, value);
-CREATE INDEX IF NOT EXISTS idx_pedals_sitting ON pedal_events(sitting_id, onset_ms);
-
+""" + PEDAL_STREAM_DDL + """
 -- Places the player asked to come back to, pressed on the sostenuto.
 --
--- Its own stream rather than a column on `pedal_events`: that table is CC64 by contract, and
+-- Its own stream rather than a column on `pedal_stream`: that stream is CC64 by contract, and
 -- routing CC66 into it would record the middle pedal as sustain and corrupt `pedal_blur` and
 -- `pedal_basis`. Raw like the pedal stream rather than derived, because nothing in the notes
 -- records that a person asked to come back — but *only* deliberate marks, so an unbound pedal
@@ -87,7 +93,7 @@ CREATE TABLE IF NOT EXISTS sitting_marks (
     onset_ms     INTEGER NOT NULL,       -- ms since the sitting start
     epoch_ms     INTEGER NOT NULL        -- what the piano's clock said, for debugging
 );
--- The same idempotence as note_events and pedal_events: a retried batch must not double a mark,
+-- The same idempotence as note_events and pedal_stream: a retried batch must not double a mark,
 -- and two deliberate marks in one millisecond are not physically playable.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_marks_dedupe ON sitting_marks(sitting_id, onset_ms);
 CREATE INDEX IF NOT EXISTS idx_marks_sitting ON sitting_marks(sitting_id, onset_ms);
@@ -295,8 +301,60 @@ def migrate(conn) -> list[str]:
         if column not in existing:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
             applied.append(f"{table}.{column}")
+    applied.extend(_convert_pedal_events(conn))
     applied.extend(_detach_outcomes_from_segments(conn))
     return applied
+
+
+def _convert_pedal_events(conn) -> list[str]:
+    """Move a row-per-move pedal stream into `pedal_stream`, then drop the old table.
+
+    This is the one migration that rewrites data rather than adding a column: 1,151,770
+    rows across the owner's sittings became 6-byte records. It is safe to do here because
+    the two forms are the same facts — the counts are compared before the old table is
+    dropped, and a mismatch rolls the whole conversion back rather than halving a stream.
+
+    The new table is created here rather than left to `PRACTICE_SCHEMA`, which runs after
+    the migrations. Both are `IF NOT EXISTS`, and this script is the one that must run
+    against a database that predates the table.
+
+    Idempotent by transaction: the insert and the drop commit together, so a database is
+    never left with both. A run killed mid-way rolls back to rows only.
+    """
+    if not list(conn.execute("PRAGMA table_info(pedal_events)")):
+        return []
+    conn.executescript(PEDAL_STREAM_DDL)
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        rows = conn.execute(
+            "SELECT sitting_id, onset_ms, value, channel FROM pedal_events"
+            " ORDER BY sitting_id, onset_ms"
+        ).fetchall()
+        # Nothing can have written the new table yet — the code that writes it is the code
+        # that just arrived — so the only thing a non-empty table could be is a partial
+        # conversion that somehow escaped its transaction. Clearing it makes the step
+        # repeatable instead of doubling the stream.
+        conn.execute("DELETE FROM pedal_stream")
+        grouped: dict[int, list[pedal_stream.Move]] = {}
+        for row in rows:
+            grouped.setdefault(int(row[0]), []).append(
+                (int(row[1]), int(row[2]), row[3])
+            )
+        stored = sum(
+            pedal_stream.insert_moves(conn, sitting_id, moves)
+            for sitting_id, moves in grouped.items()
+        )
+        if stored != len(rows):
+            raise RuntimeError(
+                f"pedal conversion stored {stored} of {len(rows)} moves; refusing to drop "
+                "the rows it read them from"
+            )
+        conn.execute("DROP TABLE pedal_events")
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    return [f"pedal_events -> pedal_stream ({len(rows)} moves)"]
 
 
 def _detach_outcomes_from_segments(conn) -> list[str]:

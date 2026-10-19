@@ -52,7 +52,7 @@ EXPECTED_COLUMNS: dict[str, set[str]] = {
     "note_events": {
         "id", "sitting_id", "onset_ms", "duration_ms", "pitch", "velocity", "channel",
     },
-    "pedal_events": {"id", "sitting_id", "onset_ms", "value", "channel"},
+    "pedal_stream": {"sitting_id", "chunk_no", "n", "first_ms", "last_ms", "data"},
     "performances": {
         "id", "user_id", "exercise_id", "score", "pitch_accuracy", "rhythm_accuracy",
         "continuity_accuracy", "mode", "tempo_bpm", "latency_ms", "played_notes_json",
@@ -112,7 +112,6 @@ EXPECTED_INDEXES: dict[str, set[str]] = {
     "identification_outcomes": {"idx_outcomes_segment"},
     "media": {"idx_media_legacy", "idx_media_piece", "idx_media_segment", "idx_media_source"},
     "note_events": {"idx_events_dedupe", "idx_events_sitting"},
-    "pedal_events": {"idx_pedals_dedupe", "idx_pedals_sitting"},
     "performances": {"idx_performances_user_time"},
     "piece_journal": {
         "idx_journal_date", "idx_journal_legacy", "idx_journal_piece",
@@ -263,6 +262,7 @@ def test_init_db_upgrades_the_fixture_without_losing_a_row() -> None:
         conn.close()
     assert before["identification_outcomes"] == 1
     assert before["segment_metrics"] == 1
+    assert before["pedal_events"] == 1
 
     db.init_db(path)
 
@@ -272,8 +272,19 @@ def test_init_db_upgrades_the_fixture_without_losing_a_row() -> None:
         # Compared over the fixture's own tables: a phase that *adds* a table (20d's
         # `piece_passages`) legitimately introduces a new key, and that is not a lost row.
         # Every table the fixture had must still hold exactly what it held.
-        assert {table: after[table] for table in before} == before, (
-            "the upgrade kept every table's rows"
+        #
+        # `pedal_events` is the one table the upgrade replaces rather than keeps: its rows
+        # became a chunked stream, so the row count is compared as the *moves* the stream
+        # now holds. The equality below is over the tables that survive under their own name.
+        assert "pedal_events" not in after, "the row-per-move table is gone"
+        assert after["pedal_stream"] >= 1
+        assert (
+            sum(row["n"] for row in conn.execute("SELECT n FROM pedal_stream"))
+            == before["pedal_events"]
+        ), "and its moves are the stream's"
+        kept = {table: count for table, count in before.items() if table != "pedal_events"}
+        assert {table: after[table] for table in kept} == kept, (
+            "the upgrade kept every other table's rows"
         )
         after_outcome = dict(conn.execute("SELECT * FROM identification_outcomes").fetchone())
         assert after_outcome["segment_id"] == before_outcome["segment_id"] == 1, (
