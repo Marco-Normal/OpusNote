@@ -3309,6 +3309,7 @@ def scenario_practice_log(browser) -> None:
              };
              return {
                list: box(document.querySelector('[data-sittings]')),
+               card: box(document.querySelector('[data-sittings]').closest('section.card')),
                undo: box(document.querySelector('[data-undo]')),
                timeline: box(document.querySelector('section.timeline')),
              };
@@ -3320,12 +3321,42 @@ def scenario_practice_log(browser) -> None:
         f"(timeline left {round(geometry['timeline']['left'])}, "
         f"list right {round(geometry['list']['right'])})",
     )
+    # The list is capped at 22rem while the detail column is far taller, so a grid item that
+    # stretches (the default) draws the sittings card as a bordered void hundreds of pixels
+    # below the last sitting. The card must stop at its own content.
+    check(
+        geometry["card"]["bottom"] - geometry["list"]["bottom"] <= 28,
+        "the sittings card stops at its own list instead of stretching to the detail "
+        f"column's height (card bottom {round(geometry['card']['bottom'])}, "
+        f"list bottom {round(geometry['list']['bottom'])})",
+    )
     check(
         abs(geometry["undo"]["left"] - geometry["timeline"]["left"]) <= 1
         and geometry["undo"]["bottom"] <= geometry["timeline"]["top"],
         "and the undo offer sits above the card in that same column "
         f"(notice left {round(geometry['undo']['left'])}, "
         f"timeline left {round(geometry['timeline']['left'])})",
+    )
+
+    # The shell capped itself at 1080 px, so on a wide window (the reported case was 1764 px)
+    # roughly two fifths of the screen was margin. Measured as a *share of the window* rather
+    # than in pixels: the claim is about how much of the screen the app uses, and a pixel figure
+    # would pass on a small display while the defect persisted on the one it was reported from.
+    page.set_viewport_size({"width": 1760, "height": 1000})
+    page.wait_for_timeout(250)
+    share = page.evaluate(
+        """() => {
+             const main = document.querySelector('main[data-view]');
+             const shell = main.parentElement.getBoundingClientRect();
+             return { shell: shell.width, window: window.innerWidth };
+           }"""
+    )
+    page.set_viewport_size({"width": 1280, "height": 1000})
+    page.wait_for_timeout(250)
+    check(
+        share["shell"] >= share["window"] * 0.75,
+        "a wide window is mostly content, not margin "
+        f"(shell {round(share['shell'])} of {round(share['window'])} px)",
     )
 
     before = page.locator(".segment").count()

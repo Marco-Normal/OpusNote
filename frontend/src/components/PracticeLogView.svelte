@@ -917,8 +917,14 @@
     letter-spacing: -0.01em;
   }
 
+  /* `align-items: start` is load-bearing, not tidiness. A grid item stretches to the row height
+     by default, and the two columns have very different heights: the sitting list is capped at
+     22rem while the detail (transport, strip, segment list, roll) is far taller. Stretching drew
+     the sittings card as a box hundreds of pixels taller than its list — a large bordered void
+     under the last sitting, which reads as missing content. Each card now takes its own height. */
   .columns {
     display: grid;
+    align-items: start;
     grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
     gap: 0.75rem;
   }

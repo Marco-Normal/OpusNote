@@ -250,8 +250,14 @@
 {/if}
 
 <style>
+  /* 1440, not 1080. Most of what this app shows is density rather than prose — the Log's
+     dashboard tiles, the sitting timeline, the library's two columns — and at 1080 on a wide
+     window (a 1764 px viewport was the reported case) roughly two fifths of the screen was
+     margin. Prose keeps its measure through its own `ch` caps, so widening the shell does not
+     stretch a paragraph to the window. The one thing this must not do is change the score's
+     fit-to-viewport arithmetic, which budgets against the *viewport*, not this number. */
   .shell {
-    max-width: 1080px;
+    max-width: 1440px;
     margin: 0 auto;
     padding: 1rem 1.15rem 2.5rem;
     display: flex;

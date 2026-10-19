@@ -4652,3 +4652,41 @@ is owed to a backup or an importer. Two break scripts, each to be seen to catch 
 `forget_that_a_press_seeks_while_playing` (the component withholds that it is playing, reproducing
 the reported defect exactly) against the playback scenario, and
 `keep_the_old_range_after_crossing_out_of_it` (the segment hand-over removed) against `npm test`.
+
+## 2026-10-19 — sight-reading agent — the page stops wasting the window, and a card stops growing a void
+
+Scope: `frontend/src/App.svelte`, `frontend/src/components/PracticeLogView.svelte`,
+`backend/tools/e2e_browser.py`,
+`backend/tools/falsifications/{cap_the_shell_at_a_laptop_width,stretch_the_sittings_card}.sh`.
+
+Did: two layout complaints from the owner, both reproduced from a 1760 px window. The shell capped
+itself at **1080 px**, so 38% of that window was margin — the app is dense (dashboard tiles, the
+sitting timeline, the library's two columns), not a column of prose, so the cap was a laptop-era
+number that stopped earning its place. It is now **1440 px**. Prose keeps its measure through the
+`ch` caps it already had, so widening the shell does not stretch a paragraph to the window, and the
+score's fit-to-viewport budget measures the viewport rather than this number, so nothing in the
+engraving path changed.
+
+The second was a grid default. `.columns` laid the sitting list beside the detail, and a grid item
+**stretches to the row height**: the list is capped at 22rem while the detail (transport, ruler,
+segment list, roll) is far taller, so the sittings card was drawn as a bordered box hundreds of
+pixels below its last row. It reads as content that failed to load. `align-items: start` makes each
+card take its own height; the void was never markup, so the fix is one declaration with the reason
+written above it.
+
+Both claims are now geometry assertions in `scenario_practice_log`, next to the existing ones about
+which column the detail sits in. The card assertion compares its bottom with its list's bottom
+(28 px of padding slack) rather than with the timeline's, so it holds whatever the detail's height
+happens to be. The width assertion is a **share of the window** — `shell >= 0.75 * innerWidth` at
+1760 px, where the old cap scored 0.61 and the new one 0.82 — because a pixel figure would pass on a
+small display while the defect persisted on the one it was reported from.
+
+The card assertion sits where the undo notice has just appeared, which is when the detail column is
+at its tallest — the condition under which stretching is visible at all. Measured at 1760×1000: card
+bottom 544 against list bottom 531, with the detail column ending at 1034.
+
+Impact on the other side: client-only presentation. No route, field, table, tunable, schema or
+backup shape moved, and no behaviour changed, so `FEATURES.md` is untouched and `ENGINEERING.md`
+owns nothing about this cap (it was a bare number in `App.svelte` with no documented owner, which is
+how it outlived the window it was chosen for). Two break scripts, each seen to catch its own
+assertion: `cap_the_shell_at_a_laptop_width` and `stretch_the_sittings_card`.
