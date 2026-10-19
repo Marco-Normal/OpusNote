@@ -4800,3 +4800,46 @@ four break scripts fired — `split_a_pedal_chunk_at_an_onset`, `stop_deduplicat
 `search_only_the_tail_pedal_chunk`, `let_a_full_disk_stop_the_upgrade` — and the first draft of the
 full-disk script failed to fail because it cut the `try` along with the guard, which is why it was
 corrected before handover.
+
+## 2026-10-19 — sight-reading agent — correction: the pedal backup section is 9.2 MB, not 6.9
+
+Scope: the entry above; `docs/DEPLOYMENT.md` § *A backup is versioned*.
+
+Did: the entry above says the pedal stream exports as "~6.9 MB for the owner's moves". 6,910,620
+bytes is the *packed records*; base64 adds a third, so the document holds **9,214,160 bytes
+(9.2 MB)** for the fixture's 2,265 chunks. The comparison it drew against 78.1 MB was also an
+estimate (68 bytes a row) rather than a measurement: streaming a version-1 export of
+`/home/marco_normal/tmp/SighRTracker/.scratch/perf/piano.db` puts the `pedal_events` table at
+**97,582,512 bytes (97.6 MB)**. `DEPLOYMENT.md` now states both measured numbers.
+
+Impact on the other side: none. No code, schema or backup behaviour changes; the correction makes
+the documented saving larger (97.6 → 9.2 MB), so nothing built on the old figure becomes unsafe.
+
+Verified: the byte counts come from base64-encoding every `pedal_stream.data` row of
+`/home/marco_normal/tmp/SighRTracker/.scratch/perf/stream.db`, and from walking
+`backup._iter_export_parts` over the un-converted fixture and summing the `pedal_events` section;
+`check_docs.py` passes.
+
+## 2026-10-19 — sight-reading agent — the segment-step check was timing itself
+
+Scope: `backend/tools/e2e_browser.py` (the playback scenario's two segment-step checks),
+`backend/tools/falsifications/jump_a_second_instead_of_a_segment.sh` (new).
+
+Did: `./check.sh --full` failed on "a step forward lands on the next segment's start (71 s,
+expected 70)". The same scenario passed when run alone, so this was not the pedal change: the
+check reads `aria-valuenow`, which is `Math.round(position / 1000)`
+(`frontend/src/components/SegmentTimeline.svelte:707`), 500 ms *after* a click that deliberately
+starts the transport. At the boundary plus half a second, `Math.round` carries 70.5 to 71 — the
+check was measuring how quickly the run reached its own readout, not where the step landed.
+
+The landing point is already pinned to the millisecond by `segmentStep`'s unit test, so the
+browser check now allows the second the transport has already played (`second_start <= stepped <=
+second_start + 1`, and the same for the step back, which starts from zero and had the same race).
+It still fails a step that lands on the wrong segment, or that does not move: a break that adds one
+second instead of finding a boundary is caught by
+`falsifications/jump_a_second_instead_of_a_segment.sh`.
+
+Impact on the other side: test harness only. No app behaviour, route, table or tunable changed.
+
+Verified: `./check.sh --falsify jump_a_second_instead_of_a_segment` falsified it; `--full` green
+after the change (the run that had failed is recorded above).

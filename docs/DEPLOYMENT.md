@@ -199,10 +199,12 @@ that was off at that hour still backs up on the next boot. `SRT_BACKUP_DIR` says
 copying an export somewhere else: it lives on the same disk as the database it protects.
 
 **A backup is versioned, and the pedal stream changed what a move costs in one.** `BACKUP_VERSION`
-is 2: the sustain pedal travels as base64 chunks — about 6.9 MB for the owner's 1.15 million moves,
-against 78.1 MB as 68-byte rows, which was more than every note in the file put together. A
-version-1 document still imports: its `pedal_events` rows are re-encoded into the stream on the way
-in, and the local test fixture is exactly such a document, so that path is exercised on every run.
+is 2: the sustain pedal travels as base64 chunks — 6.9 MB of records, about 9.2 MB once base64
+encodes them, for the owner's 1.15 million moves, against **97.6 MB** that the same moves occupy as
+`pedal_events` rows in a version-1 export, which was more than every note in the file put together.
+A version-1 document still imports: its `pedal_events` rows are re-encoded into the stream on the
+way in, and the local test fixture is exactly such a document, so that path is exercised on every
+run.
 
 **That first start after the pedal change rewrote data, and it needs room.** The conversion
 replaces 1,151,770 rows with packed chunks inside one transaction, then runs a single `VACUUM`,

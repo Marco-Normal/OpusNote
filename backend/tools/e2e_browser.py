@@ -4441,11 +4441,16 @@ def scenario_playback(browser) -> None:
     page.wait_for_timeout(200)
     page.click("[data-step-segment-forward]")
     page.wait_for_timeout(500)
+    # The step starts the transport, so by the time the readout is read it has played some
+    # fraction of a second and `Math.round` can carry it to the next label. The landing
+    # point itself is `segmentStep`'s job, pinned to the millisecond in its unit test; here
+    # the claim is that the step moves to the *next segment*, not to the next second of it.
     second_start = round(long_segments[1]["start_ms"] / 1000)
     stepped = int(page.get_attribute("[data-strip]", "aria-valuenow"))
     check(
-        stepped == second_start,
-        f"a step forward lands on the next segment's start ({stepped} s, expected {second_start})",
+        second_start <= stepped <= second_start + 1,
+        f"a step forward lands on the next segment's start, give or take the second it has "
+        f"already played ({stepped} s, expected {second_start})",
     )
     check(
         page.locator('[data-playing="true"]').count() == 1,
@@ -4454,9 +4459,11 @@ def scenario_playback(browser) -> None:
     page.click("[data-step-segment-back]")
     page.wait_for_timeout(500)
     back = int(page.get_attribute("[data-strip]", "aria-valuenow"))
+    first_start = round(long_segments[0]["start_ms"] / 1000)
     check(
-        back == round(long_segments[0]["start_ms"] / 1000),
-        f"and stepping back from just inside a segment walks out of it rather than sticking ({back} s)",
+        first_start <= back <= first_start + 1,
+        f"and stepping back from just inside a segment walks out of it rather than sticking "
+        f"({back} s)",
     )
 
     # "From here": placing the playhead and then hunting for the right *▶ notes* was two steps
