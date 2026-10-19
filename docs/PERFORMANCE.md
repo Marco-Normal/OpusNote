@@ -458,10 +458,11 @@ Measured on the same fixture, converted by `db.init_db` and then `VACUUM`ed:
 **The claim that had to be checked, not assumed.** The stored `segment_metrics` are a *cache* written
 by whichever code version last materialised a sitting, so comparing them after the conversion proves
 nothing. The check recomputes them twice — `_refresh_metrics` with the reader pointed at
-`pedal_events`, then at the stream — and requires every column of every segment to match: **58
-segment rows, 7 columns, identical.** The stored cache itself differed in 4 rows (a sitting never
-materialised with pedal data) and filled `pedal_partial_ratio` on all 58, which the column's arrival
-in schema 6 had left NULL.
+`pedal_events`, then at the stream — for **every sitting in the fixture**, and requires every column
+of every segment to match: **732 segment rows across 38 sittings, 7 columns, identical.** The stored
+cache itself differed in 4 rows (a sitting never materialised with pedal data) and filled
+`pedal_partial_ratio` on all 712 rows it held, which the column's arrival in schema 6 had left NULL;
+the recompute also materialised the 20 segments the cache had never held.
 
 **What this deliberately does not claim.** The stream is smaller per move, not free: a chunk that is
 appended to is decoded and re-encoded, so a batch that lands inside the tail costs O(512) instead of
@@ -562,7 +563,7 @@ If you touch one of these, you own its complexity.
 | `store.candidates_for_sitting` | the sitting's own segments, and its notes **once** | the note-read guard above |
 | `store._refresh_metrics` | the sitting's notes and its pedal stream, once each | metric equivalence in `tests/test_practice_metrics.py` |
 | `pedal_stream.moves` | the sitting's chunks, and nothing else — a concatenation, never a sort (1.12) | `tests/test_pedal_stream.py` |
-| `pedal_stream.insert_moves` | the batch, the chunks it overlaps, and one chunk's worth of re-encoding | `tests/test_pedal_stream.py`, `falsifications/let_a_retried_pedal_batch_double.sh`, `falsifications/search_only_the_tail_pedal_chunk.sh` |
+| `pedal_stream.insert_moves` | the batch, the chunks it overlaps, and one chunk's worth of re-encoding | `tests/test_pedal_stream.py`, `falsifications/stop_deduplicating_the_pedal_stream.sh`, `falsifications/search_only_the_tail_pedal_chunk.sh` |
 | `store._labelled_rows` | the labelled set — **uncapped on purpose** | `test_every_label_is_a_reference_however_lopsided_the_library` |
 | `db.connect` | per request, and per COMMIT (R7) | `test_a_commit_does_not_fsync_the_write_ahead_log` |
 | `backup.iter_export_json` | one row and one 64 KiB buffer — never the document (R11) | `test_the_export_is_written_in_bounded_pieces`, `test_the_nightly_backup_does_not_build_the_whole_document`, `test_the_download_route_does_not_build_the_whole_document` |

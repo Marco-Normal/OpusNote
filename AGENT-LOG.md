@@ -4742,3 +4742,61 @@ split lands 16 → 17; one detail read; the moved boundary appears without a rel
 scripts caught their own assertion — `let_the_polls_overlap` on the unit test ("the second call must
 not reach the server", got 2) and `poll_the_sitting_every_tick` on the browser scenario ("an
 unchanged sitting alone (2 detail reads)").
+
+## 2026-10-19 — sight-reading agent — the pedal stream is packed, not a row per move
+
+Scope: `backend/app/practice/pedal_stream.py` (new), `backend/app/practice/schema.py`,
+`backend/app/practice/store.py`, `backend/app/practice/pedal.py`, `backend/app/backup.py`,
+`backend/app/db.py`, `backend/tests/{test_pedal_stream,test_backup,test_migration_upgrade}.py`,
+`backend/tools/e2e_browser.py`, `backend/tools/falsifications/` (four new scripts),
+`docs/{PERFORMANCE,ECOSYSTEM,ENGINEERING,DEPLOYMENT,TEST-DATA}.md`, `deploy/README.md`,
+`AGENTS.md`.
+
+Did: the sustain pedal writes a continuous controller — 1,151,770 moves over 1,240 minutes on the
+rebuilt fixture, 15.5 a second — and each was a row plus two indexes, 59.1 MB of an 89.1 MB file
+for a 6-byte fact. `practice/pedal_stream.py` now packs moves as 6-byte records (u32 onset, u8
+value, u8 channel) into chunks of at most 512, and never splits one millisecond across chunks. A
+sitting's stream is a concatenation in `chunk_no` order, not a sort on read.
+
+The uniqueness guarantee moved from `UNIQUE(sitting_id, onset_ms, value)` into
+`pedal_stream.insert_moves` (`backend/app/practice/pedal_stream.py:169`): a retried or out-of-order
+batch is merged against every chunk its span touches, and only moves not already stored for that
+onset and value are written. Channel is deliberately not part of the key, as it was not part of the
+old index.
+
+The migration is `backend/app/practice/schema.py:309` (`_convert_pedal_events`): it reads
+`pedal_events` in arrival order, writes chunks, compares the stored count with the moves it read,
+and only then drops the table — one transaction. `backend/app/db.py:228` then runs one `VACUUM`
+after the commit, guarded so a disk too full for the vacuum leaves the app starting and prints what
+is left to do (`backend/app/db.py:236`).
+
+Backup: `BACKUP_VERSION = 2` at `backend/app/backup.py:44`. A pedal stream exports as base64 chunk
+blobs (`backend/app/backup.py:222-246`, ~6.9 MB for the owner's moves), and a version-1 document is
+still read and re-encoded on the way in. Merge mode goes through
+`backend/app/backup.py:250` (`_merge_pedal_stream`) so importing the same document twice adds no
+moves; replace mode uses the ordinary insert.
+
+Measured on the owner's reconstruction (`/home/marco_normal/tmp/SighRTracker/.scratch/perf/`):
+file 89.1 → 37.1 MB (−58 %, 59.1 MB of pedal bytes to 9.3 MB), the largest sitting's 67,181-move
+read 40.44 → 6.17 ms, the 1,151,770 moves preserved with an identical sha256 digest in 2,265
+chunks, conversion 1.92 s including the vacuum. The A/B that matters recomputes every metric twice
+— `_refresh_metrics` reading old rows, then reading the stream — over **all 38 sittings**: 732
+segment rows, 7 columns, identical. (The stored `segment_metrics` cache is not evidence: it held
+712 rows, differed on 4 and had NULL `pedal_partial_ratio` on all of them.) An earlier pass
+compared only the two busiest sittings, 58 rows; the documentation now states the whole-fixture
+number.
+
+Impact on the other side: **the shared data boundary moved.** `pedal_events` no longer exists after
+`db.init_db`; `pedal_stream` (`sitting_id`, `chunk_no`, `n`, `first_ms`, `last_ms`, `data`) is the
+only pedal store, and the backup document is version 2. Any reader outside `backend/app/` must go
+through `pedal_stream.moves(conn, sitting_id)` rather than SQL against the old table. Nothing else
+changes: the HTTP routes, the `LoggedPedal` payload and the pedal metrics are the same. Player-visible
+behaviour is unchanged, so `FEATURES.md` needed no edit (ECOSYSTEM's trigger table: FEATURES only
+when a player can see the difference); REVERSIBILITY IS LIMITED to restoring a version-2 backup into
+a pre-change build, which cannot read it.
+
+Verified: `./check.sh --fast` and `./check.sh --full` green (counts in the handover message); the
+four break scripts fired — `split_a_pedal_chunk_at_an_onset`, `stop_deduplicating_the_pedal_stream`,
+`search_only_the_tail_pedal_chunk`, `let_a_full_disk_stop_the_upgrade` — and the first draft of the
+full-disk script failed to fail because it cut the `try` along with the guard, which is why it was
+corrected before handover.
