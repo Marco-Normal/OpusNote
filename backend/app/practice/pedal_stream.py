@@ -8,7 +8,7 @@ position. Every read that wanted the stream paid for both indexes; every write p
 them too.
 
 The same stream fits in 6 bytes a move when nothing is asking SQL to *index* it: onset as a
-little-endian u32, value and channel as one byte each. `PERFORMANCE.md` §1.13 records the
+little-endian u32, value and channel as one byte each. `PERFORMANCE.md` §1.12 records the
 measurement — the whole press history from a backup's JSON (two-value records, no channel)
 came to 2,404,352 bytes, 2.05 bytes a move, and a fixed-width encoding decodes 3.5× faster
 than the rows it replaces because there is no per-row object to build.
