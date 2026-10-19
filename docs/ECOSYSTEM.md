@@ -2131,9 +2131,13 @@ key-held notes, the browser instruments get extended durations and no CC64.
 is held for 4 s with the pedal at 40 until 1.5 s, and asserts four things that were all false before:
 the value 40 reaches the piano verbatim, the recorded pedal-up is *scheduled* on the piano's clock
 (separated from the unscheduled damper lifts the sweep sends), the note keeps its 4,000 ms key-held
-length rather than being stretched by the pedal, and Stop lifts the damper on 16 channels. Three
-falsifications, each seen to fail: `forget_the_partial_pedal_band.sh`, `send_the_pedal_as_a_switch.sh`
-and `drop_the_partial_pedal_ratio.sh`.
+length rather than being stretched by the pedal, and Stop lifts the damper on 16 channels. Four
+falsifications, each seen to fail: `forget_the_partial_pedal_band.sh` (the ring),
+`send_the_pedal_as_a_switch.sh` (the stream), `drop_the_partial_pedal_ratio.sh` (the round trip to the
+row) and `zero_the_partial_pedal_measurement.sh` (the measurement). The first attempt at the last one
+was a single break that removed the value at the one place it is assembled — and nothing failed,
+because the unit tests call the pure function directly and never saw the wiring. That is why the round
+trip got a test of its own and the falsification became two breaks rather than one.
 
 **What is deliberately not done.** No damper curve in the database (the piano's own damper is the
 oracle for it), no per-note velocity reshaping for the browser instruments, and no change to what
