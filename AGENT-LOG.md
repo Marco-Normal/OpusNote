@@ -4690,3 +4690,55 @@ backup shape moved, and no behaviour changed, so `FEATURES.md` is untouched and 
 owns nothing about this cap (it was a bare number in `App.svelte` with no documented owner, which is
 how it outlived the window it was chosen for). Two break scripts, each seen to catch its own
 assertion: `cap_the_shell_at_a_laptop_width` and `stretch_the_sittings_card`.
+
+## 2026-10-19 — sight-reading agent — the log stops queuing its own refreshes
+
+Scope: `frontend/src/lib/pollGate.ts` (+ its test), `frontend/src/components/PracticeLogView.svelte`,
+`backend/tools/e2e_browser.py`, `docs/PERFORMANCE.md` §1.11 and rule R12, `docs/FEATURES.md`,
+`backend/tools/falsifications/{poll_the_sitting_every_tick,let_the_polls_overlap}.sh`.
+
+Did: the owner reported that after a restart the Log took five-plus minutes to open a sitting, and
+that pressing play in the middle of one was still loading after three. Two separate causes, and the
+first is not ours:
+
+**The read was cold, not slow code.** Measured on the running notebook, same process, no restart and
+no code change between the two passes: one sitting's detail **28.5 s then 32.4 s** and its notes
+**70.1 s for 4.79 MB**, against **0.148 s / 2.57 s** ten minutes later, with `/api/practice/status`
+answering in 0.06 s *while* the big read was in flight — so the process was never globally blocked.
+The same functions run in 0.21 s locally on the owner's 512k-note library. It was the page cache
+after `install.sh` restarted uvicorn, plus the job runner draining its startup backlog. Nothing in
+the last three commits touches a read path.
+
+**The second cause is ours, and it is what turned 30 s into minutes.** `refreshQuietly` guarded
+`if (busy) return;`, and `busy` is set by *mutations* — not by a poll already in flight. The effect
+fired it every `POLL_MS = 20_000`, and each run re-read the summary, the sitting list **and the
+whole detail of the selected sitting**. Any read slower than the interval therefore stacked: every
+twenty seconds another 30 000-note derivation was issued on top of one that had not finished, and
+the queue could not drain while the tab stayed open. A single slow read became a multi-minute stall.
+
+`lib/pollGate.ts` now owns both halves. `createPollRunner` admits one run at a time and releases the
+gate in `finally`, so a throwing run cannot wedge the poll shut; `detailIsStale` skips the expensive
+read when the list row already answers for it — `note_count`, `duration_s` and `segment_count` are
+every field the detail is built from — and treats a `null` or still-`preparing` detail as stale.
+
+The deliberate non-claim is in the module header: a label edited on the *other* machine moves none of
+those three counts, so this poll will not notice it until something else does. That is the trade
+against re-deriving 30 000 notes every twenty seconds on a disk that is also capturing the piano.
+
+The scenario's poll probe had to be corrected too, and it is worth recording because the first run
+failed on it: it counted *starts* and forced a poll without waiting for the app to be idle. A poll
+already in flight answers about the world from before the scenario's own split, so the assertion
+measured the test's timing rather than the app. The probe now waits for quiescence, counts
+completions, and the changed leg waits for the detail read to appear. Two new checks assert the
+split landed on the server and that the list row says so, so a future failure says which half broke.
+
+Impact on the other side: client plus harness. No route, field, table, tunable or backup shape moved.
+`PERFORMANCE.md` gained §1.11, the before/after table (summary + list 0.30 s, detail 28.5–32.4 s cold
+→ **zero** on an unchanged sitting) and rule R12. `FEATURES.md`'s refresh bullet now says a refresh
+never runs twice at once and an open sitting is re-read only when it has moved.
+
+Verified: `./check.sh --fast` 54 s; the scenario's three legs all pass (unchanged → 0 detail reads;
+split lands 16 → 17; one detail read; the moved boundary appears without a reload); both break
+scripts caught their own assertion — `let_the_polls_overlap` on the unit test ("the second call must
+not reach the server", got 2) and `poll_the_sitting_every_tick` on the browser scenario ("an
+unchanged sitting alone (2 detail reads)").
