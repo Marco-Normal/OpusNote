@@ -70,13 +70,18 @@ from .models import (
     PracticeKind,
     PracticeKindSplit,
     PracticePassageOut,
+    RhythmSummary,
+    RhythmWeek,
     SegmentCandidate,
     SegmentMetricsOut,
     SegmentSummary,
+    SessionCountBucket,
     SittingDetail,
     SittingNotes,
     SittingSummary,
     SourceSplit,
+    TechniqueSummary,
+    WeekdayMinutes,
     TempoPoint,
     TempoSeries,
 )
@@ -1778,6 +1783,199 @@ def summary(conn: sqlite3.Connection, days: int = 30, recent: int = 10) -> Analy
             int(totals["last_ms"]) if totals["last_ms"] is not None else None
         ),
         capture=capture_status.snapshot(),
+    )
+
+
+def _median(values: Sequence[float]) -> float | None:
+    """The middle value, averaging the pair when the count is even."""
+    if not values:
+        return None
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[middle]
+    return (ordered[middle - 1] + ordered[middle]) / 2.0
+
+
+def _round(value, digits: int = 1):
+    return None if value is None else round(float(value), digits)
+
+
+def rhythm(conn: sqlite3.Connection, days: int = 90) -> RhythmSummary:
+    """Practice volume over time: weeks, daily distribution, weekdays, technique.
+
+    Deliberately its own read rather than a section of :func:`summary`. The Log polls that one
+    every twenty seconds, so anything added there is paid on a poll; this is paid once, when the
+    tab is opened, and ``days`` bounds every query below to the window the player asked for.
+
+    Nothing here touches ``note_events``. The weekly split needs one fact per sitting (when it
+    started, how long it lasted), which is a scan of ``sittings`` for the window; the technique
+    averages are one join from ``segment_metrics`` through ``segments``. Both grow with the
+    window, never with the note count.
+
+    The week bucket is Monday-first because that is what "this week" means in the rest of the
+    UI (the streak and the dashboard's seven-day figure), and a Sunday-first bucket would put
+    one weekend's practice on two sides of a boundary it does not cross.
+    """
+    today = _today()
+    since = (today - timedelta(days=days - 1)).isoformat()
+    # A per-day rank, so "was this the day's first sitting" is a property of the row rather than
+    # a second query the caller has to join back. `started_ms` then `id` is the order the player
+    # experienced, and it stays deterministic when an imported sitting shares a millisecond.
+    week_rows = conn.execute(
+        """
+        WITH sitting AS (
+            SELECT local_date,
+                   (ended_ms - started_ms) / 60000.0 AS minutes,
+                   ROW_NUMBER() OVER (PARTITION BY local_date ORDER BY started_ms, id) AS position
+            FROM sittings
+            WHERE local_date >= ?
+        )
+        SELECT date(local_date, 'weekday 0', '-6 days') AS week_start,
+               SUM(minutes) AS minutes,
+               COUNT(*) AS sittings,
+               COUNT(DISTINCT local_date) AS practised_days,
+               MAX(minutes) AS longest_minutes,
+               SUM(CASE WHEN position = 1 THEN minutes ELSE 0 END) AS first_minutes,
+               SUM(CASE WHEN position > 1 THEN minutes ELSE 0 END) AS extra_minutes
+        FROM sitting
+        GROUP BY week_start
+        ORDER BY week_start
+        """,
+        (since,),
+    ).fetchall()
+    # Weeks with nothing in them are part of the shape — a gap is the interesting fact, and
+    # dropping it would join two distant weeks into one downward slope.
+    weeks: list[RhythmWeek] = []
+    if week_rows:
+        by_week = {row["week_start"]: row for row in week_rows}
+        cursor = date.fromisoformat(week_rows[0]["week_start"])
+        last = date.fromisoformat(week_rows[-1]["week_start"])
+        while cursor <= last:
+            row = by_week.get(cursor.isoformat())
+            weeks.append(
+                RhythmWeek(
+                    week_start=cursor.isoformat(),
+                    minutes=_round(row["minutes"]) if row else 0.0,
+                    sittings=int(row["sittings"]) if row else 0,
+                    practised_days=int(row["practised_days"]) if row else 0,
+                    longest_minutes=_round(row["longest_minutes"]) if row else 0.0,
+                    first_minutes=_round(row["first_minutes"]) if row else 0.0,
+                    extra_minutes=_round(row["extra_minutes"]) if row else 0.0,
+                )
+            )
+            cursor += timedelta(days=7)
+
+    sittings = conn.execute(
+        "SELECT local_date, (ended_ms - started_ms) / 60000.0 AS minutes"
+        " FROM sittings WHERE local_date >= ?",
+        (since,),
+    ).fetchall()
+    durations = [float(row["minutes"]) for row in sittings]
+    per_day = collections.Counter(row["local_date"] for row in sittings)
+    per_count = collections.Counter(per_day.values())
+    session_counts = [
+        SessionCountBucket(sessions=label, days=per_count.get(label, 0))
+        for label in (1, 2, 3)
+    ]
+    session_counts.append(
+        SessionCountBucket(
+            sessions=4, days=sum(count for n, count in per_count.items() if n >= 4)
+        )
+    )
+
+    # strftime('%w') is Sunday = 0; the rest of this module counts from Monday.
+    weekday_rows = conn.execute(
+        """
+        SELECT CAST(strftime('%w', local_date) AS INTEGER) AS sunday_first,
+               SUM(ended_ms - started_ms) / 60000.0 AS minutes,
+               COUNT(DISTINCT local_date) AS practised_days
+        FROM sittings
+        WHERE local_date >= ?
+        GROUP BY sunday_first
+        """,
+        (since,),
+    ).fetchall()
+    by_weekday = {
+        (int(row["sunday_first"]) + 6) % 7: row for row in weekday_rows
+    }
+    weekdays = [
+        WeekdayMinutes(
+            weekday=index,
+            minutes=_round(by_weekday[index]["minutes"]) if index in by_weekday else 0.0,
+            practised_days=(
+                int(by_weekday[index]["practised_days"]) if index in by_weekday else 0
+            ),
+        )
+        for index in range(7)
+    ]
+
+    tech = conn.execute(
+        """
+        SELECT COUNT(*) AS segments,
+               COALESCE(SUM(m.duration_s), 0) AS seconds,
+               AVG(m.median_tempo) AS mean_tempo,
+               AVG(m.median_velocity) AS mean_velocity,
+               AVG(m.mean_velocity_low) AS mean_velocity_low,
+               AVG(m.mean_velocity_high) AS mean_velocity_high,
+               COALESCE(SUM(m.restarts), 0) AS restarts,
+               SUM(CASE WHEN m.pedal_basis IS NOT NULL THEN 1 ELSE 0 END) AS pedal_segments,
+               AVG(CASE WHEN m.pedal_basis IS NOT NULL THEN m.pedal_down_ratio END)
+                   AS pedal_down_ratio,
+               COALESCE(SUM(CASE WHEN m.pedal_basis IS NOT NULL THEN m.pedal_blur ELSE 0 END), 0)
+                   AS blurs,
+               COALESCE(SUM(CASE WHEN m.pedal_basis IS NOT NULL THEN m.duration_s ELSE 0 END), 0)
+                   AS pedal_seconds
+        FROM segment_metrics m
+        JOIN segments g ON g.id = m.segment_id
+        JOIN sittings s ON s.id = g.sitting_id
+        WHERE s.local_date >= ?
+        """,
+        (since,),
+    ).fetchone()
+    measured_minutes = float(tech["seconds"] or 0.0) / 60.0
+    pedal_minutes = float(tech["pedal_seconds"] or 0.0) / 60.0
+    technique = TechniqueSummary(
+        segments=int(tech["segments"] or 0),
+        measured_minutes=_minutes(tech["seconds"]),
+        mean_tempo=_round(tech["mean_tempo"], 1),
+        mean_velocity=_round(tech["mean_velocity"], 1),
+        mean_velocity_low=_round(tech["mean_velocity_low"], 1),
+        mean_velocity_high=_round(tech["mean_velocity_high"], 1),
+        restarts_per_minute=(
+            _round(float(tech["restarts"]) / measured_minutes, 2)
+            if measured_minutes > 0
+            else None
+        ),
+        pedal_segments=int(tech["pedal_segments"] or 0),
+        pedal_down_ratio=_round(tech["pedal_down_ratio"], 3),
+        blurs_per_minute=(
+            _round(float(tech["blurs"]) / pedal_minutes, 2) if pedal_minutes > 0 else None
+        ),
+    )
+
+    window_start = min(per_day) if per_day else None
+    elapsed_days = days
+    if window_start is not None:
+        elapsed_days = min(days, (today - date.fromisoformat(window_start)).days + 1)
+    total_minutes = sum(durations)
+    return RhythmSummary(
+        days=days,
+        window_start=window_start,
+        window_end=today.isoformat(),
+        practised_days=len(per_day),
+        elapsed_days=elapsed_days,
+        sittings=len(durations),
+        minutes=_round(total_minutes),
+        median_session_minutes=_round(_median(durations)),
+        longest_session_minutes=_round(max(durations)) if durations else 0.0,
+        sessions_per_practised_day=(
+            _round(len(durations) / len(per_day), 2) if per_day else None
+        ),
+        weeks=weeks,
+        session_counts=session_counts,
+        weekdays=weekdays,
+        technique=technique,
     )
 
 

@@ -517,6 +517,94 @@ class AnalyticsSummary(BaseModel):
     capture: CaptureReport | None = None
 
 
+class RhythmWeek(BaseModel):
+    """One Monday-to-Sunday week, and how its minutes were made up.
+
+    ``first_minutes`` is each day's *first* sitting and ``extra_minutes`` every later one,
+    summed over the week. The split is the whole point: a total that falls while the first
+    sitting stays put is a lost second session, not a shorter habit, and the two want different
+    answers from the player.
+    """
+
+    #: Monday of the week, ISO date.
+    week_start: str
+    minutes: float
+    sittings: int
+    #: Days with at least one sitting, so a run of short daily practice is distinguishable
+    #: from one long evening.
+    practised_days: int
+    longest_minutes: float
+    first_minutes: float
+    extra_minutes: float
+
+
+class SessionCountBucket(BaseModel):
+    """How many days had exactly ``sessions`` sittings (``4`` means four or more)."""
+
+    sessions: int
+    days: int
+
+
+class WeekdayMinutes(BaseModel):
+    """Minutes on one weekday. ``weekday`` is 0 = Monday, matching the week buckets."""
+
+    weekday: int
+    minutes: float
+    practised_days: int
+
+
+class TechniqueSummary(BaseModel):
+    """What the segment metrics say about *how* the time was spent.
+
+    Every average is an average of per-segment values, so one long rambling section does not
+    outweigh a short hard one. ``None`` where the window holds no measurement: a mean of nothing
+    is not zero, and reporting 0 would read as "no restarts" rather than "not measured".
+    """
+
+    segments: int
+    #: Minutes covered by segments that have metrics.
+    measured_minutes: float
+    #: Note-rate proxy over the window — see ``metrics.median_tempo``; not a metronome tempo.
+    mean_tempo: float | None = None
+    mean_velocity: float | None = None
+    #: Velocity below/above middle C, the app's hand proxy.
+    mean_velocity_low: float | None = None
+    mean_velocity_high: float | None = None
+    restarts_per_minute: float | None = None
+    #: Segments that carried pedal data (``pedal_basis`` not null); the pedal averages use only
+    #: these, so an imported sitting without a pedal stream cannot drag them to zero.
+    pedal_segments: int = 0
+    pedal_down_ratio: float | None = None
+    blurs_per_minute: float | None = None
+
+
+class RhythmSummary(BaseModel):
+    """The shape of practice over time — the Progress tab that is not a rating.
+
+    Deliberately a separate response from :class:`AnalyticsSummary`: the Log polls that one every
+    twenty seconds, and a weekly breakdown of a year is not something to recompute on a poll.
+    """
+
+    days: int
+    #: First practised day inside the window, or None when the window holds no practice. The
+    #: window itself starts at ``today - days + 1``; the calendar can be wider than the record.
+    window_start: str | None = None
+    window_end: str
+    practised_days: int
+    #: Days from ``window_start`` to ``window_end`` inclusive — the denominator for adherence, so
+    #: a first week is not judged against days before the log existed.
+    elapsed_days: int
+    sittings: int
+    minutes: float
+    median_session_minutes: float | None = None
+    longest_session_minutes: float = 0.0
+    sessions_per_practised_day: float | None = None
+    weeks: list[RhythmWeek] = Field(default_factory=list)
+    session_counts: list[SessionCountBucket] = Field(default_factory=list)
+    weekdays: list[WeekdayMinutes] = Field(default_factory=list)
+    technique: TechniqueSummary
+
+
 class SittingCloseResult(BaseModel):
     """What closing an open sitting did."""
 

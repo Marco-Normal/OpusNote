@@ -6,6 +6,7 @@ import { parseRoute, routeHash, type Route } from './route.ts';
 test('a section is a route', () => {
   assert.deepEqual(parseRoute('#/practice'), { name: 'practice' });
   assert.deepEqual(parseRoute('#/log'), { name: 'log' });
+  assert.deepEqual(parseRoute('#/rhythm'), { name: 'rhythm' });
   assert.deepEqual(parseRoute('#/repertoire'), { name: 'repertoire' });
 });
 
@@ -34,6 +35,7 @@ test('parsing is total: anything unrecognised is null, never a guess', () => {
 test('an entity attached to the wrong section is refused, not silently moved', () => {
   assert.equal(parseRoute('#/log/piece/12'), null);
   assert.equal(parseRoute('#/stats/sitting/12'), null);
+  assert.equal(parseRoute('#/rhythm/sitting/12'), null);
 });
 
 test('a round trip is stable', () => {

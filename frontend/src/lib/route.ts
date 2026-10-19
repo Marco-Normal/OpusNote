@@ -34,6 +34,7 @@ const ENTITIES: Record<AppView, EntityKind[]> = {
   calibrate: [],
   stats: ['attempt'],
   log: ['sitting'],
+  rhythm: [],
   repertoire: ['piece'],
 };
 

@@ -75,6 +75,23 @@ server is already preparing that sitting in the background (Phase 24). The clien
 moment later. When nothing is scheduled the same route materialises the sitting itself, exactly as
 it always did — so the field reports a state, it never becomes a requirement on the caller.
 
+`GET /api/practice/analytics/rhythm?days=90` is the *shape* of practice rather than its content, and
+it is a separate route from `analytics/summary` on purpose. The Log polls the summary every 20 s
+(`docs/PERFORMANCE.md` § 1.7); a weekly decomposition is read once when its view opens,
+so folding it into the polled payload would pay for it continuously to show it occasionally. Its
+cost scales with the **sittings and measured segments inside the window**, never with
+`note_events`: it groups `sittings` by Monday-first week (`date(local_date, 'weekday 0', '-6 days')`
+— SQLite's `weekday 0` is Sunday, so the shift is what makes the week Monday-first) and by
+`ROW_NUMBER() OVER (PARTITION BY local_date …)`, which is what separates the day's first sitting
+from the rest; the technique half is one join to `segment_metrics`, with the pedal aggregates gated
+on `pedal_basis IS NOT NULL` so imported segments with no pedal are not counted as "pedal up". The
+technique figures are means **across measured segments**, not minutes-weighted, so they describe how
+a typical segment went rather than how a typical minute went; `restarts_per_minute` and
+`blurs_per_minute` are the rate forms, and only they are time-weighted. Weeks
+with no practice inside the window are reported as zeros rather than skipped — a gap in the chart is
+information — and `elapsed_days` is the service's own honesty about a window longer than the record,
+so adherence is never computed against days that could not have been practised.
+
 Every payload that names a library piece carries the three fields that name it, because a title
 alone does not identify one: `SegmentSummary.piece_title`/`composer_name`/**`piece_opus`**,
 `PracticePassageOut.piece_opus`, `SegmentCandidate.opus` (`title`/`composer_name` unprefixed there,

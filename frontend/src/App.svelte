@@ -7,6 +7,7 @@
   import StatsView from './components/StatsView.svelte';
   import HostBanner from './components/HostBanner.svelte';
   import PracticeLogView from './components/PracticeLogView.svelte';
+  import RhythmView from './components/RhythmView.svelte';
   import RepertoireView from './components/RepertoireView.svelte';
   import ThemeControls from './components/ThemeControls.svelte';
   import WorkoutBar from './components/WorkoutBar.svelte';
@@ -39,14 +40,14 @@
   const tabs: Tab[] = [
     { id: 'practice', label: 'Practice', owns: ['practice'] },
     { id: 'repertoire', label: 'Library', owns: ['repertoire'] },
-    { id: 'stats', label: 'Progress', owns: ['stats', 'log'] },
+    { id: 'stats', label: 'Progress', owns: ['stats', 'log', 'rhythm'] },
   ];
 
   let paletteOpen = $state(false);
   let setupOpen = $state(false);
 
   /**
-   * Which of the two Progress views the tab opens on.
+   * Which of Progress' views the tab opens on.
    *
    * Remembered for the session rather than reset every time: someone who lives in the Log
    * would otherwise be sent back to the ratings on every visit. Not persisted — a fresh
@@ -54,7 +55,9 @@
    */
   let lastProgressView = $state<AppView>('stats');
   $effect(() => {
-    if (app.view === 'stats' || app.view === 'log') lastProgressView = app.view;
+    if (app.view === 'stats' || app.view === 'log' || app.view === 'rhythm') {
+      lastProgressView = app.view;
+    }
   });
 
   function go(route: Route): void {
@@ -198,11 +201,11 @@
   {/if}
 
   <!--
-    The two views of Progress: ratings over time, and what you actually played. This is
-    navigation chrome rather than part of either view, so it lives here and has one owner —
-    a copy inside each view would drift.
+    The views of Progress: ratings over time, what you actually played, and the shape of
+    practice itself. This is navigation chrome rather than part of any view, so it lives
+    here and has one owner — a copy inside each view would drift.
   -->
-  {#if app.view === 'stats' || app.view === 'log'}
+  {#if app.view === 'stats' || app.view === 'log' || app.view === 'rhythm'}
     <nav class="subtabs" aria-label="Progress views">
       <button
         class:active={app.view === 'stats'}
@@ -220,6 +223,14 @@
       >
         Log
       </button>
+      <button
+        class:active={app.view === 'rhythm'}
+        aria-current={app.view === 'rhythm' ? 'page' : undefined}
+        data-subview="rhythm"
+        onclick={() => go({ name: 'rhythm' })}
+      >
+        Rhythm
+      </button>
     </nav>
   {/if}
 
@@ -232,6 +243,8 @@
       <StatsView />
     {:else if app.view === 'log'}
       <PracticeLogView />
+    {:else if app.view === 'rhythm'}
+      <RhythmView />
     {:else}
       <RepertoireView />
     {/if}

@@ -349,11 +349,21 @@ reading.
   same player a fresh result receives — the performance, or the exercise as written, either hand.
 - **This week.** Minutes over the last seven days, workouts and streak, the most improved skill,
   and the piece neglected longest.
+- **The shape of practice (Rhythm).** A third view answers *how* the time was spent rather than
+  what was played. Week by week — Monday to Sunday — it splits the minutes into the day's **first
+  sitting** and everything that came after it, because those two behave differently: one is the
+  visit to the piano, the others are what happens after you have already sat down. Beside that:
+  how many days of the window were practised (against the days the record actually covers, not
+  the whole window), the median and longest session, how many days held one, two, three or four
+  or more sittings, which weekdays carry the practice, and the technique averages the segments
+  already measure — note rate, touch, the two hands, restarts per minute and pedal blur. The
+  window is 4 weeks, 3 months or a year, and each is a fresh request rather than a filter over
+  one preloaded list.
 
 **Every screen has an address.** `#/repertoire/piece/12`, `#/log/sitting/34` and
 `#/stats/attempt/56` can be pasted between machines, and Back works. `/` or `Ctrl`/`Cmd`+`K`
 opens a search over the library, the journal and recent sittings, and `1`–`3` switch sections.
-Progress holds two views, **Ratings** and **Log**.
+Progress holds three views, **Ratings**, **Log** and **Rhythm**.
 
 ## 8. Playback
 

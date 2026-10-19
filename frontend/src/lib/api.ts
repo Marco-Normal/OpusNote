@@ -40,6 +40,7 @@ import type {
   Recording,
   RepertoireStatus,
   RatingHistory,
+  RhythmSummary,
   ScoreResult,
   SegmentSummary,
   SittingDetail,
@@ -499,6 +500,14 @@ export const api = {
     identificationQuality: () => request<IdentificationQuality>('/practice/autotag/quality'),
 
     summary: (days = 30) => request<AnalyticsSummary>(`/practice/analytics/summary?days=${days}`),
+
+    /**
+     * The weekly / weekday / technique read.
+     *
+     * A separate request from `summary` on purpose: the Log polls that one every twenty
+     * seconds, and this window can be a year wide, so it is fetched when its view opens.
+     */
+    rhythm: (days = 90) => request<RhythmSummary>(`/practice/analytics/rhythm?days=${days}`),
 
     tempo: (pieceId: number) => request<TempoSeries>(`/practice/analytics/tempo?piece_id=${pieceId}`),
 

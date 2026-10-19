@@ -32,6 +32,7 @@ from .models import (
     PiecePractice,
     PiecePracticeDetail,
     ResegmentRequest,
+    RhythmSummary,
     SegmentSummary,
     SittingCloseResult,
     SittingDetail,
@@ -286,6 +287,19 @@ def analytics_summary(
             "workouts_this_week": stats["workouts_this_week"],
         }
     )
+
+
+@router.get("/analytics/rhythm", response_model=RhythmSummary)
+def analytics_rhythm(
+    days: int = Query(default=90, ge=1, le=3650),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> RhythmSummary:
+    """How practice is distributed over weeks, days and segment technique.
+
+    Separate from ``/analytics/summary`` because that one is polled every twenty seconds while
+    the Log is open, and this window can be a year wide. Nothing here reads `note_events`.
+    """
+    return store.rhythm(conn, days)
 
 
 @router.get("/pieces", response_model=list[PiecePractice])

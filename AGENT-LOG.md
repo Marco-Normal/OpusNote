@@ -4886,3 +4886,36 @@ signatures gained keyword-only optional parameters (`_shares(weights=)`,
 `segment_identification(share_weights=)`); every existing caller is unchanged.
 
 Verified: `./check.sh --fast`; `./check.sh --falsify` for both new assertions; `./check.sh --full`.
+
+## 2026-10-19 — sight-reading agent — Progress gains a third view: the shape of practice
+
+Scope: `backend/app/practice/{models,store,api}.py`, `backend/tests/test_practice_rhythm.py`,
+`frontend/src/{App.svelte,lib/{types,api,route}.ts,components/RhythmView.svelte}`,
+`backend/tools/e2e_browser.py`, two falsifications, `docs/{FEATURES,ENGINEERING}.md`.
+
+Did: added `GET /api/practice/analytics/rhythm?days=90` (1..3650) and a third Progress sub-view,
+**Rhythm**, beside Ratings and Log. The payload is Monday-first weeks with the day's first sitting
+(by `ROW_NUMBER() OVER (PARTITION BY local_date ORDER BY started_ms, id)`) separated from later
+sittings, the count of days per session-count bucket, weekday minutes, adherence against the days
+the record actually covers (`elapsed_days`, not the requested window), median/longest session, and
+technique averages over `segment_metrics`.
+
+Two decisions worth recording. **It is a new route, not more fields on `analytics/summary`**: the
+Log polls the summary every 20 s (`docs/PERFORMANCE.md` § 1.7), so a weekly/technique aggregate
+would be paid for continuously to be shown occasionally. **Weeks are bucketed Monday-first**
+through `date(local_date, 'weekday 0', '-6 days')`, because SQLite's `weekday 0` is Sunday, and a
+Sunday-first bucket would split one weekend across two rows with nothing having happened in
+between — `start_the_week_on_sunday.sh` proves that assertion can fail. Empty weeks inside the
+window are reported as zeros rather than skipped: the gap is the finding.
+
+Cost: bounded by sittings and measured segments in the window, never by `note_events` — the route
+does not touch that table at all.
+
+Impact on the other side: additive only. No table, column, tunable or existing payload changed;
+`AppView` gained `'rhythm'` and `ENTITIES` gained an empty entry for it, so `#/rhythm` is a route
+and `#/rhythm/sitting/12` is not.
+
+Verified: `./check.sh --fast` (58 s); `test_practice_rhythm.py` 11 passed; `run_e2e.sh practice_log`
+green including 11 new assertions (bar per week, first+extra == total, table matching the chart,
+adherence wording, technique panel, and switching to 28 days actually refetching); falsifications
+`forget_which_sitting_was_first` and `start_the_week_on_sunday`, both caught; `./check.sh --full`.

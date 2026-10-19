@@ -275,7 +275,7 @@ export interface PlayedNote {
 }
 
 export type PracticeMode = 'practice' | 'performance';
-export type AppView = 'practice' | 'calibrate' | 'stats' | 'log' | 'repertoire';
+export type AppView = 'practice' | 'calibrate' | 'stats' | 'log' | 'rhythm' | 'repertoire';
 
 export const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'] as const;
 
@@ -809,6 +809,64 @@ export interface AnalyticsSummary {
   workouts_this_week: number;
   last_note_ms: number | null;
   capture: CaptureStatus | null;
+}
+
+/** One Monday-to-Sunday week of practice, split by which sitting of the day it was. */
+export interface RhythmWeek {
+  week_start: string;
+  minutes: number;
+  sittings: number;
+  practised_days: number;
+  longest_minutes: number;
+  /** Minutes from each day's first sitting. */
+  first_minutes: number;
+  /** Minutes from every later sitting of the day — the part a decline usually lives in. */
+  extra_minutes: number;
+}
+
+/** Days that had exactly `sessions` sittings; `sessions: 4` means four or more. */
+export interface SessionCountBucket {
+  sessions: number;
+  days: number;
+}
+
+/** Minutes on one weekday, 0 = Monday. */
+export interface WeekdayMinutes {
+  weekday: number;
+  minutes: number;
+  practised_days: number;
+}
+
+export interface RhythmTechnique {
+  segments: number;
+  measured_minutes: number;
+  /** Note-rate proxy, not a metronome tempo — it reads sixteenths at four times nominal. */
+  mean_tempo: number | null;
+  mean_velocity: number | null;
+  mean_velocity_low: number | null;
+  mean_velocity_high: number | null;
+  restarts_per_minute: number | null;
+  pedal_segments: number;
+  pedal_down_ratio: number | null;
+  blurs_per_minute: number | null;
+}
+
+export interface RhythmSummary {
+  days: number;
+  window_start: string | null;
+  window_end: string;
+  practised_days: number;
+  /** Days from `window_start` to `window_end` inclusive, the adherence denominator. */
+  elapsed_days: number;
+  sittings: number;
+  minutes: number;
+  median_session_minutes: number | null;
+  longest_session_minutes: number;
+  sessions_per_practised_day: number | null;
+  weeks: RhythmWeek[];
+  session_counts: SessionCountBucket[];
+  weekdays: WeekdayMinutes[];
+  technique: RhythmTechnique;
 }
 
 export interface PracticeImportReport {

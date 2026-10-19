@@ -3879,6 +3879,60 @@ def scenario_practice_log(browser) -> None:
         f"and the card it sent you to is the one marked as chosen ({after})",
     )
 
+    # --- Progress' third view: the shape of practice, not just its content ---
+    page.click('[data-subview="rhythm"]')
+    page.wait_for_selector('[data-rhythm="ready"]', timeout=20_000)
+    rhythm = api("/api/practice/analytics/rhythm?days=90")
+    check(
+        rhythm["sittings"] >= 2,
+        f"the rhythm view finds the seeded practice ({rhythm['sittings']} sittings)",
+    )
+    check(
+        page.locator("[data-week]").count() == len(rhythm["weeks"]),
+        f"one bar per week ({page.locator('[data-week]').count()} bars, "
+        f"{len(rhythm['weeks'])} weeks)",
+    )
+    check(
+        all(
+            abs(week["first_minutes"] + week["extra_minutes"] - week["minutes"]) < 0.05
+            for week in rhythm["weeks"]
+        ),
+        "first-session and later-session minutes add up to each week's total",
+    )
+    check(
+        page.locator("[data-week-row]").count() == len(rhythm["weeks"]),
+        "and the table underneath carries the same weeks as the chart",
+    )
+    check(
+        page.inner_text("[data-rhythm-adherence]").count("(") == 1,
+        "adherence is stated against the days the record covers, not the whole window",
+    )
+    check(
+        page.locator("[data-rhythm-technique]").count() == 1,
+        "the technique panel renders from the segment measurements",
+    )
+
+    # The window is a real request, not a filter over a preloaded list: a window the view was
+    # not showing must come from the server.
+    with page.expect_response(lambda r: "/analytics/rhythm?days=28" in r.url):
+        page.select_option("[data-rhythm-window]", "28")
+    # The attribute is written from the *response*, so waiting on it proves the visible numbers
+    # are the narrower window's rather than the ones already on screen.
+    page.wait_for_selector('[data-rhythm-days="28"]', timeout=20_000)
+    narrower = api("/api/practice/analytics/rhythm?days=28")
+    check(
+        narrower["minutes"] <= rhythm["minutes"],
+        f"a narrower window cannot hold more minutes ({narrower['minutes']} vs "
+        f"{rhythm['minutes']})",
+    )
+    check(
+        page.locator("[data-week]").count() <= 5,
+        f"and a 28-day window draws at most five Monday buckets "
+        f"({page.locator('[data-week]').count()})",
+    )
+    page.click('[data-subview="log"]')
+    page.wait_for_selector('[data-view="log"]', timeout=20_000)
+
     check(not errors, f"no console errors ({errors})")
     page.close()
 
