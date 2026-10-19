@@ -111,3 +111,140 @@ export function segmentAtMs<T extends StripSpan>(
   }
   return nearest;
 }
+
+/**
+ * A range that can be sounding: part of the sitting, and the segment it belongs to.
+ *
+ * `segmentId === null` means the whole sitting. The two are kept together because a range
+ * without its owner cannot be restored: resuming "20 s to 40 s" as if it were a sitting-wide
+ * play would silent-skip the very passage the player had asked to hear.
+ */
+export interface StripRange {
+  fromMs: number;
+  toMs: number;
+  segmentId: number | null;
+}
+
+/** Where a seek lands, and what it does to the sound. */
+export interface SeekPlan {
+  /** The clamped position the playhead takes. */
+  atMs: number;
+  /** The range to start playing, or `null` for a silent move. */
+  resume: StripRange | null;
+}
+
+/**
+ * What pressing a point on the strip means.
+ *
+ * The strip is one surface with two meanings, and which applies is not a preference: it
+ * follows whether anything is playing. With silence there is nothing to move, so the press
+ * places the playhead and starts nothing — that is how the strip is used to look around
+ * without making a sound. With sound, the playhead *is* the sound's position, so a press
+ * has to move it; leaving it behind would make the click appear ignored, because the next
+ * progress tick would put the playhead straight back.
+ *
+ * Leaving the sounding range is the interesting case. The range you were hearing stays as
+ * long as the press lands inside it; outside, the segment under the press takes over, so
+ * crossing from one passage to another listens to the passage you asked for rather than
+ * sitting through the rest of the one you left. With no segment under the press — a gap, or
+ * a sitting with no segments at all — the whole sitting is the only range that contains
+ * where you asked to be.
+ *
+ * `fallback` is what a press resumes when nothing was playing, and it exists for the
+ * transport buttons: a step that moved the playhead but kept the silence would be a dead
+ * button, while the same function with `null` is exactly the click that must stay quiet.
+ */
+export function seekPlan(
+  playing: StripRange | null,
+  totalMs: number,
+  atMs: number,
+  segment: { id: number; start_ms: number; end_ms: number } | null,
+  fallback: StripRange | null = null,
+): SeekPlan {
+  const at = Math.min(Math.max(atMs, 0), Math.max(totalMs, 0));
+  if (playing === null) return { atMs: at, resume: fallback };
+  if (at >= playing.fromMs && at <= playing.toMs) return { atMs: at, resume: playing };
+  if (segment !== null) {
+    return {
+      atMs: at,
+      resume: { fromMs: segment.start_ms, toMs: segment.end_ms, segmentId: segment.id },
+    };
+  }
+  return { atMs: at, resume: { fromMs: 0, toMs: Math.max(totalMs, 0), segmentId: null } };
+}
+
+/**
+ * How far into a segment a step back still means "the previous segment".
+ *
+ * Repeated presses have to be able to walk backwards through a sitting. If a step back
+ * always returned the start of the segment you were in, the second press would return the
+ * same instant for ever, so a segment you have barely entered is treated as one you have
+ * not started — the rule a media player uses for its previous-track button.
+ */
+export const SEGMENT_RESTART_MS = 3_000;
+
+/**
+ * Where a segment-by-segment step lands.
+ *
+ * The segment is the unit this screen is organised in — the list below is segments, the
+ * colours are segments — so it is also the unit for skipping. Thirty-second buttons cannot
+ * cross a two-hour sitting at any usable speed, and they do not land on the boundaries the
+ * player thinks in.
+ *
+ * Forward runs to the next segment's start, and past the last one to the end of the
+ * sitting, so the button never does nothing. Backwards rewinds the segment you are well
+ * into and otherwise steps over the boundary you just crossed, which is what makes repeated
+ * presses walk the sitting instead of sticking.
+ */
+export function segmentStep<T extends StripSpan & { id: number }>(
+  segments: readonly T[],
+  atMs: number,
+  direction: 1 | -1,
+  totalMs: number,
+): number {
+  const total = Math.max(totalMs, 0);
+  if (segments.length === 0) return direction === 1 ? total : 0;
+
+  if (direction === 1) {
+    for (const segment of segments) {
+      if (segment.start_ms > atMs) return Math.min(segment.start_ms, total);
+    }
+    return total;
+  }
+
+  let containing: T | null = null;
+  for (const segment of segments) {
+    if (atMs >= segment.start_ms && atMs <= segment.end_ms) {
+      containing = segment;
+      break;
+    }
+  }
+  if (containing !== null && atMs - containing.start_ms > SEGMENT_RESTART_MS) {
+    return Math.max(containing.start_ms, 0);
+  }
+  // Everything before the segment being left — or before the instant, when the playhead is
+  // in a silence. `Math.max` against 0 rather than a sentinel keeps the answer a position.
+  const limit = containing === null ? atMs : containing.start_ms;
+  let previous = 0;
+  for (const segment of segments) {
+    if (segment.start_ms < limit) previous = Math.max(previous, segment.start_ms);
+  }
+  return previous;
+}
+
+/**
+ * The clock positions the ruler under the strip labels.
+ *
+ * The strip is a picture of time with no numbers on it, and on a two-hour sitting a pixel is
+ * about nine seconds — a press is aimed, not guessed, only if the scale is visible. The ends
+ * are always included so the ruler spans exactly the sitting.
+ */
+export function stripTicks(totalMs: number, divisions = 4): number[] {
+  const count = Math.max(1, Math.floor(divisions) || 1);
+  const total = Math.max(totalMs, 0);
+  const ticks: number[] = [];
+  for (let index = 0; index <= count; index += 1) {
+    ticks.push(Math.round((total * index) / count));
+  }
+  return ticks;
+}

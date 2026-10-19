@@ -4608,3 +4608,47 @@ field, no tunable, `BACKUP_VERSION` untouched; `pedal_events` is unchanged and s
 values. Any consumer of `SegmentMetricsOut` gains `pedal_partial_ratio: float | None` (null on
 sittings with no pedal rows, like the other pedal figures). Three break scripts, each seen to catch
 its own assertion: the partial ring, the pedal stream, and the ratio.
+
+## 2026-10-19 — sight-reading agent — the strip follows the sound, and a drag crosses a long sitting
+
+Scope: `frontend/src/lib/timelineStrip.ts`, `frontend/src/lib/timelineStrip.test.ts`,
+`frontend/src/components/SegmentTimeline.svelte`, `backend/tools/e2e_browser.py`,
+`backend/tools/falsifications/{forget_that_a_press_seeks_while_playing,keep_the_old_range_after_crossing_out_of_it}.sh`,
+`docs/{ECOSYSTEM,FEATURES}.md`.
+
+Did: the owner reported that pressing the timeline "just goes to the segment it refers", so skipping
+through a sitting played in its entirety was impossible — and the 30-second buttons only made it
+slower to be impossible. Both halves were real. Phase 15 had deliberately made the strip a finder:
+a press moved the playhead and played nothing. That is fine while nothing is playing, but *during*
+playback the player's next progress tick put the playhead straight back, so the press genuinely did
+nothing at all — the readout blinked and the sound never moved.
+
+The rule is now that the strip follows the sound. With silence a press places the playhead, reveals
+the matching row and stays silent, which is how the strip is used to look around. With something
+playing the press carries the playback to that point. Leaving the range being played hands over to
+the segment under the press, so crossing a boundary listens to the passage asked for instead of the
+rest of the one being left. A drag scrubs — the playhead follows the pointer and the transport
+resumes exactly once, on release — which needed a `scrubbing` flag, because a progress tick that
+owns the playhead mid-drag fights the pointer. The 30-second buttons were never a way across two
+hours (240 presses, each restarting the transport), so the strip gained a clock ruler, `« segment` /
+`segment »` steps on the boundaries the screen is already organised around, Page Up/Down and
+Home/End, and a *▶ From here* button for the flow "place the playhead, then listen from there".
+
+The decisions live in `timelineStrip.ts` — `seekPlan` (what a press means, and which range it
+resumes), `segmentStep` (forward to the next start, back to the current one unless barely entered,
+so repeated presses walk), `stripTicks` — and are tested with no browser. `seekPlan`'s `fallback`
+parameter is what makes one function serve both gestures: `null` is the press that must stay quiet,
+the whole sitting is the transport button that must not be a dead button.
+
+The browser scenario drives all of it on the 77-second fixture rather than the 8-second one the old
+assertions used: press at 95% while playing and the sound is there (74 s of 77), drag from 20% to
+45% and the playhead goes with the pointer and resumes at 35 s of 77, Home returns to the start, a
+step forward lands exactly on the second segment's 70 s and keeps playing, a step back from just
+inside a segment walks out of it (0 s), and *▶ From here* plays from a placed playhead. The idle
+press and arrow-key assertions the old behaviour depended on are unchanged and still pass.
+
+Impact on the other side: client-only. No route, field, table, tunable or schema move, so nothing
+is owed to a backup or an importer. Two break scripts, each to be seen to catch its own assertion:
+`forget_that_a_press_seeks_while_playing` (the component withholds that it is playing, reproducing
+the reported defect exactly) against the playback scenario, and
+`keep_the_old_range_after_crossing_out_of_it` (the segment hand-over removed) against `npm test`.

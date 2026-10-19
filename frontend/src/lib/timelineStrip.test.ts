@@ -6,6 +6,9 @@ import {
   pieceColorIndex,
   pieceColorSlots,
   segmentAtMs,
+  segmentStep,
+  seekPlan,
+  stripTicks,
 } from './timelineStrip.ts';
 
 /** Two ids the palette gives the same slot, found rather than hardcoded. */
@@ -121,4 +124,102 @@ test('outside the sitting the nearest edge still answers', () => {
 
 test('no segments at all is null rather than a guess', () => {
   assert.equal(segmentAtMs([], 1_000), null);
+});
+
+// --- what a seek does to the sound ---
+//
+// The strip is one surface with two meanings, and which one applies is not a matter of taste:
+// it follows whether anything is playing. Silence in, silence out; sound in, sound moved. These
+// tests are the whole rule, because the component can only wire them to a pointer.
+
+const spans = [
+  { id: 1, start_ms: 20_000, end_ms: 40_000 },
+  { id: 2, start_ms: 60_000, end_ms: 90_000 },
+];
+
+test('a seek with nothing playing moves the playhead and starts nothing', () => {
+  const plan = seekPlan(null, 120_000, 65_000, segmentAtMs(spans, 65_000));
+  assert.deepEqual(plan, { atMs: 65_000, resume: null });
+});
+
+test('a seek inside the sounding range keeps that range', () => {
+  const playing = { fromMs: 0, toMs: 120_000, segmentId: null };
+  const plan = seekPlan(playing, 120_000, 70_000, segmentAtMs(spans, 70_000));
+  assert.deepEqual(plan.resume, playing, 'the whole sitting keeps playing the whole sitting');
+});
+
+test('a seek out of the sounding range moves the range to the segment it landed in', () => {
+  const playing = { fromMs: 20_000, toMs: 40_000, segmentId: 1 };
+  const plan = seekPlan(playing, 120_000, 70_000, segmentAtMs(spans, 70_000));
+  assert.deepEqual(
+    plan.resume,
+    { fromMs: 60_000, toMs: 90_000, segmentId: 2 },
+    'leaving a segment for another one plays the one you asked for',
+  );
+});
+
+test('a seek out of the range into a silence falls back to the whole sitting', () => {
+  const playing = { fromMs: 20_000, toMs: 40_000, segmentId: 1 };
+  const plan = seekPlan(playing, 120_000, 110_000, null);
+  assert.deepEqual(plan.resume, { fromMs: 0, toMs: 120_000, segmentId: null });
+});
+
+test('a transport step plays even when nothing was playing', () => {
+  const whole = { fromMs: 0, toMs: 120_000, segmentId: null };
+  const plan = seekPlan(null, 120_000, 30_000, segmentAtMs(spans, 30_000), whole);
+  assert.deepEqual(plan.resume, whole, 'a transport button that moved but stayed silent is a dead button');
+});
+
+test('a seek is clamped to the sitting at both ends', () => {
+  assert.equal(seekPlan(null, 120_000, -5_000, null).atMs, 0);
+  assert.equal(seekPlan(null, 120_000, 500_000, null).atMs, 120_000);
+});
+
+test('a range already at the very start still counts as containing the start', () => {
+  const playing = { fromMs: 0, toMs: 40_000, segmentId: 1 };
+  assert.deepEqual(seekPlan(playing, 120_000, 0, segmentAtMs(spans, 0)).resume, playing);
+});
+
+// --- stepping from segment to segment ---
+
+test('forward steps to the start of the next segment', () => {
+  assert.equal(segmentStep(spans, 25_000, 1, 120_000), 60_000);
+  assert.equal(segmentStep(spans, 0, 1, 120_000), 20_000, 'from the intro, the first segment');
+});
+
+test('forward past the last segment goes to the end rather than nowhere', () => {
+  assert.equal(segmentStep(spans, 85_000, 1, 120_000), 120_000);
+});
+
+test('back restarts a segment you are well into, and leaves one you only just entered', () => {
+  assert.equal(segmentStep(spans, 30_000, -1, 120_000), 20_000, 'well inside: back to its start');
+  assert.equal(
+    segmentStep(spans, 61_000, -1, 120_000),
+    20_000,
+    'a second into the second segment is "previous segment", or repeated presses would stick',
+  );
+  assert.equal(segmentStep(spans, 70_000, -1, 120_000), 60_000);
+});
+
+test('back before the first segment reaches the start of the sitting', () => {
+  assert.equal(segmentStep(spans, 0, -1, 120_000), 0);
+  assert.equal(segmentStep(spans, 20_500, -1, 120_000), 0, 'there is nothing before the first one');
+});
+
+test('stepping with no segments is the two ends of the sitting', () => {
+  assert.equal(segmentStep([], 5_000, 1, 120_000), 120_000);
+  assert.equal(segmentStep([], 5_000, -1, 120_000), 0);
+});
+
+// --- the clock along the strip ---
+
+test('the ruler divides the sitting evenly and starts at zero', () => {
+  assert.deepEqual(stripTicks(120_000, 4), [0, 30_000, 60_000, 90_000, 120_000]);
+  assert.deepEqual(stripTicks(120_000, 1), [0, 120_000]);
+});
+
+test('the ruler survives the degenerate cases', () => {
+  assert.deepEqual(stripTicks(0, 4), [0, 0, 0, 0, 0]);
+  assert.deepEqual(stripTicks(1_000, 0), [0, 1_000], 'no divisions is still the two ends');
+  assert.deepEqual(stripTicks(1_000, -3), [0, 1_000]);
 });

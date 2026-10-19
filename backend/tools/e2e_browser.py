@@ -4212,6 +4212,137 @@ def scenario_playback(browser) -> None:
     click_button(page, "Stop")
     page.wait_for_timeout(300)
 
+    # --- the strip as a transport ---
+    #
+    # The owner's report: a two-hour sitting cannot be crossed with the 30-second buttons, and
+    # pressing the strip *while it played* appeared to do nothing at all — the readout moved and
+    # the next progress tick put it straight back, because the sound had never moved. So the
+    # press now follows the sound: silent when nothing is playing (asserted above, on the
+    # eight-second sitting), a seek when something is.
+    #
+    # The long sitting is the subject here rather than the short one: it is 77 seconds with two
+    # phrases in opposite registers, so a seek lands somewhere the assertion can tell apart from
+    # where it started, and the gap between 10 s and 70 s is long enough that "notes are still
+    # arriving" means the transport really restarted at the press rather than ran on.
+    with page.expect_response(lambda r: r.url.endswith(f"/api/practice/sittings/{sitting_id}")):
+        page.click(f'[data-sitting="{sitting_id}"]')
+    page.wait_for_selector("[data-strip]", timeout=20_000)
+    long_segments = api(f"/api/practice/sittings/{sitting_id}")["segments"]
+    check(
+        len(long_segments) >= 2,
+        f"the long sitting has segments to step between ({len(long_segments)})",
+    )
+    top = int(page.get_attribute("[data-strip]", "aria-valuemax"))
+
+    # The scale, without which a press on a 77-second (or two-hour) strip is guessed: about nine
+    # seconds per pixel at that length.
+    ticks = page.locator("[data-ruler] .tick")
+    check(ticks.count() == 5, f"the strip carries a clock scale ({ticks.count()} labels)")
+    readout = page.inner_text("[data-position]")
+    check(
+        ticks.nth(4).inner_text().strip() == readout.split("/")[1].strip(),
+        f"whose last label is the sitting's own length ({ticks.nth(4).inner_text()!r} in {readout!r})",
+    )
+
+    click_button(page, "Play the sitting")
+    page.wait_for_timeout(700)
+    page.evaluate("() => window.__fakeMidi.forget()")
+    box = page.locator("[data-strip]").bounding_box()
+    # Near the end of the second phrase, where notes are dense: "the sound restarted where the
+    # press was aimed" is then observable inside a second instead of eight.
+    page.mouse.click(box["x"] + box["width"] * 0.95, box["y"] + box["height"] / 2)
+    page.wait_for_timeout(900)
+    check(
+        page.locator('[data-playing="true"]').count() == 1,
+        "a press on a sounding strip keeps it sounding",
+    )
+    sought = int(page.get_attribute("[data-strip]", "aria-valuenow"))
+    check(
+        abs(sought / top - 0.95) < 0.06,
+        f"and carries the sound to where the press was aimed ({sought} s of {top})",
+    )
+    check(
+        len(page.evaluate("() => window.__fakeMidi.noteOns()")) > 0,
+        "producing the notes of that place, so the transport really restarted there",
+    )
+
+    # Dragging: the gesture a long sitting actually needs, because one press is only accurate to
+    # a pixel and the pointer is the only thing that can cover two hours in one movement.
+    page.mouse.move(box["x"] + box["width"] * 0.2, box["y"] + box["height"] / 2)
+    page.mouse.down()
+    page.mouse.move(box["x"] + box["width"] * 0.45, box["y"] + box["height"] / 2, steps=12)
+    dragged = int(page.get_attribute("[data-strip]", "aria-valuenow"))
+    check(
+        abs(dragged / top - 0.45) < 0.06,
+        f"dragging moves the playhead with the pointer ({dragged} s of {top})",
+    )
+    page.mouse.up()
+    page.wait_for_timeout(700)
+    released = int(page.get_attribute("[data-strip]", "aria-valuenow"))
+    check(
+        abs(released / top - 0.45) < 0.1,
+        f"and releasing resumes the sound from where the pointer let go ({released} s of {top})",
+    )
+    check(
+        page.locator('[data-playing="true"]').count() == 1,
+        "with the transport left playing",
+    )
+
+    # Segment by segment: the unit this screen is drawn in, and the only step that crosses a
+    # sitting at a usable speed — 30-second buttons would need 240 presses for two hours.
+    page.focus("[data-strip]")
+    page.keyboard.press("Home")
+    page.wait_for_timeout(400)
+    check(
+        int(page.get_attribute("[data-strip]", "aria-valuenow")) == 0,
+        "Home returns the playhead to the start",
+    )
+    click_button(page, "Stop")
+    page.wait_for_timeout(200)
+    page.click("[data-step-segment-forward]")
+    page.wait_for_timeout(500)
+    second_start = round(long_segments[1]["start_ms"] / 1000)
+    stepped = int(page.get_attribute("[data-strip]", "aria-valuenow"))
+    check(
+        stepped == second_start,
+        f"a step forward lands on the next segment's start ({stepped} s, expected {second_start})",
+    )
+    check(
+        page.locator('[data-playing="true"]').count() == 1,
+        "and keeps listening, because a transport button that moved in silence is a dead button",
+    )
+    page.click("[data-step-segment-back]")
+    page.wait_for_timeout(500)
+    back = int(page.get_attribute("[data-strip]", "aria-valuenow"))
+    check(
+        back == round(long_segments[0]["start_ms"] / 1000),
+        f"and stepping back from just inside a segment walks out of it rather than sticking ({back} s)",
+    )
+
+    # "From here": placing the playhead and then hunting for the right *▶ notes* was two steps
+    # for one intent, so the second one is a button of its own.
+    click_button(page, "Stop")
+    page.wait_for_timeout(200)
+    page.mouse.click(box["x"] + box["width"] * 0.92, box["y"] + box["height"] / 2)
+    page.wait_for_timeout(300)
+    check(
+        page.locator("[data-play-from-here]").is_enabled(),
+        "a placed playhead offers to be listened to from there",
+    )
+    page.evaluate("() => window.__fakeMidi.forget()")
+    page.click("[data-play-from-here]")
+    page.wait_for_timeout(900)
+    check(
+        page.locator('[data-playing="true"]').count() == 1,
+        "one press starts the sitting from the playhead",
+    )
+    check(
+        len(page.evaluate("() => window.__fakeMidi.noteOns()")) > 0,
+        "and it makes the notes of that place",
+    )
+    click_button(page, "Stop")
+    page.wait_for_timeout(300)
+
     # --- the falling notes ---
     check(page.locator("[data-piano-roll]").count() == 0, "the roll starts hidden")
     page.check("[data-roll-toggle]")

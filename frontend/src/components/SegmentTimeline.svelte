@@ -18,7 +18,8 @@
   } from '../lib/playback';
   import { formatClock, parseClock } from '../lib/clock';
   import { PRACTICE_KINDS, kindCounts, practiceKindLabel } from '../lib/kinds';
-  import { pieceColorSlots, segmentAtMs } from '../lib/timelineStrip';
+  import { pieceColorSlots, segmentAtMs, segmentStep, seekPlan, stripTicks } from '../lib/timelineStrip';
+  import type { StripRange } from '../lib/timelineStrip';
   import { pieceLabel, uniquePieceLabels } from '../lib/pieceLabel';
   import {
     type PieceSummary,
@@ -183,6 +184,14 @@
   let playing = $state<{ fromMs: number; toMs: number; segmentId: number | null } | null>(null);
   /** Where the playhead is, in milliseconds, whether or not anything is playing. */
   let position = $state(0);
+  /**
+   * Whether a drag on the strip is in progress.
+   *
+   * While it is, the playhead belongs to the pointer rather than to the player, so the
+   * progress callback is ignored — otherwise every drag would be fought by the tick that
+   * reports where the sound still is.
+   */
+  let scrubbing = $state(false);
   let playError = $state<string | null>(null);
   let showRoll = $state(false);
   /**
@@ -300,7 +309,9 @@
         until: toMs / 1000,
         pedals: loaded?.sittingId === detail.id ? loaded.pedals : [],
         onProgress: (handle) => {
-          position = handle.elapsed * 1000;
+          // The pointer owns the playhead while it is down, so a drag is not undone by the
+          // tick that reports where the sound still is.
+          if (!scrubbing) position = handle.elapsed * 1000;
         },
         onError: (message) => {
           playError = message;
@@ -316,20 +327,73 @@
   }
 
   /**
-   * Move to a point on the strip: the playhead follows the click, the list follows the
-   * playhead, and nothing is played.
+   * Act on a press on the strip: the playhead follows it, the list follows the playhead, and
+   * whether anything is heard is decided by `seekPlan` rather than here.
    *
-   * The strip used to be a transport — a click started the sitting from that point — which put
-   * sound and a running playhead behind what is really a "show me that bit" gesture. Listening
-   * is still one press away, on the segment's own *▶ notes* control, and the falling notes stay
-   * still instead of animating away from the block that was just clicked.
+   * The rule is that the sound follows the sound. With silence the press only places the
+   * playhead, which is how the strip is used to look around without making a noise. With
+   * something playing the press moves the playback, because otherwise it would appear to do
+   * nothing: the player's next progress tick puts the playhead back where the sound actually is.
    */
-  function navigateTo(event: MouseEvent): void {
-    const strip = event.currentTarget as HTMLElement;
+  function applySeek(atMs: number, fallback: StripRange | null): void {
+    const plan = seekPlan(
+      playing,
+      total,
+      atMs,
+      segmentAtMs(detail.segments, atMs),
+      fallback,
+    );
+    moveTo(plan.atMs);
+    if (plan.resume === null) return;
+    // The awaited fetch is deliberate: a seek is a fresh start of the transport, and the
+    // player reports its own errors through `playError`.
+    void play(plan.resume.fromMs, plan.resume.toMs, plan.resume.segmentId, plan.atMs);
+  }
+
+  /** Where the press landed, as a fraction of the strip. */
+  function ratioAt(event: { clientX: number; currentTarget: EventTarget | null }): number {
+    const strip = event.currentTarget as HTMLElement | null;
+    if (strip === null) return 0;
     const bounds = strip.getBoundingClientRect();
-    if (bounds.width <= 0) return;
-    const ratio = Math.min(1, Math.max(0, (event.clientX - bounds.left) / bounds.width));
-    moveTo(ratio * total);
+    if (bounds.width <= 0) return 0;
+    return Math.min(1, Math.max(0, (event.clientX - bounds.left) / bounds.width));
+  }
+
+  /**
+   * A press begins a scrub: the playhead follows the pointer, and the sound waits.
+   *
+   * Dragging is the gesture a two-hour sitting needs, because at that length a click is only
+   * good to about nine seconds. Scrubbing silently and resuming on release keeps it one
+   * gesture instead of one restart per pixel — the player would otherwise be torn down and
+   * rebuilt sixty times a second.
+   */
+  function onStripPointerDown(event: PointerEvent): void {
+    if (event.button !== 0) return;
+    const strip = event.currentTarget as HTMLElement;
+    strip.setPointerCapture(event.pointerId);
+    scrubbing = true;
+    moveTo(ratioAt(event) * total);
+  }
+
+  function onStripPointerMove(event: PointerEvent): void {
+    if (!scrubbing) return;
+    moveTo(ratioAt(event) * total);
+  }
+
+  /**
+   * The release ends the scrub, and the `click` that follows it commits the seek.
+   *
+   * Committing here rather than in the click handler would fire twice for a plain press, since
+   * a browser always follows a press and release with a click; committing *only* in `click`
+   * keeps one owner for the gesture. Pointer capture is what makes that safe for a drag: the
+   * pointer events stay on the strip wherever the pointer goes, so the click lands on the strip
+   * too, and a drag off the bottom of the strip still commits where it was released.
+   */
+  function onStripPointerUp(event: PointerEvent): void {
+    if (!scrubbing) return;
+    scrubbing = false;
+    const strip = event.currentTarget as HTMLElement;
+    if (strip.hasPointerCapture(event.pointerId)) strip.releasePointerCapture(event.pointerId);
   }
 
   /** Put the playhead at `atMs`, and bring the segment it belongs to into view. */
@@ -367,16 +431,42 @@
     list.scrollTop = Math.max(0, Math.min(centred, list.scrollHeight - list.clientHeight));
   }
 
-  /** Move the playhead a step without playing: the keyboard's version of a click on the strip. */
+  /**
+   * Move the playhead by a fixed step.
+   *
+   * A keyboard step follows the same rule as a press: it seeks the playback when something is
+   * playing and stays silent when nothing is. It is not a transport action of its own.
+   */
   function seekBy(seconds: number): void {
-    moveTo(position + seconds * 1000);
+    applySeek(position + seconds * 1000, null);
   }
 
-  /** Move the playhead by a fixed step, keeping whatever range was being played. */
+  /** The whole sitting, which is what a transport button resumes when nothing else was playing. */
+  const wholeSitting = $derived<StripRange>({ fromMs: 0, toMs: total, segmentId: null });
+
+  /**
+   * Move the playhead by a fixed step and keep listening.
+   *
+   * A transport button that moved the playhead and left it silent would be a dead button, and
+   * the range that was playing is the one it resumes.
+   */
   function jump(bySeconds: number): void {
-    const target = Math.min(total, Math.max(0, position + bySeconds * 1000));
-    void play(playing?.fromMs ?? 0, playing?.toMs ?? total, playing?.segmentId ?? null, target);
+    applySeek(position + bySeconds * 1000, wholeSitting);
   }
+
+  /**
+   * Skip a whole segment, in either direction.
+   *
+   * The segment is the unit this screen is drawn in, so it is the unit for skipping: the
+   * 30-second buttons cannot cross a two-hour sitting at a usable speed, and they do not land
+   * where the player thinks in boundaries.
+   */
+  function stepSegment(direction: 1 | -1): void {
+    applySeek(segmentStep(detail.segments, position, direction, total), wholeSitting);
+  }
+
+  /** The clock labels under the strip, so a press is aimed rather than guessed. */
+  const ticks = $derived(stripTicks(total, 4));
 
   function stop(): void {
     player.stop();
@@ -522,7 +612,40 @@
       >
         Play the sitting
       </button>
+      <!-- Always present, disabled until there is somewhere to start from: a button that
+           appeared on the first drag would reflow the row above the strip and move the strip
+           out from under the pointer mid-scrub. -->
+      <button
+        class="ghost tiny"
+        data-play-from-here
+        disabled={detail.note_count === 0 || position <= 0 || position >= total - 1}
+        title="Play from where the playhead is, to the end of the sitting"
+        onclick={() => applySeek(position, wholeSitting)}
+      >
+        ▶ From here
+      </button>
     {/if}
+
+    <span class="row jump">
+      <button
+        class="ghost tiny"
+        data-step-segment-back
+        disabled={detail.note_count === 0 || detail.segments.length === 0}
+        title="Back to the start of this segment, or to the previous one"
+        onclick={() => stepSegment(-1)}
+      >
+        « segment
+      </button>
+      <button
+        class="ghost tiny"
+        data-step-segment-forward
+        disabled={detail.note_count === 0 || detail.segments.length === 0}
+        title="On to the start of the next segment"
+        onclick={() => stepSegment(1)}
+      >
+        segment »
+      </button>
+    </span>
 
     <span class="row jump">
       <button class="ghost tiny" disabled={detail.note_count === 0} onclick={() => jump(-30)}>
@@ -541,7 +664,8 @@
     </label>
 
     <span class="muted small">
-      Click the strip to jump to that segment below — it moves the playhead and plays nothing.
+      Press or drag the strip to move through the sitting — silent until something is playing, and
+      a press while listening carries the sound with it.
       Played through
       {app.instrument === 'midi'
         ? 'the piano itself'
@@ -571,21 +695,35 @@
     </p>
   {:else}
     <!-- A slider, not a picture: the strip sets the position, so it takes focus and the arrow
-         keys move the playhead the way the pointer does. Neither plays — the transport buttons
-         below the strip are what make a sound. -->
+         keys move the playhead the way the pointer does. What the position costs is decided by
+         whether anything is playing: silent when nothing is, a seek when something is. -->
     <div
       class="strip"
       role="slider"
       tabindex="0"
-      aria-label="Sitting timeline — click or press the arrow keys to move to a point; the segment list below follows"
+      aria-label="Sitting timeline — press or drag, or use the arrow keys, Page Up/Down and Home/End, to move to a point; the segment list below follows"
       aria-valuemin="0"
       aria-valuemax={Math.round(detail.duration_s)}
       aria-valuenow={Math.round(position / 1000)}
       data-strip
-      onclick={navigateTo}
+      onpointerdown={onStripPointerDown}
+      onpointermove={onStripPointerMove}
+      onpointerup={onStripPointerUp}
+      onpointercancel={onStripPointerUp}
+      onclick={(event) => applySeek(ratioAt(event) * total, null)}
       onkeydown={(event) => {
         if (event.key === 'ArrowRight') seekBy(5);
-        if (event.key === 'ArrowLeft') seekBy(-5);
+        else if (event.key === 'ArrowLeft') seekBy(-5);
+        // Five minutes a press, because the arrows are for the passage and this is for the
+        // sitting: crossing two hours at five seconds a press is not navigation.
+        else if (event.key === 'PageUp') seekBy(300);
+        else if (event.key === 'PageDown') seekBy(-300);
+        else if (event.key === 'Home') applySeek(0, null);
+        else if (event.key === 'End') applySeek(total, null);
+        else return;
+        // The slider consumes the key it handles. Without this, Home and End would also scroll
+        // the document out from under the strip the player is aiming at.
+        event.preventDefault();
       }}
     >
       {#each detail.segments as segment (segment.id)}
@@ -645,6 +783,24 @@
              first note is at the start actually begins. -->
         <span class="playhead" data-playhead style="left: {playhead.at}%"></span>
       {/if}
+    </div>
+
+    <!-- The scale, which the strip itself cannot show: a two-hour sitting is about nine
+         seconds per pixel, so without labels a press is guessed rather than aimed. Purely a
+         reading of the strip, so it is hidden from the accessibility tree — the slider above
+         already reports its value. -->
+    <div class="ruler" data-ruler aria-hidden="true">
+      {#each ticks as tick, index (index)}
+        <span
+          class="tick"
+          class:first={index === 0}
+          class:last={index === ticks.length - 1}
+          style="left: {(tick / total) * 100}%"
+          data-tick={tick}
+        >
+          {formatClock(tick / 1000)}
+        </span>
+      {/each}
     </div>
 
     <ul class="segments" bind:this={listElement}>
@@ -1013,6 +1169,43 @@
     border-radius: 6px;
     background: var(--track);
     overflow: hidden;
+    /* A press is a seek, so the pointer says so; and a drag must scrub rather than scroll the
+       page out from under the strip on a touch screen. */
+    cursor: pointer;
+    touch-action: none;
+  }
+
+  .strip:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  /* The clock under the strip. Kept out of the strip's own box so the blocks, the hairlines and
+     the playhead still fill it edge to edge. */
+  .ruler {
+    position: relative;
+    height: 1rem;
+    margin-top: 0.15rem;
+  }
+
+  .ruler .tick {
+    position: absolute;
+    top: 0;
+    transform: translateX(-50%);
+    font-size: 0.7rem;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  /* The ends are pulled inside the strip rather than centred on it, so neither label is cut
+     off by the panel's edge. */
+  .ruler .tick.first {
+    transform: none;
+  }
+
+  .ruler .tick.last {
+    transform: translateX(-100%);
   }
 
   .block {

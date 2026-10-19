@@ -212,7 +212,7 @@ this document carries the rest.
 | 12 | **Ops polish** | Nightly rotating backups, a health panel, latency suggested from your own timing bias. | low |
 | 13 | **Library depth** | Attach and render scores (PDF and MusicXML), waveform with A/B loop, sustain pedal captured, self-similarity auto-tagging. **Landed in full (13a and 13b).** | medium |
 | 14 | **More musical content** | Unusual meters, clef reading, dynamics and articulation depth. **Planned.** | medium |
-| 15 | **Playback you can navigate, and a real piano** | Seeking into a long sitting (a transport strip, arrow-key and `« 30 s` / `30 s »` jumps), one shared player instead of one per component, and the sampled piano fetched once and served locally. **Landed.** | medium |
+| 15 | **Playback you can navigate, and a real piano** | Seeking into a long sitting (a strip that follows the sound — silent when idle, a seek while playing — a drag, a clock ruler, arrow-key, segment and `« 30 s` / `30 s »` steps), one shared player instead of one per component, and the sampled piano fetched once and served locally. **Landed**, with the transport amended after the owner used it. | medium |
 | 16 | **The exercise ladder actually climbs** | The anchor's arithmetic: 25 attempts per skill at a rating near 800 still served level 1, because the selector aims 220 Elo below the rating while a level is 100 Elo. Diagnosed from the backup — 306 of 324 `exercise_skills` rows were level 1. **Landed.** | medium |
 | 17 | **A sitting ends when the piano does** | The dashboard refreshes itself, a MIDI disconnect closes the sitting (`CLOSE_QUIET_MS`), and segmentation is retuned from a real 42-minute sitting. **Landed.** | low |
 | 18 | **The data the logger already has** | 18a: the journal joins the measurement — a sitting link, a real editor, a calendar series. 18b: the pedal, touch and register numbers that are recorded and unused. **Landed.** | medium |
@@ -876,15 +876,24 @@ about a field nobody could identify.
   data, and serves them from this host at `/piano/…`. Attribution travels in the status
   payload and is shown next to the button, because a credit that lives only in a README
   is not really a credit.
-- **Seeking into a long sitting.** The timeline strip is a way of pointing at an attempt:
-  clicking it moves the playhead there, brings the matching row of the list into view, and plays
-  nothing — the arrow keys move by five seconds the same way, `« 30 s` / `30 s »` jump *and*
-  play, and a position readout shows where you are. It began as a transport, where a click
-  started the sitting from that point; that put sound and a running playhead behind what is
-  really a "show me that bit" gesture, and animated the falling notes away from the block just
-  clicked. Playing a range with a start position is what the player gained — `fromTime()`
-  rebases the notes and a note still sounding at the seek point is kept, shortened, rather
-  than dropped.
+- **Seeking into a long sitting.** The timeline strip follows the sound. With nothing playing a
+  press places the playhead, brings the matching row of the list into view and stays silent —
+  that is how the strip is used to point at an attempt. With something playing the press *carries
+  the sound*, because a playhead that did not move with the playback was put straight back by the
+  next progress tick, so the press looked like it had done nothing at all. Leaving the range that
+  is playing hands over to the segment under the press, so crossing a boundary listens to the
+  passage that was asked for rather than the rest of the one being left. Dragging scrubs — the
+  playhead follows the pointer and the transport resumes once, on release — which is the only
+  gesture that crosses a two-hour sitting in one movement; a clock ruler under the strip makes a
+  press aimed rather than guessed (`seekPlan`, `segmentStep` and `stripTicks` in
+  `timelineStrip.ts`, decided and tested without a browser). Arrow keys move five seconds, Page
+  Up/Down five minutes and Home/End the two ends; `« segment` / `segment »` step boundary to
+  boundary, and the segment steps, `« 30 s` / `30 s »` and *▶ From here* all play, because a
+  transport button that moved in silence is a dead button. It began as a transport, then became a
+  pure finder in Phase 15; the owner used neither for a long sitting, which is what the
+  press-while-playing rule and the drag exist to fix. Playing a range with a start position is
+  what the player gained — `fromTime()` rebases the notes and a note still sounding at the seek
+  point is kept, shortened, rather than dropped.
 - **Falling notes.** `PianoRoll.svelte` draws a keyboard with the notes falling onto it,
   driven by the same playhead. The geometry is a pure module (`pianoRoll.ts`) because
   the direction notes fall is exactly the thing that is miserable to debug on a canvas —
@@ -935,6 +944,19 @@ One real bug came out of writing the browser scenario: the sitting's notes were 
 per *component* rather than per sitting, so choosing a second sitting played the first
 one's notes. The cache is keyed on the sitting id now, and the scenario uses pitches no
 other sitting plays so a stale cache cannot pass by accident.
+
+**Amended after the owner used it on a real sitting.** Two of the four transport decisions
+above did not survive contact. First, the press-while-playing rule: a press on the strip did
+move the playhead, but the player's next progress tick put it straight back, so during
+playback the strip did nothing at all — the readout blinked and the sound never moved. A
+press now follows the sound: silent with nothing playing, a seek while something is. Second,
+the 30-second buttons are not a way to cross a two-hour sitting — 240 presses, and each one
+restarts the transport — so the strip gained a drag (silent while the pointer is down, one
+resume on release, which is also why a progress tick must not own the playhead mid-drag), a
+clock ruler so a press is aimed rather than guessed, and `« segment` / `segment »` steps on
+the boundaries the screen is already organised around. `seekPlan`, `segmentStep` and
+`stripTicks` live in `timelineStrip.ts` and are tested without a browser; the browser
+scenario drives a real drag on the 77-second fixture and asserts the sound carried with it.
 
 ### Phase 17 — landed (a sitting ends when the piano does)
 
