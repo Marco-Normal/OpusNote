@@ -86,9 +86,11 @@ of them race.
 - **Upgrade:** `git pull && sudo ./deploy/install.sh`. That reinstalls the venv,
   rebuilds the client, writes the units and **restarts the service**, which is the part
   that makes it an upgrade rather than a no-op — `systemctl enable --now` alone leaves
-  the old process serving the old code. The database migrates itself on first start
-  (the new tables and columns are additive), and the installer writes a backup before
-  the new code ever runs. A browser tab that was already open keeps the old client
+  the old process serving the old code. The database migrates itself on first start:
+  mostly new tables and columns, but the release that packed the pedal stream rewrites
+  and drops `pedal_events` once — seconds, plus one `VACUUM` that needs free space equal
+  to the file ([DEPLOYMENT.md](../docs/DEPLOYMENT.md) § *A backup is versioned*). The
+  installer writes a backup before the new code ever runs. A browser tab that was already open keeps the old client
   bundle in memory, so reload the kiosk afterwards:
   ```bash
   pkill -f 'user-data-dir=.*piano-ecosystem-kiosk'   # the wrapper restarts it

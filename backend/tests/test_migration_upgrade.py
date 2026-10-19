@@ -309,6 +309,42 @@ def test_init_db_upgrades_the_fixture_without_losing_a_row() -> None:
         conn.close()
 
 
+def test_a_failed_vacuum_leaves_a_working_database(monkeypatch, capsys) -> None:
+    """The conversion commits before the vacuum, so a full disk must not stop the upgrade.
+
+    `VACUUM` needs free space equal to the file it rewrites, and the pedal conversion is the
+    only migration that shrinks one. On the notebook an unguarded vacuum that failed would
+    turn an upgrade into a service that never starts, over pages that are merely on the
+    freelist — disk, not data.
+    """
+    path = _build_fixture_db("no-vacuum.sqlite3")
+    real_connect = db.connect
+
+    class FullDisk:
+        def __init__(self, conn):
+            self._conn = conn
+
+        def execute(self, sql, *args):
+            if sql.strip().upper().startswith("VACUUM"):
+                raise sqlite3.OperationalError("database or disk is full")
+            return self._conn.execute(sql, *args)
+
+        def __getattr__(self, name):
+            return getattr(self._conn, name)
+
+    monkeypatch.setattr(db, "connect", lambda path=None: FullDisk(real_connect(path)))
+    db.init_db(path)
+    monkeypatch.undo()
+
+    assert "VACUUM by hand" in capsys.readouterr().err, "the operator is told what is left to do"
+    conn = db.connect(path)
+    try:
+        assert "pedal_events" not in _tables(conn), "the conversion committed anyway"
+        assert sum(row[0] for row in conn.execute("SELECT n FROM pedal_stream")) == 1
+    finally:
+        conn.close()
+
+
 def test_a_second_init_db_is_a_no_op() -> None:
     path = _build_fixture_db("idempotent.sqlite3")
     db.init_db(path)

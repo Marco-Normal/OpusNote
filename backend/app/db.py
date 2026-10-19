@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import sys
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -225,7 +226,19 @@ def init_db(db_path: Path | None = None) -> None:
         # has committed (VACUUM cannot run inside one). It needs free space equal to the
         # file's size, which is why it is not run on every start.
         if any(step.startswith("pedal_events -> pedal_stream") for step in practice_work):
-            conn.execute("VACUUM")
+            try:
+                conn.execute("VACUUM")
+            except sqlite3.OperationalError as error:
+                # The conversion has committed already; the vacuum only gives back the pages
+                # the dropped table left behind. A disk with less free space than the file is
+                # large would otherwise turn the upgrade into a service that cannot start, on
+                # a machine whose owner is sitting at a piano. The footprint stays until
+                # someone runs `VACUUM` by hand, which is in `docs/DEPLOYMENT.md`.
+                print(
+                    f"warning: the vacuum after the pedal conversion failed ({error});"
+                    " run VACUUM by hand when there is free space",
+                    file=sys.stderr,
+                )
     finally:
         conn.close()
     # The path may now hold a different database than it did (a wipe before a test, a

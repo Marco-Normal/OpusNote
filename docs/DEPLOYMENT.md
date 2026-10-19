@@ -204,6 +204,15 @@ against 78.1 MB as 68-byte rows, which was more than every note in the file put 
 version-1 document still imports: its `pedal_events` rows are re-encoded into the stream on the way
 in, and the local test fixture is exactly such a document, so that path is exercised on every run.
 
+**That first start after the pedal change rewrote data, and it needs room.** The conversion
+replaces 1,151,770 rows with packed chunks inside one transaction, then runs a single `VACUUM`,
+because SQLite leaves the dropped table's pages on a freelist instead of shrinking the file. The
+vacuum needs free space equal to the database, so take the backup the installer writes anyway and
+check `df` on the notebook first; on the owner's 188 MB file it takes seconds. If the disk cannot
+hold it the app still starts and prints `run VACUUM by hand when there is free space` to the
+journal — `journalctl -u piano-ecosystem | grep -i vacuum` — and the file keeps its old footprint
+until someone does.
+
 Both routes are **streamed**: the server writes the document a row at a time rather than holding it
 in memory, so a backup costs about one row of memory however large the library grows. A run in
 progress appears as `piano-ecosystem-<date>.json.part` and is renamed into place when it finishes —
