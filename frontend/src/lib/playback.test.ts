@@ -235,10 +235,49 @@ test('the pedal-down threshold is the specification rule, written once', () => {
   // but every consumer has to answer this one question, so it is answered here and
   // imported by both — the value used to be spelled out twice, in two files.
   assert.equal(PEDAL_DOWN, 64);
-  const half = sustained(oneNote(), [pedalAt(0, PEDAL_DOWN - 1), pedalAt(2000, 0)]);
-  assert.equal(half[0].duration, 0.5, 'a half-depressed pedal reads as released');
+  // At the threshold it is a held string: the note runs to the pedal-up.
   const down = sustained(oneNote(), [pedalAt(0, PEDAL_DOWN), pedalAt(2000, 0)]);
-  assert.equal(down[0].duration, 2, 'and at the threshold it is down');
+  assert.equal(down[0].duration, 2, 'at the threshold it is down');
+});
+
+test('a pedal resting in the partial band rings on, in proportion to its depth', () => {
+  // Half a damper is neither a released note nor a held one: the felt still touches
+  // the string, so it decays over a moment. Half-way down (32 of 64) is half of that
+  // moment. Measured on the owner's log: 8.4% of notes are released in this band.
+  const half = sustained(oneNote(), [pedalAt(0, 32), pedalAt(5000, 0)]);
+  assert.equal(half[0].duration, 1.25, '0.5s of key + 0.75s of residual ring');
+  const deeper = sustained(oneNote(), [pedalAt(0, 48), pedalAt(5000, 0)]);
+  assert.equal(deeper[0].duration, 1.625, 'three-quarters down rings for longer');
+});
+
+test('the residual ring grows with the depth and stops at the specification line', () => {
+  const ringAt = (value: number) =>
+    sustained(oneNote(), [pedalAt(0, value), pedalAt(9000, 0)])[0].duration;
+  assert.equal(ringAt(0), 0.5, 'no pedal at all leaves the note alone');
+  assert.ok(ringAt(8) < ringAt(32), 'a barely lifted damper rings least');
+  assert.ok(ringAt(32) < ringAt(48));
+  assert.ok(ringAt(63) < 2, 'and the residual never outlasts the held string at 64');
+});
+
+test('a partial pedal only ever lengthens a note', () => {
+  const long = [{ pitch: 60, onset: 0, duration: 4, velocity: 0.6, hand: null }];
+  const notes = sustained(long, [pedalAt(0, 20)]);
+  assert.ok(notes[0].duration > 4, 'the residual is added, never substituted');
+  assert.equal(notes[0].duration, 4 + (20 / 64) * 1.5);
+});
+
+test('a partial pedal is read per note, not per stretch', () => {
+  // The pedal is riding at 32 when the first note is released and has been lifted by
+  // the time the second one is, so only the first rings on.
+  const notes = sustained(
+    [
+      { pitch: 60, onset: 0, duration: 0.4, velocity: 0.6, hand: null },
+      { pitch: 62, onset: 3, duration: 0.4, velocity: 0.6, hand: null },
+    ],
+    [pedalAt(0, 32), pedalAt(2000, 0)],
+  );
+  assert.equal(notes[0].duration, 1.15, 'released under a part-lifted damper');
+  assert.equal(notes[1].duration, 0.4, 'released with the pedal already up');
 });
 
 // --------------------------------------------------------------------------

@@ -326,8 +326,13 @@ Every environment variable is optional.
 - **No authentication.** One local profile, by design. `POST /api/profile/reset` clears it.
 - **Startup cost.** Importing music21 takes a second or two; exercises themselves generate in
   roughly 20 ms.
-- **Half-pedalling is not modelled.** The pedal is read as down or up, so a partial press reads as
-  released. This is stated in `practice/pedal.py`, not an oversight.
+- **Half-pedalling is approximated in the browser instruments, exactly on the piano.** The piano is sent
+  the recorded CC64 curve, so its own damper performs the half-pedal. The sampled piano and the FM voice
+  have no damper, so a note released with the pedal part-way down rings on for
+  `(depth / 64) * 1.5 s` — an approximation, not a measurement, and it is labelled as one where it is
+  made (`playback.ts`, `HALF_PEDAL_RING_S`). The *analysis* still counts a press only at 64 and above:
+  MIDI's rule for a switch controller is what makes an on/off pedal work at all, and `partial_ratio` in
+  `practice/pedal.py` reports the band separately rather than moving the threshold.
 - **The LAN surface is read-mostly, not read-only.** With no authentication, anyone who can reach
   the port can read every table and can run a `merge`-mode backup import. Only the irreversible
   paths — delete, profile reset, re-segment with `confirm`, and `replace`-mode import — are refused

@@ -401,7 +401,8 @@ def _segment_rows(conn: sqlite3.Connection, sitting_id: int) -> list[SegmentSumm
                m.mean_velocity, m.velocity_stddev, m.restarts,
                m.median_velocity, m.velocity_range,
                m.mean_velocity_low, m.mean_velocity_high,
-               m.pedal_changes, m.pedal_down_ratio, m.pedal_blur, m.pedal_blur_ms,
+               m.pedal_changes, m.pedal_down_ratio, m.pedal_partial_ratio,
+               m.pedal_blur, m.pedal_blur_ms,
                m.pedal_basis
         FROM segments g
         LEFT JOIN pieces p ON p.id = g.piece_id
@@ -430,6 +431,7 @@ def _segment_rows(conn: sqlite3.Connection, sitting_id: int) -> list[SegmentSumm
                 mean_velocity_high=data["mean_velocity_high"],
                 pedal_changes=data["pedal_changes"],
                 pedal_down_ratio=data["pedal_down_ratio"],
+                pedal_partial_ratio=data["pedal_partial_ratio"],
                 pedal_blur=data["pedal_blur"],
                 pedal_blur_ms=db.json_load(data["pedal_blur_ms"], []),
                 pedal_basis=data["pedal_basis"],
@@ -515,10 +517,10 @@ def _refresh_metrics(conn: sqlite3.Connection, sitting_id: int) -> None:
         conn.execute(
             "INSERT INTO segment_metrics"
             " (segment_id, duration_s, note_count, median_tempo, mean_velocity,"
-            "  velocity_stddev, restarts, pedal_changes, pedal_down_ratio, pedal_blur,"
-            "  pedal_blur_ms, pedal_basis, median_velocity, velocity_range,"
-            "  mean_velocity_low, mean_velocity_high)"
-            " VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)"
+            "  velocity_stddev, restarts, pedal_changes, pedal_down_ratio,"
+            "  pedal_partial_ratio, pedal_blur, pedal_blur_ms, pedal_basis,"
+            "  median_velocity, velocity_range, mean_velocity_low, mean_velocity_high)"
+            " VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)"
             " ON CONFLICT (segment_id) DO UPDATE SET"
             "  duration_s = excluded.duration_s,"
             "  note_count = excluded.note_count,"
@@ -528,6 +530,7 @@ def _refresh_metrics(conn: sqlite3.Connection, sitting_id: int) -> None:
             "  restarts = excluded.restarts,"
             "  pedal_changes = excluded.pedal_changes,"
             "  pedal_down_ratio = excluded.pedal_down_ratio,"
+            "  pedal_partial_ratio = excluded.pedal_partial_ratio,"
             "  pedal_blur = excluded.pedal_blur,"
             "  pedal_blur_ms = excluded.pedal_blur_ms,"
             "  pedal_basis = excluded.pedal_basis,"
@@ -545,6 +548,7 @@ def _refresh_metrics(conn: sqlite3.Connection, sitting_id: int) -> None:
                 stats.restarts,
                 pedalling.changes,
                 pedalling.down_ratio,
+                pedalling.partial_ratio,
                 pedalling.blur,
                 db.json_dump(list(pedalling.blur_at_ms)),
                 BASIS_OBSERVED if pedalling.recorded else None,

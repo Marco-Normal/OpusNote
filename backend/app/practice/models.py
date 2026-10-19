@@ -145,6 +145,9 @@ class SegmentMetricsOut(BaseModel):
     #: Pedal, derived from the raw CC64 stream.
     pedal_changes: int | None = None
     pedal_down_ratio: float | None = None
+    #: Share of the span the pedal spent part-way down. Disjoint from
+    #: `pedal_down_ratio`, so the two together say how long it was doing anything.
+    pedal_partial_ratio: float | None = None
     #: Attacks that brought new harmony over notes the pedal was already holding.
     pedal_blur: int | None = None
     #: Where the blurs were, in ms relative to the sitting, ascending. `pedal_blur` is its

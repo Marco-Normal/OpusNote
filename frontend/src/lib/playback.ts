@@ -208,6 +208,22 @@ export const PEDAL_DOWN = 64;
 const UNCLOSED_PEDAL_TAIL_S = 0.5;
 
 /**
+ * The longest a note rings on when its release falls between no pedal and
+ * `PEDAL_DOWN` — the partial band, which a continuous pedal uses constantly.
+ *
+ * A damper lifted part of the way does not hold the string to the pedal-up: the felt
+ * still touches it, so it decays over a moment instead. That moment is what this
+ * scales, in proportion to how far the pedal is down, and it is an **approximation,
+ * not a measurement** — the sampler has no damper to be told about. Above
+ * `PEDAL_DOWN` the note is held to the pedal-up exactly as before, because that is
+ * what the controller says "down" means.
+ *
+ * Measured on the owner's own sitting: 8.4% of logged notes are released with the
+ * pedal between 10 and 63, and before this they played completely dry.
+ */
+const HALF_PEDAL_RING_S = 1.5;
+
+/**
  * Let the sustain pedal hold each note past its release.
  *
  * The piano reports CC64 as a stream of values, so this turns it into the
@@ -220,6 +236,10 @@ const UNCLOSED_PEDAL_TAIL_S = 0.5;
  * - A pedal still down at the end extends to the end of the last note plus a
  *   short tail rather than to infinity, so a pedal unplugged mid-press cannot
  *   produce a note that never stops.
+ *
+ * And a third, for a continuous pedal: a release in the *partial* band gets a
+ * proportional residual ring rather than being read as fully released. The
+ * measurement and the reason for the approximation are at `HALF_PEDAL_RING_S`.
  */
 export function sustained(
   notes: readonly SynthNote[],
@@ -242,7 +262,16 @@ export function sustained(
     }
   }
   if (down !== null) intervals.push({ start: down, end: end + UNCLOSED_PEDAL_TAIL_S });
-  if (intervals.length === 0) return [...notes];
+
+  // The position itself, which is what the partial band is read from. Kept as one
+  // entry per distinct instant: a pedal sends a dozen values on its way down.
+  const positions: { at: number; value: number }[] = [];
+  for (const pedal of ordered) {
+    const at = pedal.onset_ms / 1000;
+    const last = positions[positions.length - 1];
+    if (last !== undefined && last.at === at) positions[positions.length - 1] = { at, value: pedal.value };
+    else positions.push({ at, value: pedal.value });
+  }
 
   return notes.map((note) => {
     const release = note.onset + note.duration;
@@ -253,8 +282,63 @@ export function sustained(
         return { ...note, duration: Math.max(note.duration, interval.end - note.onset) };
       }
     }
-    return note;
+    const depth = pedalDepthAt(positions, release);
+    if (depth <= 0) return note;
+    // Proportional to how far the damper is lifted, so a pedal resting a third of
+    // the way down rings for a third of the residual. Never shortens: max() again.
+    const extra = (depth / PEDAL_DOWN) * HALF_PEDAL_RING_S;
+    return { ...note, duration: Math.max(note.duration, note.duration + extra) };
   });
+}
+
+/**
+ * The pedal value in effect at an instant, from a position list in time order.
+ *
+ * Zero before the first message: a log that starts mid-sitting has no evidence the
+ * pedal was down, and guessing that it was would invent a held note.
+ */
+function pedalDepthAt(positions: readonly { at: number; value: number }[], at: number): number {
+  const value = rawPedalAt(positions, at);
+  return value > 0 && value < PEDAL_DOWN ? value : 0;
+}
+
+/** The stored value in effect at an instant, 0 before the first message. */
+function rawPedalAt(positions: readonly { at: number; value: number }[], at: number): number {
+  let low = 0;
+  let high = positions.length - 1;
+  let found = -1;
+  while (low <= high) {
+    const mid = (low + high) >> 1;
+    if (positions[mid].at <= at) {
+      found = mid;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+  return found < 0 ? 0 : positions[found].value;
+}
+
+/**
+ * Where the pedal already is when playback starts from `seconds`.
+ *
+ * Through-the-piano playback sends the controller stream rather than lengthening
+ * notes, so the piano's damper has to be put where the sitting left it — otherwise a
+ * performance that starts under a held pedal begins with the damper down, and the
+ * first phrase rings dry.
+ */
+export function pedalValueAt(
+  pedals: readonly PedalPoint[],
+  seconds: number,
+): number {
+  const positions: { at: number; value: number }[] = [];
+  for (const pedal of [...pedals].sort((a, b) => a.onset_ms - b.onset_ms)) {
+    const at = pedal.onset_ms / 1000;
+    const last = positions[positions.length - 1];
+    if (last !== undefined && last.at === at) positions[positions.length - 1] = { at, value: pedal.value };
+    else positions.push({ at, value: pedal.value });
+  }
+  return rawPedalAt(positions, seconds);
 }
 
 /**

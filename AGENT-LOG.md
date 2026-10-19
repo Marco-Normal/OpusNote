@@ -4569,3 +4569,42 @@ only observable difference is that a label click no longer stalls. The database 
 invalidation exactly as Phase 24 left it. Anyone who later makes the derivation a function of
 something that can *decrease* must revisit the no-lock argument (§3.5, 25-D4), because
 copy-on-write plus a forward-only version check is what makes it safe without a mutex today.
+
+## 2026-10-19 — sight-reading agent — the pedal is played back as the curve it was played
+
+Scope: `frontend/src/lib/{playback,pianoPlayer}.ts`, `frontend/src/lib/playback.test.ts`,
+`frontend/src/components/SegmentTimeline.svelte`, `frontend/src/lib/types.ts`,
+`backend/app/practice/{pedal,models,schema,store}.py`, `backend/app/db.py`,
+`backend/tests/{test_pedal,test_migration_upgrade}.py`, `backend/tools/e2e_browser.py`,
+`backend/tools/falsifications/{forget_the_partial_pedal_band,send_the_pedal_as_a_switch,drop_the_partial_pedal_ratio}.sh`,
+`docs/{ECOSYSTEM,FEATURES,ENGINEERING}.md`.
+
+Did: the owner asked whether half-pedalling could be implemented "instead of just a on/off switch at
+value 64", since the curve is recorded. It is — measured on their own 136 MB backup rather than assumed:
+all 128 CC values appear, 81% of pedal *messages* are in the 10–63 band, **36.7% of pedal time** is
+spent there, and **8.4% (43,083) of notes were released into it** and heard as if the pedal were up.
+The threshold does not move — 64 is MIDI's own rule for a switch controller and is what makes an
+on/off pedal work — so the band became a second, disjoint ratio (`pedal_partial_ratio`, one additive
+column, **`SCHEMA_VERSION` 5 → 6**) beside the existing `pedal_down_ratio`.
+
+Playback now does the honest thing per instrument instead of one thing for all three: through the
+piano the recorded CC64 stream is scheduled on the piano's clock ahead of the notes, and the notes go
+at their **key-held** length, so the piano's own damper performs the half-pedal exactly; through the
+sampled piano and the FM voice there is no damper, so a release in the band gets a proportional
+residual ring (`(depth / 64) × 1.5 s`, labelled an approximation where it is made); Stop lifts the
+damper on all 16 channels before the sweep. The section that used to say "the pedal is not sent to the
+output, and that is deliberate" was **wrong** for the instrument the app is for and is rewritten —
+`docs/ECOSYSTEM.md` § *The pedal is sent as the curve it was played* keeps the old argument beside
+the correction rather than deleting it.
+
+The e2e earned its keep again: the first fixture's pedal-up fell past the end of the material (so it
+was correctly dropped, and the assertion passed only because Stop's damper lift happened to be a
+zero), and the note-off count was two because the sweep adds an explicit release for a pitch it still
+thinks is sounding. Both are now separated in the assertion by *timestamped* messages and by a
+fixture whose key outlives its pedal-up.
+
+Impact on the other side: **no contract change beyond the additive column.** No route, request or
+field, no tunable, `BACKUP_VERSION` untouched; `pedal_events` is unchanged and still stores raw
+values. Any consumer of `SegmentMetricsOut` gains `pedal_partial_ratio: float | None` (null on
+sittings with no pedal rows, like the other pedal figures). Three break scripts, each seen to catch
+its own assertion: the partial ring, the pedal stream, and the ratio.

@@ -78,7 +78,8 @@ EXPECTED_COLUMNS: dict[str, set[str]] = {
     "segment_metrics": {
         "segment_id", "duration_s", "note_count", "median_tempo", "mean_velocity",
         "velocity_stddev", "restarts", "pedal_changes", "pedal_down_ratio",
-        "pedal_blur", "pedal_blur_ms", "pedal_basis", "median_velocity", "velocity_range",
+        "pedal_partial_ratio", "pedal_blur", "pedal_blur_ms", "pedal_basis",
+        "median_velocity", "velocity_range",
         "mean_velocity_low", "mean_velocity_high",
     },
     "segments": {

@@ -305,6 +305,10 @@ Nothing about the result changes either way; with background preparation switche
   alike. The **Recognising what you played** panel reports accuracy on the user's own library
   by hiding each tagged segment in turn, and reports how often automatically written labels
   survived review. One-hand drilling is the case it finds hardest, and the panel says so.
+- **Half-pedalling is measured.** The segment row reports the share of its span the pedal spent
+  part-way down, beside the share it spent fully down; the two are disjoint, so a segment that was 20%
+  pedalled and 30% half-pedalled was doing something for half of it. A continuous pedal has a third state
+  and the log now shows it instead of rounding it to "released".
 - **Pedal blur.** A blur is an attack that brought new harmony over notes the pedal was already
   holding. The count is reported with clock times, so "nine" is something that can be located
   in a long sitting. The rule is observed from the pitches rather than from a score. A position is
@@ -382,8 +386,11 @@ running context and an advancing position are all compatible with a performance 
 
 Recorded playback is faithful in *timing and touch*: every onset, duration and velocity is the
 one the playing produced, because a note's length is measured at its release. The sustain pedal
-is preserved — CC64 is stored as received and each note is held to the pedal-up covering its
-release, so a pedalled chord rings on rather than stopping dead. In the passive log the two hands
+is preserved as the *position* it was played at, not as a switch: the recorded CC64 curve is sent back
+out to the piano, which damps it exactly as it did when you played it, so a chord released with the
+pedal half down rings on partly and dies away. The browser's sampled piano has no damper to half-lift,
+so there the same position becomes a proportional tail rather than an exact one — the piano is the only
+instrument that can be faithful here. In the passive log the two hands
 cannot be separated, because the piano sends them on a single MIDI channel; a scored attempt can
 separate them, because the exercise knows which hand each note belongs to.
 

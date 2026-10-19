@@ -137,6 +137,14 @@ FAKE_MIDI = """
     noteOffs() {
       return outgoing.filter((m) => (m.data[0] & 0xf0) === 0x80).map((m) => m.data[1]);
     },
+    // The release with the time it was scheduled for. `noteOffs` answers "was this pitch
+    // released"; this answers "when", which is the only way to tell a key-held note from
+    // one stretched to the pedal-up.
+    noteOffEvents() {
+      return outgoing
+        .filter((m) => (m.data[0] & 0xf0) === 0x80)
+        .map((m) => ({ pitch: m.data[1], timestamp: m.timestamp }));
+    },
     // A stream the piano cannot render as two notes: a second note-on for a pitch
     // before the previous note-off for it. MIDI carries one note-off per pitch, so
     // the earlier release silences the later note — which is what a pedal-extended
@@ -173,6 +181,14 @@ FAKE_MIDI = """
     },
     allNotesOff() {
       return outgoing.filter((m) => (m.data[0] & 0xf0) === 0xb0 && (m.data[1] === 123 || m.data[1] === 120)).length;
+    },
+    // The sustain pedal as it left the app: CC64 with the value it carried. The piano's
+    // own damper is what performs the half-pedalling, so this stream *is* the feature
+    // on that path — there is nothing else to assert it against.
+    pedalMoves() {
+      return outgoing
+        .filter((m) => (m.data[0] & 0xf0) === 0xb0 && m.data[1] === 64)
+        .map((m) => ({ value: m.data[2], channel: m.data[0] & 0x0f, timestamp: m.timestamp }));
     },
     forget() {
       outgoing.length = 0;
@@ -3909,6 +3925,40 @@ def pedal_restrike_sitting(*, minutes_ago: int = 210) -> int:
     return api("/api/practice/events", "POST", payload)["sitting_id"]
 
 
+def half_pedal_sitting(*, minutes_ago: int = 180) -> int:
+    """A note released with the damper part-way down.
+
+    The PX-870's pedal is continuous and the log keeps every value, but every consumer
+    used to collapse it at `value >= 64`: below that, a note was treated as dry. This
+    fixture pins the two halves of the fix against the recorded stream itself.
+
+    At 77: key held 4000 ms, and the pedal sits at 40 — clearly *inside* the partial
+    band — until 1500 ms, so the pedal-up falls inside the material and is scheduled
+    rather than dropped at the end. On the piano path two things must be true and both
+    were false before: the CC64 value 40 goes out verbatim (the piano's own damper is
+    what performs a half-pedal), and the note-off is scheduled at the *key* release
+    rather than being stretched by the pedal, because sending both would pedal twice.
+
+    Pitch 77 is used by no other sitting in this suite, so a stale notes cache cannot
+    satisfy an assertion by accident.
+    """
+    import time
+
+    base = int(time.time() * 1000) - minutes_ago * 60_000
+    payload = {
+        "tz_offset_minutes": -180,
+        "source": "web_midi",
+        "events": [
+            {"epoch_ms": base, "pitch": 77, "velocity": 80, "duration_ms": 4_000, "channel": 0},
+        ],
+        "pedals": [
+            {"epoch_ms": base, "value": 40, "channel": 0},
+            {"epoch_ms": base + 1_500, "value": 0, "channel": 0},
+        ],
+    }
+    return api("/api/practice/events", "POST", payload)["sitting_id"]
+
+
 def scenario_playback(browser) -> None:
     print("\n[12] Playback: through the piano, and into it")
     clear_practice()
@@ -3918,6 +3968,7 @@ def scenario_playback(browser) -> None:
     # sitting list when it mounts, so a sitting created afterwards is not in the DOM
     # to be clicked until the 20 s poll happens to run.
     restrike_id = pedal_restrike_sitting()
+    half_id = half_pedal_sitting()
     notes = api(f"/api/practice/sittings/{sitting_id}/notes")["notes"]
     check(len(notes) >= 3, f"the sitting has notes to play ({len(notes)})")
 
@@ -4230,6 +4281,71 @@ def scenario_playback(browser) -> None:
     )
     click_button(page, "Stop")
     page.wait_for_timeout(300)
+
+    # --- the pedal is a curve, and the piano's damper is what plays it ---
+    #
+    # The PX-870's pedal is continuous and every value is in the log, but playback used
+    # to flatten it at 64 — and never sent CC64 at all, so a pedalled chord stopped dead.
+    # The piano is now sent the recorded curve and performs its own half-pedalling; that
+    # stream is the feature, so it is what gets asserted. The things that must *not*
+    # happen are equally load-bearing: the note keeps its key-held length (sending a
+    # stretched note *and* the pedal would pedal twice), and Stop lifts the damper.
+    with page.expect_response(lambda r: r.url.endswith(f"/api/practice/sittings/{half_id}")):
+        page.click(f'[data-sitting="{half_id}"]')
+    page.wait_for_selector("[data-strip]", timeout=20_000)
+    page.evaluate("() => window.__fakeMidi.forget()")
+    with page.expect_response(
+        lambda r: r.url.endswith(f"/api/practice/sittings/{half_id}/notes")
+    ):
+        click_button(page, "Play the sitting")
+    page.wait_for_timeout(2_600)
+    moves = page.evaluate("() => window.__fakeMidi.pedalMoves()")
+    values = [move["value"] for move in moves]
+    check(
+        40 in values,
+        f"the recorded half-pedal position reaches the piano verbatim ({values[:4]})",
+    )
+    # A scheduled (non-null timestamp) zero is the recorded pedal-up. The unscheduled
+    # zeros are the damper lifts this class sends around the sweep, so the timestamps
+    # are what separate "the performance's pedal-up went out" from "something silenced
+    # the instrument".
+    scheduled = [m for m in moves if m["value"] == 0 and m["timestamp"] is not None]
+    check(
+        len(scheduled) >= 1,
+        f"and the recorded pedal-up is scheduled on the piano's clock, not merely "
+        f"silenced later ({len(scheduled)} of {len(moves)} moves)",
+    )
+    partial_ons = page.evaluate(
+        "() => window.__fakeMidi.noteOns().filter((n) => n.pitch === 77)"
+    )
+    partial_offs = page.evaluate(
+        "() => window.__fakeMidi.noteOffEvents().filter((n) => n.pitch === 77)"
+    )
+    check(
+        len(partial_ons) == 1 and len(partial_offs) >= 1,
+        f"the note under it sounds once and is released ({len(partial_ons)}, {len(partial_offs)})",
+    )
+    # Only the scheduled release carries a timestamp; the sweep's explicit note-off does
+    # not, and that one is the belt-and-braces copy rather than the performance's.
+    timed = [off["timestamp"] for off in partial_offs if off["timestamp"] is not None]
+    held = (min(timed) if timed else 0) - partial_ons[0]["timestamp"]
+    check(
+        3_900 <= held <= 4_400,
+        f"and keeps its 4000 ms key-held length rather than being stretched by the "
+        f"part-depressed pedal, which would pedal twice on the piano ({held:.0f} ms)",
+    )
+    page.evaluate("() => window.__fakeMidi.forget()")
+    click_button(page, "Stop")
+    page.wait_for_timeout(800)
+    lifted = {
+        move["channel"] for move in page.evaluate("() => window.__fakeMidi.pedalMoves()")
+        if move["value"] == 0
+    }
+    check(
+        len(lifted) == 16,
+        f"and stopping lifts the damper on every channel, so a recorded pedal cannot "
+        f"outlive Stop ({len(lifted)} channels)",
+    )
 
     check(not errors, f"no console errors ({errors})")
     page.close()

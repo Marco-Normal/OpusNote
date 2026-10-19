@@ -32,7 +32,7 @@
 
 import * as Tone from 'tone';
 
-import { fromTime, resolveOverlaps, type SynthNote } from './playback';
+import { fromTime, pedalValueAt, resolveOverlaps, sustained, type PedalPoint, type SynthNote } from './playback';
 import { sampleUrls } from './pianoSamples';
 
 export type Instrument = 'midi' | 'piano' | 'synth';
@@ -49,6 +49,16 @@ export interface PlayOptions {
   from?: number;
   /** Stop when the source timeline reaches this, in seconds. */
   until?: number;
+  /**
+   * The pedal as it was recorded, at full resolution.
+   *
+   * Two instruments consume it in two different ways, and the split is the whole
+   * point: the browser instruments have no damper, so they get it as lengthened
+   * note durations (`sustained`, which is an approximation); the piano gets the
+   * controller itself, because its own damper does the damping exactly, and sending
+   * both would pedal twice.
+   */
+  pedals?: readonly PedalPoint[];
   onProgress?: (handle: PlaybackHandle) => void;
   onDone?: () => void;
   /** Something that stopped the sound happening, in words worth showing. */
@@ -89,6 +99,11 @@ export class PianoPlayer {
   private midiActive = false;
   private queue: SynthNote[] = [];
   private queueIndex = 0;
+  /** CC64 moves still to be sent, rebased to the playback start. */
+  private pedals: PedalPoint[] = [];
+  private pedalIndex = 0;
+  /** The pedal position to restore when playback starts, or null once it is sent. */
+  private startPedal: number | null = null;
   private pump: ReturnType<typeof setInterval> | null = null;
   private flush: ReturnType<typeof setTimeout> | null = null;
 
@@ -239,13 +254,17 @@ export class PianoPlayer {
     const offset = Math.max(0, options.from ?? 0);
     const total = notes.reduce((end, note) => Math.max(end, note.onset + note.duration), 0);
     const end = Math.min(options.until ?? Infinity, total);
+    const pedals = options.pedals ?? [];
     // Normalised once, for every instrument and every caller. MIDI carries one
     // note-off per pitch, so a note the pedal carried past a re-strike of the same
     // key would otherwise have its release silence the note the hand is still
     // holding. A sampler has the same problem for the same reason.
-    const material = resolveOverlaps(
-      fromTime(notes, offset).filter((note) => note.onset + offset < end),
-    );
+    const schedule = (material: readonly SynthNote[]) =>
+      resolveOverlaps(fromTime(material, offset).filter((note) => note.onset + offset < end));
+    // The piano is sent the pedal, so its notes keep their key-held length; the
+    // browser instruments have no damper and hear the pedal as a longer note.
+    const material = schedule(pedals.length > 0 ? sustained(notes, pedals) : notes);
+    const keyHeld = pedals.length > 0 ? schedule(notes) : material;
 
     this.offset = offset;
     this.total = total;
@@ -257,7 +276,7 @@ export class PianoPlayer {
     }
 
     if (this.instrument === 'midi' && this.sink?.available()) {
-      this.playMidi(material, options);
+      this.playMidi(keyHeld, options);
       return;
     }
 
@@ -319,6 +338,9 @@ export class PianoPlayer {
     this.piano?.releaseAll();
     this.queue = [];
     this.queueIndex = 0;
+    this.pedals = [];
+    this.pedalIndex = 0;
+    this.startPedal = null;
     this.silenceMidi();
     this.playing = false;
   }
@@ -378,6 +400,18 @@ export class PianoPlayer {
   private playMidi(material: SynthNote[], options: PlayOptions): void {
     this.queue = material;
     this.queueIndex = 0;
+    // The pedal goes out as the controller stream it is, rebased to the playback
+    // start, so the piano's own damper performs the half-pedalling. Anything before
+    // the start point is not replayed; its *state* is, once, below — which is why the
+    // filter is strict: a move exactly at the start point is the state message, and
+    // sending it twice in the same millisecond is a pedal flutter that never happened.
+    const offset = this.offset;
+    this.pedals = (options.pedals ?? [])
+      .filter((pedal) => pedal.onset_ms / 1000 > offset && pedal.onset_ms / 1000 < this.end)
+      .map((pedal) => ({ onset_ms: pedal.onset_ms - offset * 1000, value: pedal.value }))
+      .sort((a, b) => a.onset_ms - b.onset_ms);
+    this.pedalIndex = 0;
+    this.startPedal = pedalValueAt(options.pedals ?? [], offset);
     this.midiActive = true;
     this.startedAt = performance.now();
     this.playing = true;
@@ -395,6 +429,17 @@ export class PianoPlayer {
     if (!this.sink) return;
     this.pruneSounding();
     const horizonMs = performance.now() - this.startedAt + MIDI_WINDOW_MS;
+    if (this.startPedal !== null) {
+      // Put the damper where the sitting left it, once, at the instant playback begins.
+      this.sink.send([0xb0, 64, this.startPedal]);
+      this.startPedal = null;
+    }
+    while (this.pedalIndex < this.pedals.length) {
+      const pedal = this.pedals[this.pedalIndex];
+      if (pedal.onset_ms > horizonMs) break;
+      this.pedalIndex += 1;
+      this.sink.send([0xb0, 64, pedal.value], this.startedAt + pedal.onset_ms);
+    }
     while (this.queueIndex < this.queue.length) {
       const note = this.queue[this.queueIndex];
       if (note.onset * 1000 > horizonMs) break;
@@ -445,6 +490,14 @@ export class PianoPlayer {
     }
     this.sounding.clear();
 
+    // The damper first, on every channel: a pedal held down by the performance is a
+    // pedal the piano keeps holding after the notes are off, and the room would go on
+    // ringing until someone stepped on it. This is the one controller message that
+    // has to precede the sweep rather than follow it.
+    for (let channel = 0; channel < 16; channel += 1) {
+      sink.send([0xb0 | channel, 64, 0]);
+    }
+
     // The sweep runs *unconditionally*, including when nothing is sounding: notes
     // were handed to the MIDI stack with timestamps up to a window ahead, and those
     // have not happened yet. Returning early when the map was empty — which is the
@@ -452,6 +505,7 @@ export class PianoPlayer {
     // reaches for Stop — is what left queued notes still to play.
     const sweep = () => {
       for (let channel = 0; channel < 16; channel += 1) {
+        sink.send([0xb0 | channel, 64, 0]); // damper up, whatever the piano did with it
         sink.send([0xb0 | channel, 123, 0]); // all notes off
         sink.send([0xb0 | channel, 120, 0]); // all sound off
       }

@@ -521,6 +521,11 @@ export interface SegmentMetrics {
   mean_velocity_high: number | null;
   pedal_changes: number | null;
   pedal_down_ratio: number | null;
+  /**
+   * Share of the span the pedal spent part-way down, disjoint from the down ratio.
+   * A continuous pedal is a position, and half-pedalling sits here.
+   */
+  pedal_partial_ratio: number | null;
   /** Attacks that brought new harmony over notes the pedal was already holding. */
   pedal_blur: number | null;
   /**

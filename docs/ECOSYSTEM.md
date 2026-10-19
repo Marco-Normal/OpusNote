@@ -5,8 +5,8 @@ Rust app" premise of
 [`INTEGRATION-practice-logger.md`](./INTEGRATION-practice-logger.md), which
 remains accurate about *what exists today* but is no longer the destination.
 
-Status: **decided; Phases 1-13 and 15-25 are landed. Phase 14 is planned.**
-§9 covers Phases 1-7; §10 covers Phases 8-24 and closes with the decisions, the risks and the
+Status: **decided; Phases 1-13 and 15-26 are landed. Phase 14 is planned.**
+§9 covers Phases 1-7; §10 covers Phases 8-26 and closes with the decisions, the risks and the
 non-goals. Each landed phase names its own evidence in place.
 
 ---
@@ -222,6 +222,7 @@ this document carries the rest.
 | 22 | **Hearing the piece** | Where the playing actually turns over (an adaptive gap with a 2 s floor, plus minimum and maximum sizes), and a matcher that survives a growing library (tempo-invariant local shingles pooled per piece, IDF containment, a hybrid score). Passages and piece-sessions are derived from attempts, so the log shows *n* attempts at one passage rather than *n* unrelated rows. **Landed 22a–22c.** One acceptance number was corrected to its measurement and one decision was dropped after measuring: see § *Phase 22* below. | high |
 | 23 | **The pedal as a quick-action surface** | The sostenuto's one hard-coded action becomes three gestures on the same pedal — single, double, hold — each bound in Setup to one action or to nothing: a review flag, start/finish a workout, arm/stop the take, or finish the sitting. A review flag is a raw mark event in its own table, drawn on the sitting strip beside the blur hairlines. **Landed.** | medium |
 | 24 | **The sitting is ready before you open it** | A finished sitting is segmented, measured and classified by a background worker instead of by the first click that opens it, and a read never waits on work already scheduled: it answers *preparing* and fills in a moment later. Measuring the request found that ~1 s of the wait was not scheduling at all — the matcher's reference cache was being thrown away by writes that cannot change it, so the invalidation rule is narrowed to references. **Landed.** | medium |
+| 26 | **The pedal as a position, not a bit** | The recorded CC64 curve is sent back out to the piano, so its own damper performs the half-pedalling; the sampled piano gets a proportional ring instead of a switch; and the segment row reports the share of its span spent part-way down. `SCHEMA_VERSION` 5 → 6 for one additive column. **Landed.** | medium |
 | 25 | **Only what changed is re-derived** | The matcher's reference cache stops re-deriving every labelled segment when one label moves: the cache entry learns the inputs each segment's derivation is a function of, a version move is diffed, and only the segments that moved are read — from their own range on `idx_events_sitting` — and moved between the per-piece pooled signatures by subtraction. **1,808 ms → 3.4 ms** of derivation per label click. No schema, trigger, route or tunable change, and no cap on the reference set. **Landed.** | medium |
 
 Phases 1-2 are the useful minimum: they get the library out of the Rust app's
@@ -1300,24 +1301,42 @@ continuous pedal it means **half-pedalling reads as fully released.** Measured o
 pedal time in the owner's sittings: 23.9%, 9.1% and 10.2% of it sits in the partial band,
 during which a note released under the pedal is not held by playback at all.
 
-Two things follow, and neither is a new damper model — inventing one would be inventing a
-claim about the instrument, which is the thing this project refuses to do:
+What follows was recorded here first and fixed in Phase 26. The threshold was one owner
+(`PEDAL_DOWN`, imported by `midi.ts`) but it was the *only* reading of the stream, so the
+partial band was measured as a limitation rather than used. Phase 26 moved the two things
+that can honestly move: the piano is sent the position it actually recorded (its own damper
+is the only half-pedal model that is exact rather than invented), and the band is reported
+on the segment row as its own ratio instead of being folded into "released". The threshold
+itself stays at the specification's value for the *metrics*, because moving it would
+misreport an on/off pedal — see § *Phase 26*.
 
-1. **The threshold has two owners and must have one.** `PEDAL_DOWN = 64` in `playback.ts`
-   and `second >= 64` in `midi.ts` are the same decision written twice, which is the defect
-   class Phase 16 and Phase 17 each already had to fix once. One named constant, one owner.
-2. **The gap is recorded, not papered over.** The partial-band share becomes a stated
-   limitation on the pedal metrics of 18b, in the same voice as "tempo is a note rate, not
-   a metronome reading".
+#### The pedal is sent as the curve it was played — Phase 26
 
-#### The pedal is not sent to the output, and that is deliberate
+This section used to say the opposite, and it was wrong in a way worth keeping: it argued
+that the player emits no CC64 because the pedal is "already baked into each note's duration",
+and that sending it as well "would double the pedalling". The second half is true; the first
+half only holds for an instrument that has no damper of its own. The piano does, and it is
+the one instrument the app is for, so the notes arrived with their pedal-extension baked in
+*and* the instrument was never told about the pedal — which is why a pedalled chord on a real
+session stopped dead at the key release.
 
-The player emits no CC64 at all — verified across the whole frontend: the only controller
-messages it sends are all-notes-off and all-sound-off on Stop. Through-the-piano playback
-therefore has no pedal; the pedal is already baked into each note's duration by
-`sustained()`. Sending it as well would double the pedalling. That is the right design, but
-it is currently nowhere written down, so it reads as an omission — which is how the whole
-of Phase 10 started.
+The design now is one rule per instrument, and it is the opposite of doubling:
+
+- **Through the piano**, the recorded CC64 stream is scheduled ahead of the notes with the
+  piano's own clock, and the notes are sent at their **key-held** length. The piano damps
+  them, which is the only half-pedal model that is exact rather than invented. The position
+  in effect at the seek point is restored once, and a move exactly at that instant is not
+  replayed (the filter is strict) so no two messages land in the same millisecond.
+- **Through the sampled piano or the FM voice**, there is no damper to half-lift, so the
+  position becomes a proportional residual ring — `(depth / 64) × 1.5 s` — which is an
+  approximation and is labelled as one in the code that makes it.
+- **Stop** lifts the damper on all 16 channels before the sweep, because a pedal the
+  performance left down is a pedal the piano keeps holding after the notes are off.
+
+The decision that is *not* taken: the metrics threshold does not move. `PEDAL_DOWN = 64`
+stays the reading for `pedal_down_ratio`, `pedal_blur` and the change count, because moving
+it would misreport every on/off pedal ever recorded. The partial band gets its own number
+instead.
 
 #### Acceptance
 
@@ -2062,6 +2081,64 @@ same 3-tuple, so no caller and no client moves. This phase changes what a *miss*
 | 25-D4 | Is a lock needed, with the background worker reading too? | **No** — copy-on-write plus a conservative version check | A published entry is never mutated, so a reader sees the old or the new one and never a torn one, and an entry is served only while the database still reports its version; versions do not move backwards and `note_events` is append-only. **Revisit trigger:** if the derivation ever depends on something that can *decrease*, this argument stops holding and a lock becomes necessary |
 | 25-D5 | Add a threshold that falls back to a full rebuild at high churn? | **No — measured, and there is no crossover** | Every label changed at once still favours incremental (1,530 ms vs 1,985 ms); adding a threshold on speculation is what `R8` exists to prevent. The margin narrows to ~1.3×, recorded as the measurement to revisit |
 | 25-D6 | Does a restore need anything new? | **No** — `import_document` already drops both caches | `forget_references()` covers the wholesale-rewrite case (§1.8); a missing base entry is the cold case, so the restore path is answered rather than special-cased |
+
+### Phase 26 — landed (the pedal as a position, not a bit)
+
+The owner asked whether half-pedalling could be implemented "instead of just a on/off switch at value
+64", since the curve is recorded. It was recorded — this was checked against their own backup rather
+than asserted from the schema, and the numbers decided the design:
+
+| Measurement (33 sittings, 1,151,770 pedal moves, 512,010 notes) | |
+| --- | --- |
+| CC64 values present in the log | all 128 |
+| Messages in the partial band (10–63) | **81%** |
+| Pedal *time* spent part-way down | **36.7%** (6,589 s of it held ≥ 100 ms; one sitting rides 39–40 for 1,042 s) |
+| Notes released with the pedal fully down | 56.4% |
+| Notes released dry | 33.5% |
+| **Notes released with the pedal part-way down** | **8.4% — 43,083 notes** |
+
+So the band was not a rounding error at the edges of a press; it was a third of the recorded pedal
+time, and a twelfth of the notes were played into it and heard as if the pedal had been up.
+
+**Why the threshold does not move.** 64 is the MIDI specification's own rule for a switch controller,
+and it is what makes an on/off pedal work at all. Lowering it would invent a pedal that was not
+pressed; raising it would ignore one that was. The threshold is therefore still the owner of the
+`down_ratio`, the blur count and the change count, and the partial band became a **second, disjoint
+ratio** instead: `pedal_partial_ratio` beside `pedal_down_ratio`, so the two together say how long the
+pedal was doing anything without double-counting a millisecond. `SCHEMA_VERSION` 5 → 6, one additive
+column, `ADDED_COLUMNS` entry and frozen-shape update.
+
+**What plays the half-pedal is the instrument, not a model of one.** The app cannot know how much a
+damper at 40 damps — that is a property of the piano, not of the MIDI stream — so it does the honest
+thing per instrument:
+
+- **Through the piano**, the recorded CC64 stream is scheduled on the piano's clock ahead of the notes,
+  and the notes are sent at their key-held length. The piano's own damper performs the half-pedal
+  exactly. The filter is strict at the seek point so the restored state is sent once rather than twice.
+- **Through the sampled piano or the FM voice**, a release in the band gets a proportional residual ring
+  (`(depth / 64) × HALF_PEDAL_RING_S`, 1.5 s), which is an approximation and says so in the code and in
+  the panel that reports the ratio.
+- **Stop** lifts the damper on all 16 channels before the all-notes-off sweep.
+
+**The mistake this section used to record.** "The pedal is not sent to the output, and that is
+deliberate" argued that note durations already carried the pedal, so sending CC64 would pedal twice.
+That is right for an instrument without a damper and wrong for the piano — and the piano is the point
+of the app. Both halves of the rule are now in place rather than one: the piano gets the stream and
+key-held notes, the browser instruments get extended durations and no CC64.
+
+**Verification.** 1,088 backend tests (4 new pedal units) and 191 frontend units (5 new in
+`playback.test.ts`), `svelte-check` clean, build clean. `scenario_playback` gained a fixture whose key
+is held for 4 s with the pedal at 40 until 1.5 s, and asserts four things that were all false before:
+the value 40 reaches the piano verbatim, the recorded pedal-up is *scheduled* on the piano's clock
+(separated from the unscheduled damper lifts the sweep sends), the note keeps its 4,000 ms key-held
+length rather than being stretched by the pedal, and Stop lifts the damper on 16 channels. Three
+falsifications, each seen to fail: `forget_the_partial_pedal_band.sh`, `send_the_pedal_as_a_switch.sh`
+and `drop_the_partial_pedal_ratio.sh`.
+
+**What is deliberately not done.** No damper curve in the database (the piano's own damper is the
+oracle for it), no per-note velocity reshaping for the browser instruments, and no change to what
+`pedal_blur` means — a blur is still a full-down stretch, because a part-depressed pedal does not hold
+harmony long enough to make the report honest at that threshold.
 
 ### Still open, from the earlier brainstorm
 

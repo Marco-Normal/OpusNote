@@ -166,6 +166,11 @@ CREATE TABLE IF NOT EXISTS segment_metrics (
     -- the sitting at all — imported history — which is not the same as "not used".
     pedal_changes    INTEGER,
     pedal_down_ratio REAL,
+    -- Share of the segment's span where the pedal sat *between* released and down:
+    -- a continuous pedal is a position, and this is how much of the time it was
+    -- part-way. `pedal_down_ratio` counts only the 64-and-above band, so the two
+    -- plus the released share add up.
+    pedal_partial_ratio REAL,
     pedal_blur       INTEGER,
     -- Where those attacks were, as a JSON array of ms relative to the sitting, ascending.
     -- `pedal_blur` above is its length. Stored together because `_refresh_metrics` has the
@@ -260,6 +265,7 @@ ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # Phase 18b — the measurements the app already had the data for.
     ("segment_metrics", "pedal_changes", "INTEGER"),
     ("segment_metrics", "pedal_down_ratio", "REAL"),
+    ("segment_metrics", "pedal_partial_ratio", "REAL"),
     ("segment_metrics", "pedal_blur", "INTEGER"),
     ("segment_metrics", "pedal_blur_ms", "TEXT"),
     ("segment_metrics", "pedal_basis", "TEXT"),

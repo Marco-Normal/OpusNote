@@ -13,6 +13,7 @@
     loggedEvents,
     sustained,
     within,
+    type PedalPoint,
     type SynthNote,
   } from '../lib/playback';
   import { formatClock, parseClock } from '../lib/clock';
@@ -210,7 +211,15 @@
    * that was not keyed on it played the *previous* sitting's notes — a real bug, and
    * one that only shows up on the second sitting you listen to.
    */
-  let notes = $state<{ sittingId: number; list: SynthNote[] } | null>(null);
+  let notes = $state<{
+    sittingId: number;
+    /** Key-held, exactly as logged — what the piano is sent, with the pedal stream. */
+    raw: SynthNote[];
+    /** The same notes with the pedal applied, for the instruments with no damper. */
+    pedalled: SynthNote[];
+    /** The pedal at full resolution, for the piano's own damper. */
+    pedals: PedalPoint[];
+  } | null>(null);
 
   /**
    * Where the playhead sits, as a fraction of the sitting.
@@ -236,18 +245,21 @@
   );
 
   async function loadNotes(): Promise<SynthNote[]> {
-    if (notes !== null && notes.sittingId === detail.id) return notes.list;
+    if (notes !== null && notes.sittingId === detail.id) return notes.pedalled;
     const body = await api.practice.sittingNotes(detail.id);
     // The pedal is applied to the whole sitting before any range is taken: a note
     // released under the pedal at the end of one segment must still be sounding
-    // where the next one begins, and slicing first would cut that off.
-    const list = sustained(loggedEvents(body.notes), body.pedals ?? []);
-    notes = { sittingId: detail.id, list };
-    return list;
+    // where the next one begins, and slicing first would cut that off. The raw list
+    // and the pedal stream are kept beside it, because the piano is sent those
+    // instead — its own damper does the damping, exactly.
+    const raw = loggedEvents(body.notes);
+    const pedals = body.pedals ?? [];
+    notes = { sittingId: detail.id, raw, pedalled: sustained(raw, pedals), pedals };
+    return notes.pedalled;
   }
 
   /** The loaded notes for the sitting on screen, or none if they are not loaded. */
-  const loadedNotes = $derived(notes !== null && notes.sittingId === detail.id ? notes.list : []);
+  const loadedNotes = $derived(notes !== null && notes.sittingId === detail.id ? notes.pedalled : []);
 
   /**
    * Play a range, optionally from a point inside it.
@@ -279,9 +291,14 @@
       );
       playing = { fromMs, toMs, segmentId };
       position = start;
-      await player.play(all, {
+      // Both halves go to the player, which decides what each instrument gets: the
+      // piano takes the key-held notes plus the CC64 stream, the sampler and synth
+      // take the pedal-lengthened notes.
+      const loaded = notes;
+      await player.play(loaded?.sittingId === detail.id ? loaded.raw : all, {
         from: start / 1000,
         until: toMs / 1000,
+        pedals: loaded?.sittingId === detail.id ? loaded.pedals : [],
         onProgress: (handle) => {
           position = handle.elapsed * 1000;
         },
@@ -713,10 +730,23 @@
               <span
                 class="pill mono"
                 data-pedal-changes={segment.metrics.pedal_changes}
-                title="Times the pedal crossed its threshold. MIDI's own rule: below 64 is up, so a half-depressed pedal reads as released"
+                title="Times the pedal crossed its threshold. MIDI's own rule: below 64 is up, so a part-depressed pedal is not counted as a change here"
               >
                 {segment.metrics.pedal_changes} pedal
               </span>
+              {#if segment.metrics.pedal_partial_ratio}
+                <!-- The third state a continuous pedal has. Disjoint from the down
+                     ratio, so this plus a fully-down share describes the span once,
+                     not twice — and playback uses the position to ring on in
+                     proportion, which is what makes it worth showing. -->
+                <span
+                  class="pill mono"
+                  data-pedal-partial={segment.metrics.pedal_partial_ratio}
+                  title="Share of this segment spent with the damper part-way down — a position an on/off pedal cannot report. Playback rings a note on in proportion to it; the sampler's version of that is an approximation, the piano's own damper is not"
+                >
+                  {percent(segment.metrics.pedal_partial_ratio)} half-pedalled
+                </span>
+              {/if}
               {#if segment.metrics.pedal_blur}
                 <span
                   class="pill warn"

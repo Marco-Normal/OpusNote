@@ -14,6 +14,7 @@ from app.practice.pedal import (
     blurs,
     changes,
     down_ratio,
+    partial_ratio,
     intervals,
     median_velocity,
     register_balance,
@@ -66,6 +67,37 @@ def test_the_down_ratio_is_the_share_of_the_span_under_the_pedal() -> None:
     assert down_ratio([(0, 127), (9_000, 0)], 4_000) == 1.0, "clamped, not over 1"
     assert down_ratio([], 4_000) == 0.0
     assert down_ratio([(0, 127)], 0) == 0.0, "a zero span has no ratio"
+
+
+def test_the_partial_ratio_is_the_share_of_the_span_between_the_bands() -> None:
+    """A continuous pedal has a third state, and it is measurable.
+
+    Half the span at 40 (damper part-lifted), half at 0. It is disjoint from the down
+    ratio, so the two together describe the whole span rather than double-counting it.
+    """
+    assert partial_ratio([(0, 40), (2_000, 0)], 4_000) == 0.5
+    assert partial_ratio([(0, 127), (4_000, 0)], 4_000) == 0.0, "fully down is not partial"
+    assert partial_ratio([(0, 0), (4_000, 0)], 4_000) == 0.0, "nor is fully up"
+    assert partial_ratio([(0, 40)], 4_000) == 1.0, "a value holds until the next arrives"
+
+
+def test_the_partial_ratio_clips_at_the_span_and_refuses_a_zero_one() -> None:
+    assert partial_ratio([(0, 40), (9_000, 0)], 4_000) == 1.0, "clipped, not over 1"
+    assert partial_ratio([(5_000, 40)], 4_000) == 0.0, "after the span is not inside it"
+    assert partial_ratio([(0, 40)], 0) == 0.0, "a zero span has no ratio"
+    assert partial_ratio([], 4_000) == 0.0, "nothing recorded is nothing partial"
+
+
+def test_the_two_pedal_ratios_partition_the_time_the_pedal_did_anything() -> None:
+    """Half down, half part-way: the ratios add rather than overlap.
+
+    This is the property that makes them safe to show beside each other — a player
+    reading "20% pedalled, 30% half-pedalled" is reading 50% of the material, and a
+    double-counted band would make that sentence nonsense.
+    """
+    stream = [(0, 127), (1_000, 40), (2_000, 0)]
+    assert down_ratio(stream, 4_000) == 0.25
+    assert partial_ratio(stream, 4_000) == 0.25
 
 
 def test_the_threshold_is_the_specifications() -> None:

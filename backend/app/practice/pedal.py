@@ -11,10 +11,13 @@ arrives is exactly what an unplugged device looks like.
 
 **Two things this module refuses to do**, both because the data cannot support them:
 
-* It does not model a continuous pedal's damping. Half-pedalling is a position, and
-  the MIDI specification's own rule for a switch controller — below 64 is off — is
-  what makes an ordinary on/off pedal work at all. A partial pedal therefore reads as
-  released. That is a stated limitation, not an oversight.
+* It does not model a continuous pedal's damping, and it will not pretend to. Half
+  pedalling is a *position*, and the MIDI specification's rule for a switch controller
+  — below 64 is off — is what makes an ordinary on/off pedal work at all. So the
+  pedal's effect is still counted only inside the 64-and-above stretches. What changed
+  is that the partial band is now *measured* rather than discarded
+  (``PedalMetrics.partial_ratio``), and that playback uses the position to let a note
+  ring on in proportion — an approximation, labelled as one where it is made.
 * It does not know the harmony. Without a score, "the harmony changed" can only mean
   "the pitches under the pedal changed", which is why the blur count carries a
   ``basis`` and why that basis is stored rather than re-derived. When a performance
@@ -74,6 +77,11 @@ class PedalMetrics:
     changes: int
     down_ratio: float
     blur: int
+    #: Share of the segment's span the pedal spent *between* released and down. The
+    #: band is a position, not a state, and a player rides it: measured over the
+    #: owner's log, 36.7% of pedal time sits there. `down_ratio` counts 64-and-above
+    #: only, so this is the missing third of the picture rather than a refinement.
+    partial_ratio: float = 0.0
     #: Where the blur attacks were, in ms relative to the sitting, ascending. `blur` is
     #: `len(blur_at_ms)` and is never computed separately, so the number and the places cannot
     #: disagree — which is the failure a second loop would eventually produce.
@@ -134,6 +142,34 @@ def _down_ratio_of(stretches: list[PedalInterval], span_ms: int) -> float:
 def down_ratio(pedals: list[tuple[int, int]], span_ms: int) -> float:
     """The share of the span the pedal was down, 0..1."""
     return _down_ratio_of(intervals(pedals, span_ms), span_ms)
+
+
+def partial_ratio(pedals: list[tuple[int, int]], span_ms: int) -> float:
+    """The share of the span the pedal spent part-way down, 0..1.
+
+    The third state a continuous pedal has and an on/off one cannot: the damper is
+    lifted but still touching, which is neither "pedalled" nor "changed". Counted over
+    the same span as :func:`down_ratio`, and disjoint from it, so
+    ``down_ratio + partial_ratio`` is the share of the time the pedal was doing
+    anything at all.
+
+    Read from the position the stream describes between messages — each value holds
+    until the next one arrives — and clipped at ``span_ms``, because a pedal left down
+    past the end of the material does not extend the segment.
+    """
+    if span_ms <= 0:
+        return 0.0
+    ordered = sorted(pedals, key=lambda move: move[0])
+    covered = 0
+    for index, (onset_ms, value) in enumerate(ordered):
+        start = max(0, onset_ms)
+        if start >= span_ms:
+            break
+        end = ordered[index + 1][0] if index + 1 < len(ordered) else span_ms
+        end = min(end, span_ms)
+        if 0 < value < PEDAL_DOWN and end > start:
+            covered += end - start
+    return round(min(1.0, max(0.0, covered / span_ms)), 3)
 
 
 def blur_attacks(notes: list[Note], stretches: list[PedalInterval]) -> list[int]:
@@ -236,6 +272,7 @@ def segment_pedal(
         recorded=True,
         changes=changes(pedals),
         down_ratio=_down_ratio_of(stretches, span),
+        partial_ratio=partial_ratio(pedals, span),
         blur=len(found),
         blur_at_ms=tuple(found),
     )
