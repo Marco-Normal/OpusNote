@@ -369,6 +369,52 @@ backwards while `note_events` is append-only. If a future change makes the deriv
 something that can *decrease*, that argument stops holding and a lock becomes necessary; that is the
 trigger to revisit, recorded here so it is not rediscovered.
 
+### 1.11 A timer that re-reads what a cheaper read has already answered
+
+**Symptom.** After an upgrade, opening a sitting in the Log took *minutes* on the owner's notebook.
+One sitting's detail measured **28.5 s and 32.4 s** on two consecutive reads, and the same sitting's
+notes **70.1 s** for 30,477 rows. The identical code did the identical work in **0.21 s** on the
+rebuild fixture.
+
+**Cause one, and it is not a code path: the read really was slow.** Repeating the same requests
+against the same process, no code change, no restart in between, the detail fell to **0.148 s** and
+the notes to **2.57 s**. Thirty seconds to a sixth of a second is not a query plan; it is a cold page
+cache on a spinning disk in a small notebook, paid again by the job runner draining its startup
+backlog. The three commits before this one touched CSS, tests and one additive column, and every
+read path was unchanged — the regression being investigated did not exist.
+
+**Cause two, and this is ours: the poll turned one slow read into an outage.** `refreshQuietly` ran
+on a **20 s** interval and read the summary, the list and *the open sitting's whole detail*, with no
+in-flight guard. A read slower than its interval does not cost one extra request: the polls stack,
+every queued read derives 30,000 notes' worth again, and they compete for the same disk — so a 30 s
+cold read becomes a queue that takes minutes to drain and cannot recover while the tab stays open.
+**The interval must be longer than the p99 of the read, or the gate must exist.** Here the p99 is
+30 s against a 20 s interval.
+
+**Fix.** `frontend/src/lib/pollGate.ts`, two rules and nothing else:
+
+* `createPollRunner(run)` — one refresh in flight. The overlapping call returns immediately rather
+  than queueing, because the next interval will fetch whatever it would have fetched; a run that
+  threw still releases the gate, or one failure wedges the poll for the life of the tab.
+* `detailIsStale(row, detail)` — the list row already carries the three facts that move when a
+  sitting changes (`note_count`, `duration_s`, `segment_count`), so the poll compares them and skips
+  the detail read when they agree. `preparing` is always stale, because the bounded retry loop may
+  have given up and the poll is the backstop that notices when the segmentation lands.
+
+| what one poll costs | before | after, nothing changed |
+| --- | ---: | ---: |
+| summary and list | 0.30 s | 0.30 s |
+| the open sitting's detail | 28.5–32.4 s cold / 0.15 s warm | **0** |
+
+**What this deliberately does not claim.** A label edited on the *other* machine moves none of those
+three numbers, so this poll will not see it. That is the trade — one possibly stale poll against
+re-deriving 30,000 notes every twenty seconds — and every explicit action still re-reads what it
+touched.
+
+**The shape.** A refresh on a timer is bounded by its own slowest run, and it has to be told
+*cheaply* whether anything changed. A periodic reader with neither property is a load amplifier: it
+cannot degrade gracefully, because the slower the server gets the more work it queues behind itself.
+
 ## 2. The rules
 
 **R1 — Cost is a function of the request, not of the library.** If a click's cost grows with the
@@ -425,6 +471,12 @@ the destination, flush in bounded pieces, and stage-then-rename so a run that di
 nothing where a good backup belongs. The same shape applies to any response whose body is the whole
 library.
 
+**R12 — A refresh on a timer is gated, and reads only what a cheaper read says has changed (1.11).**
+An interval shorter than the p99 of what it triggers is a queue, not a refresh: the server's own
+slowness makes the client ask for more, and the poll never catches up while the tab is open. Gate the
+overlapping run, and compare the few facts the cheap read already returned before paying for the
+expensive one.
+
 ---
 
 ## 3. The map — what must stay cheap
@@ -439,6 +491,7 @@ If you touch one of these, you own its complexity.
 | `store.cached_references` | nothing on a hit; **only the inputs that moved** when the version moves (1.10) | `test_one_label_change_re_derives_only_that_segment`, `test_the_incremental_references_equal_a_full_rebuild`, `forget_the_old_piece_when_a_label_moves.sh`, `keep_an_empty_piece_in_the_pooled_signatures.sh` |
 | `store._passages_derived` | nothing on a hit; one sitting's segments and notes when they move | `test_reading_a_sitting_again_does_not_derive_its_passages_again`, `test_a_label_written_after_a_read_is_answered_not_remembered` |
 | `store.list_sittings_conn` | the returned rows and *their* notes — never the log | `test_listing_the_newest_sittings_does_not_read_the_older_ones` |
+| `PracticeLogView.refreshQuietly` | one run at a time, and the detail only when the list row says it moved (R12, 1.11) | `lib/pollGate.test.ts`, `falsifications/poll_the_sitting_every_tick.sh`, `falsifications/let_the_polls_overlap.sh` |
 | `store.calendar` | the days in the requested window | `test_the_calendar_only_reads_its_own_window`, `test_the_calendar_still_answers_exactly_its_window` |
 | `store.awaiting_segments` | one indexed probe per sitting, on a **tick** (Phase 24) — never a click | `tests/test_jobs.py` |
 | `practice/jobs.py` | the work `ensure_segments` already costs, once per sitting, and only while it is queued or running | `tests/test_jobs.py` |

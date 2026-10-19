@@ -3481,11 +3481,24 @@ def scenario_practice_log(browser) -> None:
     # newest sitting has to appear without anyone pressing F5.
     page.evaluate(
         """() => { window.__logPolls = 0;
+                   window.__logDone = 0;
+                   window.__detailReads = 0;
                    const original = window.fetch;
                    window.fetch = (...args) => {
                      const url = String(args[0]);
-                     if (url.includes('/api/practice/sittings?limit=')) window.__logPolls += 1;
-                     return original(...args);
+                     const isPoll = url.includes('/api/practice/sittings?limit=');
+                     if (isPoll) window.__logPolls += 1;
+                     if (/\\/api\\/practice\\/sittings\\/\\d+$/.test(url)) window.__detailReads += 1;
+                     const answer = original(...args);
+                     // The completion counter exists so the test can tell a poll that *started*
+                     // after its own setup from one that was already in flight: the second kind
+                     // answers about a world the setup has since changed, and asserting on it
+                     // measures the test's timing rather than the app's behaviour.
+                     if (isPoll) {
+                       const settled = () => { window.__logDone += 1; };
+                       answer.then(settled, settled);
+                     }
+                     return answer;
                    };
                  }"""
     )
@@ -3545,6 +3558,102 @@ def scenario_practice_log(browser) -> None:
     check(
         len(settled_detail(newest_again["id"])["segments"]) >= 1,
         "closed by the disconnect like the one before it",
+    )
+
+    # --- the poll must not re-read a sitting nothing has changed ---
+    #
+    # The detail is the expensive read: on the owner's library it is 30 000 notes' worth of
+    # derived server work, measured at 70 s on the notebook's cold disk right after a restart.
+    # The poll used to fetch it every twenty seconds regardless, so against a read that slow the
+    # polls stacked and a single cold read became a log that took minutes to open. The list row
+    # already carries the three facts that move when a sitting changes — notes, length, segments
+    # — so the poll compares them and skips the read. This measures the *absence* of a request,
+    # which is why it forces the refresh instead of waiting for the interval.
+    richest = max(api("/api/practice/sittings"), key=lambda row: row["segment_count"])
+    with page.expect_response(lambda r: f"/api/practice/sittings/{richest['id']}" in r.url):
+        page.click(f'[data-sitting="{richest["id"]}"]')
+    page.wait_for_selector(f'section.timeline[data-segments="{richest["segment_count"]}"]',
+                           timeout=20_000)
+
+    def force_poll() -> int:
+        """Refresh the way coming back to the tab does, and wait for *that* list read to land.
+
+        A poll already in flight when this is called is skipped by the gate — correctly — and its
+        answer describes the world from before whatever the caller just changed. So wait for the
+        app to be idle first; it is what `poll.fire()` would do anyway, made observable.
+        """
+        try:
+            page.wait_for_function(
+                "() => (window.__logPolls || 0) === (window.__logDone || 0)", timeout=15_000
+            )
+        except PlaywrightTimeout:
+            pass
+        before = page.evaluate("() => window.__logDone || 0")
+        page.evaluate(
+            """() => {
+                 Object.defineProperty(document, 'visibilityState',
+                                       {value: 'visible', configurable: true});
+                 document.dispatchEvent(new Event('visibilitychange'));
+               }"""
+        )
+        try:
+            page.wait_for_function("n => (window.__logDone || 0) > n", arg=before, timeout=10_000)
+        except PlaywrightTimeout:
+            pass
+        return page.evaluate("() => window.__logDone || 0") - before
+
+    page.evaluate("() => { window.__detailReads = 0 }")
+    check(force_poll() > 0, "a forced poll reads the log")
+    # The detail read, when it happens, is issued the moment the list answer lands, so this is
+    # long enough for it to be observed rather than missed.
+    page.wait_for_timeout(300)
+    quiet = page.evaluate("() => window.__detailReads || 0")
+    check(quiet == 0, f"and leaves an unchanged sitting alone ({quiet} detail reads)")
+
+    # ...but the skip is not unconditional. A sitting whose segments really moved is re-read, so
+    # the poll still notices the job runner finishing, or the other machine editing.
+    before_split = api(f"/api/practice/sittings/{richest['id']}")
+    onsets = [note["onset_ms"] for note in api(f"/api/practice/sittings/{richest['id']}/notes")["notes"]]
+    split_at = None
+    for segment in before_split["segments"]:
+        inside = sorted(ms for ms in onsets if segment["start_ms"] <= ms <= segment["end_ms"])
+        gaps = [
+            (inside[i + 1] - inside[i], inside[i] + (inside[i + 1] - inside[i]) // 2)
+            for i in range(len(inside) - 1)
+            if inside[i + 1] - inside[i] >= 500
+        ]
+        if gaps:
+            split_at = max(gaps)[1]
+            break
+    check(split_at is not None, f"a segment holds a gap wide enough to cut by hand ({split_at})")
+    segments_before = len(before_split["segments"])
+    split_result = api(f"/api/practice/segments/{segment['id']}/split", "POST", {"at_ms": split_at})
+    check(
+        len(split_result) == segments_before + 1,
+        f"the split landed on the server ({segments_before} -> {len(split_result)} segments)",
+    )
+    row_now = next(
+        row for row in api("/api/practice/sittings") if row["id"] == richest["id"]
+    )
+    check(
+        row_now["segment_count"] == segments_before + 1,
+        f"and the list row says so ({row_now['segment_count']} segments)",
+    )
+    page.evaluate("() => { window.__detailReads = 0 }")
+    check(force_poll() > 0, "the next poll reads the log again")
+    try:
+        page.wait_for_function("() => (window.__detailReads || 0) > 0", timeout=3_000)
+    except PlaywrightTimeout:
+        pass
+    changed = page.evaluate("() => window.__detailReads || 0")
+    check(changed == 1, f"and re-reads the sitting that moved, once ({changed} detail reads)")
+    page.wait_for_selector(
+        f'section.timeline[data-segments="{segments_before + 1}"]', timeout=20_000
+    )
+    check(
+        True,
+        "so a boundary moved on the server appears without a reload "
+        f"({segments_before} -> {segments_before + 1} segments)",
     )
 
     # --- a blur count says where, not only how many ---

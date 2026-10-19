@@ -30,6 +30,7 @@
   import { practiceKindLabel } from '../lib/kinds';
   import { pieceCredits, pieceLabel } from '../lib/pieceLabel';
   import { inverseOf, type UndoAction } from '../lib/segmentUndo';
+  import { createPollRunner, detailIsStale } from '../lib/pollGate';
 
   let summary = $state<AnalyticsSummary | null>(null);
   let week = $state<RatingHistory | null>(null);
@@ -336,7 +337,15 @@
    * `keepSelection` on purpose: a poll must never move the player's attention. It
    * refreshes the tiles, the list and the open sitting's detail, and leaves the
    * selection exactly as it was — including none at all.
+   *
+   * Every entry point goes through `poll` rather than `refreshQuietly` directly, because two
+   * entry points exist (the interval and coming back to the tab) and they can fire a second
+   * apart. Ungated, a read slower than the interval stacked: the owner's notebook was measured
+   * at 70 s for one large sitting's detail right after a restart, and the twenty-second polls
+   * queued behind each other until the log took minutes to open. See `lib/pollGate.ts`.
    */
+  const poll = createPollRunner(refreshQuietly);
+
   $effect(() => {
     // A hidden tab asks for nothing. The poll exists so the person *looking at the screen* sees
     // the newest sitting without pressing F5, and a tab behind another window was paying the
@@ -344,13 +353,13 @@
     // laptop that is also capturing the piano.
     const tick = () => {
       if (document.visibilityState === 'hidden') return;
-      void refreshQuietly();
+      void poll.fire();
     };
     const timer = setInterval(tick, POLL_MS);
     // And catch up the moment it is looked at again, so coming back to the tab is instant rather
     // than up to a full interval stale.
     const onVisible = () => {
-      if (document.visibilityState === 'visible') void refreshQuietly();
+      if (document.visibilityState === 'visible') void poll.fire();
     };
     document.addEventListener('visibilitychange', onVisible);
     return () => {
@@ -371,8 +380,13 @@
       ]);
       summary = nextSummary;
       sittings = nextSittings;
-      if (selectedId !== null && nextSittings.some((row) => row.id === selectedId)) {
-        detail = await api.practice.sitting(selectedId);
+      const row =
+        selectedId === null ? undefined : nextSittings.find((it) => it.id === selectedId);
+      // Only when the sitting actually changed. The detail is the expensive read — on the
+      // owner's library it is 30 000 notes' worth of derived work, and after a restart it was
+      // measured at 70 s — and the list row above already says whether anything moved.
+      if (row !== undefined && detailIsStale(row, detail)) {
+        detail = await api.practice.sitting(row.id);
       }
     } catch {
       // A missed poll is not worth an error banner: the next one is in a few
