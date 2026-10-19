@@ -21,8 +21,9 @@ import pathlib, sys
 path = pathlib.Path(sys.argv[1])
 text = path.read_text()
 start = text.index("            try:\n                conn.execute(\"VACUUM\")")
-end = text.index("                    file=sys.stderr,\n                )", start)
-end = text.index("\n", end) + 1
+close = "                )\n"
+end = text.index(close, text.index("file=sys.stderr,", start)) + len(close)
 assert "except sqlite3.OperationalError" in text[start:end]
+assert text[start:end].rstrip().endswith(")"), "the guard's last line is the print's close"
 path.write_text(text[:start] + '            conn.execute("VACUUM")\n' + text[end:])
 PY
