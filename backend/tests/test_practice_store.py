@@ -801,6 +801,38 @@ def test_a_segment_carries_the_pedal_and_the_touch(fresh_db) -> None:
     assert metrics.mean_velocity_high == 82.5, "60, 65, 67 and 69 are not"
 
 
+def test_a_partly_depressed_pedal_is_measured_and_kept(fresh_db) -> None:
+    """A continuous pedal's third state survives the round trip to the row.
+
+    The pedal never reaches 64, so by MIDI's rule nothing was "pedalled" — and a reader
+    that only looked at `pedal_down_ratio` would see zero and conclude the pedal was
+    never touched. Half-pedalling is exactly this case: the damper is lifted but still
+    touching. It is measured, written and read back rather than computed and dropped.
+    """
+    sitting_id = store.ingest(
+        EventBatch(
+            tz_offset_minutes=0,
+            events=[
+                WireNote(epoch_ms=BASE_MS, pitch=60, velocity=64, duration_ms=400, channel=0)
+            ],
+            pedals=[
+                WirePedal(epoch_ms=BASE_MS, value=40, channel=0),
+                WirePedal(epoch_ms=BASE_MS + 1_000, value=0, channel=0),
+            ],
+        )
+    ).sitting_id
+    store.ensure_segments(sitting_id, now_ms=LATER_MS)
+    metrics = store.sitting_detail(sitting_id).segments[0].metrics
+
+    assert metrics is not None
+    assert metrics.pedal_down_ratio == 0.0, "nothing here crossed the threshold"
+    assert metrics.pedal_partial_ratio is not None
+    assert metrics.pedal_partial_ratio > 0.5, (
+        "the band is measured, not rounded away — and read back from the column rather "
+        "than recomputed by the caller"
+    )
+
+
 def test_a_sitting_with_no_pedal_rows_reports_no_basis(fresh_db) -> None:
     """Imported history has no pedal rows at all.
 
