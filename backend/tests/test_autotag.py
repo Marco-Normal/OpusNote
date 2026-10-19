@@ -1168,3 +1168,43 @@ def test_reading_a_sitting_does_not_read_its_notes_once_per_open_section(
         "the note read must not grow with how many sections are open: "
         f"2 sections cost {after_small} reads, 8 cost {after_large}"
     )
+
+
+def test_opening_a_sitting_derives_the_share_weights_once(fresh_db, monkeypatch) -> None:
+    """The other per-section derivation, and the same shape of cost.
+
+    `shingles.idf` says how much each feature tells the pieces you have labelled apart. It
+    depends on which pieces exist, not on the section being identified, and it walked every
+    piece's features once per unlabelled section — 49 times over on the sitting that took 1.05 s
+    to open. Counted rather than timed, so the assertion cannot pass by running on a quiet
+    machine: the number of derivations must not grow with how many sections are still open.
+    """
+    piece_a, _piece_b = two_pieces()
+    for index in range(4):
+        labelled_drill(index, PIECE_A, piece_a)
+
+    small = _unlabelled_sitting(50, 2)
+    large = _unlabelled_sitting(60, 8)
+
+    calls = {"n": 0}
+    original = store.shingles.idf
+    # Warm the reference cache and the passages first: a cold first read legitimately derives
+    # things this test is not counting.
+    store.sitting_detail(small)
+    store.sitting_detail(large)
+
+    def counted(signatures):
+        calls["n"] += 1
+        return original(signatures)
+
+    monkeypatch.setattr(store.shingles, "idf", counted)
+
+    store.sitting_detail(small)
+    after_small = calls["n"]
+    store.sitting_detail(large)
+    after_large = calls["n"] - after_small
+
+    assert after_small == after_large, (
+        "the share weights must not be derived again per open section: "
+        f"2 sections cost {after_small} derivations, 8 cost {after_large}"
+    )

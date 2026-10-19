@@ -471,6 +471,64 @@ every byte of the file. The vacuum is the other cost: dropping a table that was 
 file leaves that much free space inside it, and only `VACUUM` returns it, which needs disk equal to
 the file's size. It runs once, from `init_db`, only when the conversion actually ran.
 
+### 1.13 A matcher that re-derived the same constant 56,252 times
+
+**Symptom.** A sitting with **49 unlabelled sections opened in 1.05 s**; the sitting beside it, with
+its sections labelled, opened in 0.13 s. Profiling a replica of the live library put **1.25 s of a
+1.26 s detail build** inside `candidates_for_sitting` — and its `if not undecided: return {}` gate
+explains both numbers: the cost exists only while sections are waiting for a decision, which is
+exactly when you are looking at the page.
+
+**Why it is that big.** 49 sections against **1,148 labelled examples is 56,252 comparisons**, and
+each one re-derived three things that were properties of its inputs rather than of the pair:
+
+* **Both profile lengths.** `cosine` took `sum(a*a for a in left)` and the same on the right for
+  every call — **169,491 `sum` calls for 56,252 comparisons**, where the dot product alone would have
+  been 56,252. A fingerprint's length does not change between comparisons.
+* **The normalised weights.** `compare` called `weights.normalised()` on `DEFAULT_WEIGHTS` — a frozen
+  dataclass whose fields cannot move — **once per comparison**.
+* **The share weights.** `shingles.idf` was derived inside `_shares` for *every section*, walking all
+  seven pieces' feature counters 49 times over for one answer per sitting.
+
+**The obvious fix was measured and rejected.** Vectorising the ranking with numpy is the reflex, and
+it is the wrong one here: numpy arrives only transitively through music21, and a BLAS dot product is
+not bit-identical to the Python sum, which on scores rounded to four decimal places can flip the
+`auto`/`suggest` band or a margin tie. Pruning candidate examples by dominance is not sound for a
+weighted sum that includes a cosine. Caching the whole `candidates_for_sitting` result would pay 600
+ms less on a *repeat* open and nothing on the first.
+
+**The fix that was taken.** Derive each constant once, in the object that owns it: the profile length
+is a `cached_property` on the frozen `Fingerprint`, the normalised weights an `lru_cache` on the
+frozen `Weights`, and the share weights once per identification pass, handed to `_shares` through
+`segment_identification(share_weights=…)` — the same signature the sitting's other sections already
+share. **The arithmetic is unchanged, term for term and in the same order**, so this is a pure
+constant-folding change, not a new similarity measure.
+
+Measured on a replica of the live library, sitting 72 (57 sections, 49 unlabelled, 1,148 examples,
+7 pieces):
+
+| | before | after |
+| --- | ---: | ---: |
+| `candidates_for_sitting` | 461.9 ms | **273.3 ms** (−41 %) |
+| the share weights, per sitting | 76.3 ms (49 derivations) | 1.3 ms (1) |
+| a comparison, per call | ~3.4 µs | 2.01 µs |
+| `sitting_detail` for that sitting | ~460 ms | 319 ms |
+| the same call on a labelled sitting | 39 ms | 36 ms |
+| the server's `GET …/sittings/72` | 1.05–1.31 s | ~0.6 s expected |
+
+**The claim that had to be checked, not assumed.** "Faster and identical" is the claim that gets
+optimisations merged, so it was measured rather than argued: `candidates_for_sitting` for **all 71
+sittings** plus `identification_quality`, dumped from the tree before and after, **sha256
+`aa1bb95b…` both times**, zero differing sittings. Constant-folding is only invisible if the
+arithmetic is the arithmetic.
+
+**What this deliberately does not claim.** It is still O(open sections × labelled examples) — 155 ms
+of the remaining 273 ms is the ranking loop, and both factors grow: with the library, and with how
+long you leave a sitting undecided. The honest summary is that the cost moved from 1.05 s to about
+0.6 s on the notebook, not that it stopped scaling. Two further hoists were measured and left out as
+not worth their complexity: the reference mass inside `containment` (~30 ms) and a prepared
+`Fingerprint` register tuple (~20 ms).
+
 ## 2. The rules
 
 **R1 — Cost is a function of the request, not of the library.** If a click's cost grows with the
@@ -541,6 +599,13 @@ carry into that writer, asserted, because a `UNIQUE` index is exactly what you g
 for the lossy version first: deadbanding the stream saved 13% where packing it saved 58%, and only
 one of the two can drop a move.
 
+**R14 — A constant that belongs to one side of the loop is derived outside it.** A profile's length,
+the normalised weights, a set of IDF weights: nothing about them changes between the items being
+scored, and deriving them per item is the arithmetic of §1.13 — 56,252 comparisons each re-deriving
+three numbers, 41 % of a click. This is R2 one level down: hoist the derivation, pass it in, and give
+the callee an explicit parameter for it so the cheap path is the obvious one. Then prove the scores
+are unchanged, not merely plausible: dump the before and after and compare digests.
+
 ---
 
 ## 3. The map — what must stay cheap
@@ -553,6 +618,7 @@ If you touch one of these, you own its complexity.
 | `store._notes_for_segments` | one query per sitting; the notes in the group's range | `test_reading_a_sitting_does_not_read_its_notes_once_per_open_section` |
 | `store._notes_in_range` | one segment's notes on `idx_events_sitting` — never its sitting's | `test_the_range_read_returns_the_slice_a_whole_sitting_read_would` |
 | `store.cached_references` | nothing on a hit; **only the inputs that moved** when the version moves (1.10) | `test_one_label_change_re_derives_only_that_segment`, `test_the_incremental_references_equal_a_full_rebuild`, `forget_the_old_piece_when_a_label_moves.sh`, `keep_an_empty_piece_in_the_pooled_signatures.sh` |
+| `similarity.rank`, `store.candidates_for_sitting` | the sitting's open sections × the labelled examples — and nothing re-derived inside that loop (R14, 1.13) | `test_scoring_again_does_not_re_derive_a_length_it_already_knew`, `test_opening_a_sitting_derives_the_share_weights_once`, `falsifications/rederive_the_profile_length_every_time.sh`, `falsifications/derive_the_share_weights_per_section.sh` |
 | `store._passages_derived` | nothing on a hit; one sitting's segments and notes when they move | `test_reading_a_sitting_again_does_not_derive_its_passages_again`, `test_a_label_written_after_a_read_is_answered_not_remembered` |
 | `store.list_sittings_conn` | the returned rows and *their* notes — never the log | `test_listing_the_newest_sittings_does_not_read_the_older_ones` |
 | `PracticeLogView.refreshQuietly` | one run at a time, and the detail only when the list row says it moved (R12, 1.11) | `lib/pollGate.test.ts`, `falsifications/poll_the_sitting_every_tick.sh`, `falsifications/let_the_polls_overlap.sh` |

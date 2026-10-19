@@ -2323,12 +2323,22 @@ def cached_references(
 
 
 def _shares(
-    query: collections.Counter, signatures: dict[int, collections.Counter]
+    query: collections.Counter,
+    signatures: dict[int, collections.Counter],
+    *,
+    weights: dict | None = None,
 ) -> dict[int, float]:
-    """Each piece's share of the query's local content, when there is anything to compare."""
+    """Each piece's share of the query's local content, when there is anything to compare.
+
+    ``weights`` is `shingles.idf` of ``signatures``. Callers that ask about many segments
+    against the *same* signatures pass it in: it depends only on which pieces exist, so
+    deriving it here made a sitting with 49 undecided segments walk every piece's features
+    49 times for an answer that could not change between them.
+    """
     if not signatures:
         return {}
-    weights = shingles.idf(signatures)
+    if weights is None:
+        weights = shingles.idf(signatures)
     return {
         piece_id: shingles.containment(query, signature, weights)
         for piece_id, signature in signatures.items()
@@ -2344,6 +2354,7 @@ def segment_identification(
     notes: list[Note] | None = None,
     context_piece_id: int | None = None,
     weights: Weights = DEFAULT_WEIGHTS,
+    share_weights: dict | None = None,
 ) -> Identification:
     """Match one segment against your labelled practice.
 
@@ -2352,6 +2363,11 @@ def segment_identification(
     rebuilding it per segment re-derives work that does not vary between them. The notes are the
     expensive one, because the query is by *sitting* — it returns every note in the sitting however
     few the segment holds — so a sitting with n undecided sections read its own notes n times over.
+
+    ``share_weights`` is `shingles.idf` of ``signatures``, for the same reason and under the same
+    rule: it is derived once per sitting. It is ignored when ``signatures`` is not passed, because
+    then the signatures this call derives are its own and the caller's weights describe different
+    pieces.
     """
     row = conn.execute(
         f"SELECT {_SEGMENT_COLUMNS} FROM segments g WHERE g.id = ?", (segment_id,)
@@ -2366,6 +2382,10 @@ def segment_identification(
     segment_print = fingerprint(notes, attack_window_ms=settings.attack_window_ms)
     # Pooled once per call unless the caller already has them: a caller identifying several
     # segments of one sitting would otherwise re-derive every reference's features per row.
+    # The weights describe signatures the *caller* passed; when the signatures here are derived
+    # for this one segment, the caller's weights would describe different pieces, so they are
+    # dropped rather than trusted.
+    borrowed_signatures = signatures is not None
     if signatures is None:
         signatures = _pooled_signatures(conn, exclude_segment_id=segment_id)
     return identify(
@@ -2377,7 +2397,11 @@ def segment_identification(
         min_notes=settings.autotag_min_notes,
         weights=weights,
         context_piece_id=context_piece_id,
-        shares=_shares(shingles.features(notes), signatures),
+        shares=_shares(
+            shingles.features(notes),
+            signatures,
+            weights=share_weights if borrowed_signatures else None,
+        ),
         containment_weight=settings.autotag_containment_weight,
     )
 
@@ -2469,6 +2493,9 @@ def candidates_for_sitting(conn: sqlite3.Connection, sitting_id: int) -> dict[in
     # changes it: signatures are pooled per piece, so it is one answer for the whole library
     # rather than one per sitting, and rebuilding it here was the page's second-long stall.
     examples, _local, signatures = cached_references(conn)
+    # Derived once for the whole sitting: it depends only on which pieces have labelled
+    # segments, not on the segment being asked about.
+    share_weights = shingles.idf(signatures)
     # This sitting's notes, read once for every segment that is about to be asked about. The
     # query is by *sitting*, so asking per segment returned the whole note list each time and
     # kept one segment's share of it: the cost of an edit grew with how many unlabelled
@@ -2496,6 +2523,7 @@ def candidates_for_sitting(conn: sqlite3.Connection, sitting_id: int) -> dict[in
             signatures=signatures,
             notes=notes_by_segment.get(segment_id, []),
             context_piece_id=context,
+            share_weights=share_weights,
         )
         if identification.candidates:
             out[segment_id] = _candidate_out(
@@ -2550,6 +2578,8 @@ def _autotag_rows(conn: sqlite3.Connection, rows: list[sqlite3.Row]) -> AutotagR
     # runs when a sitting is first segmented, which made it the other place a freshly finished
     # sitting rebuilt the whole training set before showing anything.
     examples, _local, signatures = cached_references(conn)
+    # Once for the whole pass, for the same reason as the timeline's suggestions.
+    share_weights = shingles.idf(signatures)
     if not examples:
         report.notes.append(
             "No labelled segments yet, so there is nothing to compare with. Tag a few "
@@ -2571,6 +2601,7 @@ def _autotag_rows(conn: sqlite3.Connection, rows: list[sqlite3.Row]) -> AutotagR
             conn, int(row["id"]), examples=examples, signatures=signatures,
             notes=notes_by_segment.get(int(row["id"]), []),
             context_piece_id=context,
+            share_weights=share_weights,
         )
         if identification.band == "auto" and identification.best is not None:
             best = identification.best

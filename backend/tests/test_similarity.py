@@ -206,6 +206,42 @@ def test_nothing_labelled_means_no_candidates():
     assert rank(profile(60), []) == []
 
 
+def test_scoring_again_does_not_re_derive_a_length_it_already_knew(monkeypatch):
+    """A profile's length is what every cosine divides by, and nothing about it changes.
+
+    One segment is scored against every labelled example — 56,252 comparisons on the owner's
+    library — so deriving the *example's* length inside the comparison derived 56,252 numbers
+    that were already there, and the segment's own length once per example. A fingerprint keeps
+    its length now, which means a repeat ranking against the same reference material derives
+    none at all. Counted rather than timed: a timing assertion passes on a fast laptop with the
+    recomputation still in place.
+    """
+    from app.practice import similarity
+
+    calls = {"n": 0}
+    original = similarity._profile_norm
+
+    def counted(profile):
+        calls["n"] += 1
+        return original(profile)
+
+    monkeypatch.setattr(similarity, "_profile_norm", counted)
+
+    segment = profile(*PRIMARY)
+    examples = [example(index, 10, *PRIMARY) for index in range(1, 6)]
+    rank(segment, examples)
+    cold = calls["n"]
+
+    calls["n"] = 0
+    rank(segment, examples)
+    assert calls["n"] == 0, (
+        "ranking the same segment against the same references re-derived "
+        f"{calls['n']} lengths that had not changed"
+    )
+
+    assert cold == len(examples) + 1, "one length per profile, derived once"
+
+
 # --------------------------------------------------------------------------
 # The mix: the local content share folded into the global score
 # --------------------------------------------------------------------------

@@ -4843,3 +4843,46 @@ Impact on the other side: test harness only. No app behaviour, route, table or t
 
 Verified: `./check.sh --falsify jump_a_second_instead_of_a_segment` falsified it; `--full` green
 after the change (the run that had failed is recorded above).
+
+## 2026-10-19 — sight-reading agent — the matcher was re-deriving its own constants
+
+Scope: `backend/app/practice/similarity.py`, `backend/app/practice/store.py`
+(`_shares`, `segment_identification`, `candidates_for_sitting`, `_autotag_rows`),
+`backend/tests/test_similarity.py`, `backend/tests/test_autotag.py`,
+`backend/tools/falsifications/rederive_the_profile_length_every_time.sh` (new),
+`backend/tools/falsifications/derive_the_share_weights_per_section.sh` (new),
+`docs/PERFORMANCE.md` (§1.13, R14, the map row).
+
+Did: a sitting with 49 unlabelled sections took 1.05 s to open against 0.13 s for the sitting
+whose sections were labelled. On a replica of the live library, 1.25 s of the 1.26 s detail build
+was `store.candidates_for_sitting`: 49 open sections × 1,148 labelled examples = **56,252
+comparisons**, each of which re-derived three constants that are properties of one side of the
+comparison — both profile lengths (169,491 `sum` calls where 56,252 would do), `Weights.normalised()`
+on a frozen dataclass, and `shingles.idf` once per section over the same seven pieces.
+
+Each is now derived once, by the object that owns it:
+
+* `similarity.Fingerprint.profile_norm` — a `cached_property`; `cosine` is split into a public
+  wrapper and `_cosine(left, right, norm_left, norm_right)`, and `compare` passes the carried
+  lengths. Term for term the same arithmetic in the same order.
+* `similarity.Weights.normalised` — `@lru_cache(maxsize=None)`; the class is frozen, so the cache
+  cannot go stale.
+* `store._shares(query, signatures, *, weights=None)` accepts the derived IDF weights, and
+  `segment_identification(share_weights=…)` hands them over from `candidates_for_sitting` and
+  `_autotag_rows`, which derive them once per pass. When the caller did not supply `signatures`
+  (`borrowed_signatures` false) the weights are still derived locally, so `identification_quality`'s
+  per-row leave-one-out sets are unaffected.
+
+Measured on the replica (sitting 72: 57 sections, 49 open, 1,148 examples, 7 pieces):
+`candidates_for_sitting` **461.9 → 273.3 ms** (−41 %), the share weights 76.3 ms → 1.3 ms, a
+comparison ~3.4 → 2.01 µs, `sitting_detail` ~460 → 319 ms, the same call on a labelled sitting
+39 → 36 ms. Scores are **unchanged**: `candidates_for_sitting` for all 71 sittings plus
+`identification_quality` dumped before and after, sha256 `aa1bb95b…` both times, zero differing
+sittings. Falsifications: `rederive_the_profile_length_every_time` and
+`derive_the_share_weights_per_section`, both caught by work-counting tests (no timing assertion).
+
+Impact on the other side: no route, table, column, tunable or wire format changed. The internal
+signatures gained keyword-only optional parameters (`_shares(weights=)`,
+`segment_identification(share_weights=)`); every existing caller is unchanged.
+
+Verified: `./check.sh --fast`; `./check.sh --falsify` for both new assertions; `./check.sh --full`.

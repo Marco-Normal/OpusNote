@@ -41,6 +41,8 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, replace
+from functools import cached_property, lru_cache
+from operator import mul
 from typing import Iterable, Mapping, Sequence
 
 from .metrics import attacks, median_tempo
@@ -68,6 +70,11 @@ class Weights:
     tempo: float = 0.10
     register: float = 0.15
 
+    #: Cached because scoring a segment calls it once per labelled example — 56,252 times on
+    #: the owner's library — and the answer depends on the ratio of three numbers that cannot
+    #: change: this is a frozen dataclass. Weights are few (the default, whatever a caller
+    #: passes, and the handful the measuring tool sweeps), so the cache cannot grow.
+    @lru_cache(maxsize=None)
     def normalised(self) -> "Weights":
         total = self.pitch_class + self.tempo + self.register
         if total <= 0:
@@ -110,6 +117,18 @@ class Fingerprint:
     @property
     def has_notes(self) -> bool:
         return self.note_count > 0
+
+    @cached_property
+    def profile_norm(self) -> float:
+        """The length of the pitch-class profile, computed once per fingerprint.
+
+        Every comparison divides by it, and one segment is compared with every labelled
+        example, so recomputing it inside `cosine` recomputed the *segment's* own length
+        once per example. Derived on first use rather than in `__post_init__` because a
+        fingerprint that is never scored should not pay for it — and it is not a dataclass
+        field, so equality and the repr still describe the notes, not the arithmetic.
+        """
+        return _profile_norm(self.pc_profile)
 
 
 @dataclass(frozen=True)
@@ -193,20 +212,39 @@ def fingerprint(notes: Sequence[Note], *, attack_window_ms: int) -> Fingerprint:
     )
 
 
+def _profile_norm(profile: Sequence[float]) -> float:
+    """The length of a pitch-class profile. The one place that arithmetic lives."""
+    return math.sqrt(sum(a * a for a in profile))
+
+
+def _cosine(
+    left: Sequence[float],
+    right: Sequence[float],
+    norm_left: float,
+    norm_right: float,
+) -> float:
+    """`cosine` with the two lengths already known.
+
+    Split out because `rank` scores one segment against every labelled example: the
+    segment's length is the same number every time, and each example's was computed when
+    its fingerprint was built, so taking them as arguments removes two of the three sums
+    per comparison without changing the arithmetic (the same sum, in the same order).
+    """
+    if len(left) != len(right):
+        raise ValueError("profiles must be the same length")
+    if norm_left == 0.0 or norm_right == 0.0:
+        return 0.0
+    dot = sum(map(mul, left, right))
+    return min(1.0, max(0.0, dot / (norm_left * norm_right)))
+
+
 def cosine(left: Sequence[float], right: Sequence[float]) -> float:
     """Cosine similarity of two non-negative vectors, in 0..1.
 
     Zero when either side is empty rather than an error: a segment with no notes
     has nothing to say about any piece, and 0 says that correctly.
     """
-    if len(left) != len(right):
-        raise ValueError("profiles must be the same length")
-    dot = sum(a * b for a, b in zip(left, right))
-    norm_left = math.sqrt(sum(a * a for a in left))
-    norm_right = math.sqrt(sum(b * b for b in right))
-    if norm_left == 0.0 or norm_right == 0.0:
-        return 0.0
-    return min(1.0, max(0.0, dot / (norm_left * norm_right)))
+    return _cosine(left, right, _profile_norm(left), _profile_norm(right))
 
 
 def tempo_proximity(left: float | None, right: float | None) -> float:
@@ -249,7 +287,12 @@ def compare(
     weights: Weights = DEFAULT_WEIGHTS,
 ) -> tuple[float, float, float, float]:
     """Score one candidate against one segment: ``(total, pitch, tempo, register)``."""
-    pitch_class = cosine(segment.pc_profile, candidate.pc_profile)
+    pitch_class = _cosine(
+        segment.pc_profile,
+        candidate.pc_profile,
+        segment.profile_norm,
+        candidate.profile_norm,
+    )
     tempo = tempo_proximity(segment.note_rate, candidate.note_rate)
     register = register_overlap(
         (segment.pitch_min, segment.pitch_max),
