@@ -1259,6 +1259,32 @@ def test_the_sitting_writes_the_label_one_segment_would_only_offer(fresh_db) -> 
     )
 
 
+def test_a_short_fragment_is_offered_even_when_the_sitting_is_sure(
+    fresh_db, monkeypatch
+) -> None:
+    """The calibration, not the decode's own confidence, decides a short segment.
+
+    The same mixed drill the test above sees written is used here, so the sitting really is
+    sure of it. Told the segment has the shape the measurement distrusts — a short fragment
+    in a crowded library — that certainty must become an offer: a written label is a promise
+    about how often it is right, and for that shape the number is not.
+    """
+    distinct_library()
+    mixed = [60, 62, 64, 65, 67, 48, 52, 55]
+    monkeypatch.setattr(
+        store.calibration,
+        "auto_probability",
+        lambda *, notes, pieces, base: None,
+        raising=True,
+    )
+    sitting = store.sitting_detail(make_sitting(13, [PIECE_A, mixed])).segments
+    assert [segment.piece_id for segment in sitting] == [None, None], (
+        "a shape the calibration refuses must not be written: "
+        + str([(segment.piece_id, segment.candidates[:1]) for segment in sitting])
+    )
+    assert sitting[1].candidates[0].band == "suggest"
+
+
 def test_a_real_piece_change_inside_a_sitting_survives_the_sequence(fresh_db) -> None:
     """The failure mode of smoothing, stated as its own test: a sitting that really does
     change piece must change labels, or the model would quietly relabel your practice."""

@@ -227,7 +227,7 @@ this document carries the rest.
 | 19 | **Playing back what was actually played** | A stale same-pitch note-off silences re-struck notes at the pedal-up — 1,747 notes in the owner's own sessions. Plus one owner for the pedal threshold. **Landed.** | medium |
 | 20 | **Deliberate practice, the piano-side toolkit, and audio takes** | *How* a segment was practised (20a); hands-free control from the unused sostenuto pedal, count-in choice, real URLs and a command palette (20b); undo and a humane streak (20c); journal and library depth (20d); low-bitrate audio takes captured in-app (20e). Five slices, independently shippable. **20a–20e landed.** | medium–high |
 | 21 | **The log at speed, and the blur you can find** | Blur positions cached beside the count and marked on the sitting strip; and an edit path that applies the server's own answer instead of refetching the matcher's accuracy, the machine's health and the week's ratings after every click. **Landed.** | low |
-| 22 | **Hearing the piece** | Where the playing actually turns over (an adaptive gap with a 2 s floor, plus minimum and maximum sizes), and a matcher that survives a growing library (tempo-invariant local shingles pooled per piece, IDF containment, a hybrid score). Passages and piece-sessions are derived from attempts, so the log shows *n* attempts at one passage rather than *n* unrelated rows. **Landed 22a–22e**, 22d reading a whole sitting as one sequence so a mixed segment is named by its neighbours, 22e comparing the two hands separately and the shape between notes.  One acceptance number was corrected to its measurement and one decision was dropped after measuring: see § *Phase 22* below. | high |
+| 22 | **Hearing the piece** | Where the playing actually turns over (an adaptive gap with a 2 s floor, plus minimum and maximum sizes), and a matcher that survives a growing library (tempo-invariant local shingles pooled per piece, IDF containment, a hybrid score). Passages and piece-sessions are derived from attempts, so the log shows *n* attempts at one passage rather than *n* unrelated rows. **Landed 22a–22f**, 22d reading a whole sitting as one sequence so a mixed segment is named by its neighbours, 22e comparing the two hands separately and the shape between notes, 22f calibrating what a decoded confidence is worth by segment length.  One acceptance number was corrected to its measurement and one decision was dropped after measuring: see § *Phase 22* below. | high |
 | 23 | **The pedal as a quick-action surface** | The sostenuto's one hard-coded action becomes three gestures on the same pedal — single, double, hold — each bound in Setup to one action or to nothing: a review flag, start/finish a workout, arm/stop the take, or finish the sitting. A review flag is a raw mark event in its own table, drawn on the sitting strip beside the blur hairlines. **Landed.** | medium |
 | 24 | **The sitting is ready before you open it** | A finished sitting is segmented, measured and classified by a background worker instead of by the first click that opens it, and a read never waits on work already scheduled: it answers *preparing* and fills in a moment later. Measuring the request found that ~1 s of the wait was not scheduling at all — the matcher's reference cache was being thrown away by writes that cannot change it, so the invalidation rule is narrowed to references. **Landed.** | medium |
 | 26 | **The pedal as a position, not a bit** | The recorded CC64 curve is sent back out to the piano, so its own damper performs the half-pedalling; the sampled piano gets a proportional ring instead of a switch; and the segment row reports the share of its span spent part-way down. `SCHEMA_VERSION` 5 → 6 for one additive column. **Landed.** | medium |
@@ -1880,7 +1880,7 @@ auto 58.3% at 92.9% precision: the model assumes what the log shows, so a librar
 switched that often would lose accuracy rather than gain it. 32-piece whole-drill auto goes 18.4% →
 **77.8% at 100%** at `p=0.99`. The recorded limit is quarter-length fragments at 32 pieces — 24.0%
 coverage at 72.5% precision — because a short fragment's emission is too flat to let the prior help;
-that is 22e's job (calibration), and it does not bite this library, where 429 of 443 segments hold
+that is 22f's job (calibration), and it does not bite this library, where 429 of 443 segments hold
 25 notes or more.
 
 Two owners moved. The per-segment context nudge (promote the previous piece within `CONTEXT_MARGIN`)
@@ -1908,6 +1908,26 @@ library the two terms are **exactly neutral** (98.2% top-1 either way) because 4
 labelled segments are two-handed — the honest reason not to claim a gain there. Cost is **2.3 → 4.6
 µs a comparison** ([PERFORMANCE.md](PERFORMANCE.md) § 1.15), and the sequenced band barely moves:
 93.5% of segments written at 100% precision.
+
+**22f — the measurement decides what a short fragment is worth.** The band's thresholds are
+probabilities, which is only useful if the probability means what it says. Measured leave-one-out over
+both corpora — 550 segments across 8 and 32 pieces, whole drills and quarter fragments — the decoded
+confidence is a promise the evidence behind it can break. Pooled, 155 fragments of **8–11 notes were
+written at 71.2% precision** at the configured 0.99, and *no* threshold lifts that shape above about
+76%; 12–24 notes reached **98.9% at 0.995** (90.5–98.0% below it); 25–49 and 50+ notes measured
+**100% at 0.99**. `app/practice/calibration.py` holds that as three rules over two axes — how long the
+segment is, and how many pieces could explain it. In a crowded library (more than eight pieces) a
+fragment under 12 notes is never written automatically, only offered; one under 25 notes needs 0.995;
+a longer one keeps the configured probability. A small library is left exactly as it was, because a
+ten-note drill against three pieces is still likely unique (8-piece quarter fragments measured 85%,
+whole drills 100%). The calibration can only lower a write to an offer, never raise one, and a library
+that configured a stricter probability keeps it. The cost is nothing at runtime — the thresholds are
+constants, and `backend/tools/calibrate_bands.py` is the measurement that produced them. On the
+owner's library the price is at most a few points of coverage (her split is 5 / 9 / 429 segments at
+0–11 / 12–24 / 25+ notes), and the recorded quarter-length false write (24.0% coverage at 72.5%
+precision at 32 pieces) is now offered rather than written. `SRT_AUTOTAG_SCORE_AUTO`,
+`SRT_AUTOTAG_SCORE_PROMPT` and `SRT_AUTOTAG_MIN_MARGIN` still gate nothing at runtime: the calibrated
+probability is the decision.
 
 **Non-goals.** No score alignment, so a passage is still inferred from sound rather than known to be
 bars 40–48; no section generation or looping; no per-hand inference; no audio; no persisted group

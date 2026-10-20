@@ -30,6 +30,7 @@ from typing import Iterable, Literal, Sequence
 
 from .. import db
 from ..config import settings
+from . import calibration
 from . import capture_status
 from . import kinds
 from . import passages
@@ -2826,15 +2827,31 @@ def _sequence_verdict(
 
     The band comes from the decoded probability, not from the score thresholds: the
     thresholds judge one segment alone, which is the question the sitting's context
-    just answered differently. The sentence tries to stay true to *why* — a piece
+    just answered differently. That probability is then put through the measured
+    calibration: a short fragment in a crowded library is explained almost as well by
+    several pieces, and its smooth confidence is not the frequency with which it is
+    right, so the calibration can lower a write to an offer and never raises one.
+    The sentence tries to stay true to *why* — a piece
     pulled forward by its neighbours should not read "confident match".
     """
+    required = calibration.auto_probability(
+        notes=belief.notes,
+        pieces=len(belief.probabilities),
+        base=settings.autotag_auto_probability,
+    )
     band = sitting_sequence.band(
         belief,
-        auto_probability=settings.autotag_auto_probability,
+        auto_probability=(
+            settings.autotag_auto_probability if required is None else required
+        ),
         prompt_probability=settings.autotag_prompt_probability,
         min_notes=settings.autotag_min_notes,
     )
+    if required is None and band == "auto":
+        # The measurement says no threshold makes this shape trustworthy: a short
+        # fragment in a crowded library is explained nearly as well by several pieces,
+        # so the label is offered instead of written.
+        band = "suggest"
     if belief.chosen is None:
         return "none", identification.reason
     raw = identification.best.piece_id if identification.best else None

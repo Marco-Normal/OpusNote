@@ -42,6 +42,18 @@ the arithmetic, and the sweeps that choose them live in `backend/tools/measure_a
 sixth term means re-measuring the comparison cost in [PERFORMANCE.md](PERFORMANCE.md) § 1.15 — every
 comparison is inside the loop the open of a sitting pays for.
 
+**A probability is only worth what its evidence is.** `backend/app/practice/calibration.py` owns one
+question the band above cannot answer on its own: how often a decode of *this* shape is right. It is
+three constants over two axes — segment length and how many pieces could explain it — raised from the
+measurement in `backend/tools/calibrate_bands.py`, not from a setting. A crowded library never writes a
+fragment under 12 notes (measured 71.2% precise at the configured 0.99, and no threshold reaches more
+than about 76%), needs 0.995 under 25 notes, and keeps the configured probability above that; a small
+library is untouched, because a ten-note drill against three pieces is still likely unique. It can
+lower a write to an offer and never raise one, so the store consults it after the decode has spoken and
+before the band is trusted. Constants rather than settings for the same reason the weights are: this is
+a statement about the arithmetic, and a library that wants more caution already has
+`SRT_AUTOTAG_AUTO_PROBABILITY` to say so.
+
 **Storage is rows except where a row costs more than its fact.** The sustain pedal's raw CC64 stream
 is packed — 6-byte records in chunks of at most 512, never split inside one millisecond — because a
 continuous controller writes about fifteen values a second and a row plus two indexes cost 51 bytes
@@ -348,7 +360,7 @@ Every environment variable is optional.
 | `SRT_AUTOTAG_CONTAINMENT_WEIGHT` | `0.25` | Phase 22b: how much of a match's score comes from local content rather than from the whole-segment average. Chosen by the sweep in `tools/measure_autotag.py` |
 | `SRT_AUTOTAG_SEQUENCE_SWITCH` | `0.10` | Phase 22d: the chance a sitting moves to another piece between two segments, shared over the pieces not currently believed. Measured on the owner's library at 42 changes in 412 adjacent pairs (10.2%); higher lets a real change through, lower makes the sitting stickier |
 | `SRT_AUTOTAG_SEQUENCE_TEMPERATURE` | `0.02` | Phase 22d: how confidently one segment's candidate scores speak. Scores are 0–1 and margins are ~0.03, so 0.02 is what makes a small lead decisive inside a sitting; it is a softmax temperature applied to the scores as they are, never a re-scoring |
-| `SRT_AUTOTAG_AUTO_PROBABILITY` | `0.99` | Phase 22d: probability at or above which the sitting's decode is written without asking. Chosen against 93.5% coverage at 100% precision, versus 58.5% at 100% for the per-segment band; `1.0` writes nothing, which is how the tests withhold the decision |
+| `SRT_AUTOTAG_AUTO_PROBABILITY` | `0.99` | Phase 22d: probability at or above which the sitting's decode is written without asking. Chosen against 93.5% coverage at 100% precision, versus 58.5% at 100% for the per-segment band; `1.0` writes nothing, which is how the tests withhold the decision. 22f raises the effective bar by segment length in a crowded library (`calibration.py`) and never lowers it, because a short fragment's decode measured 71.2% precise at this number |
 | `SRT_AUTOTAG_PROMPT_PROBABILITY` | `0.50` | Phase 22d: probability at or above which a decode is *offered* rather than written |
 | `SRT_MAX_UPLOAD_MB` | `512` | Largest recording accepted by the upload endpoint |
 | `SRT_PIANO_DIR` | `<data dir>/piano` | Where the one-time sampled piano is kept and served from |

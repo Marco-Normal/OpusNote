@@ -5040,3 +5040,39 @@ write threshold on its own, so the drill is now `[60, 62, 64, 65, 67, 48, 52, 55
 Verified: `./check.sh --fast`; `pytest tests/test_similarity.py tests/test_autotag.py -q` 89 passed
 (7 new hand/interval tests); falsifications `pool_the_two_hands_into_one_profile` and
 `hear_the_interval_shape_as_pitches`, both caught; `./check.sh --full`.
+
+## 2026-05-20 — Claude — Phase 22f: the band is calibrated by what the evidence can support
+
+Scope: `backend/app/practice/calibration.py` (new), `backend/app/practice/store.py`,
+`backend/tests/test_calibration.py` (new), `backend/tests/test_autotag.py`,
+`backend/tools/calibrate_bands.py` (new),
+`backend/tools/falsifications/write_a_short_fragment_in_a_crowded_library.sh` (new),
+`docs/ECOSYSTEM.md` (Phase 22 status row + 22f), `docs/ENGINEERING.md` (calibration owner +
+`SRT_AUTOTAG_AUTO_PROBABILITY` row).
+
+Did: the last step of the three-step matcher programme (sequence, hands/intervals, calibrated
+bands). `calibration.py` answers one question the sequence band could not: how often a decode of
+*this shape* is right. Two axes — segment length and how many pieces could explain it — three
+constants. `store._sequence_verdict` asks it after the decode has spoken: a crowded library never
+writes a fragment under 12 notes (offered instead), needs 0.995 under 25 notes, and keeps the
+configured probability above that; a library of eight pieces or fewer is untouched. The calibration
+can lower a write to an offer and never raise one, and a stricter `SRT_AUTOTAG_AUTO_PROBABILITY` is
+never lowered, so the setting keeps its meaning.
+
+Why these numbers, measured by `backend/tools/calibrate_bands.py` (leave-one-out, 22e weights,
+containment 0.25, sittings of eight, `switch=0.10`, `temperature=0.02`; 550 segments over 8 and 32
+pieces, whole drills and quarter fragments): 8–11 notes were written at **71.2% precision** at 0.99
+and no threshold lifts that shape above about 76% — 32-piece quarter fragments 43@67.4% at 0.99,
+74@62.2% at 0.90, 40@70.0% at 0.995; 12–24 notes **98.9% at 0.995** (90.5–98.0% below it); 25–49 and
+50+ notes **100% at 0.99**. A small library is not worse: 8-piece quarter fragments 8–11 notes
+measured 85%, whole drills 100%.
+
+Contract: no schema change, no endpoint change, no new setting. `SegmentCandidate.band` can now be
+`suggest` where it used to be `auto` for the same decode, which is the whole point; nothing else in
+the payload moved. `SRT_AUTOTAG_SCORE_AUTO`, `SRT_AUTOTAG_SCORE_PROMPT` and `SRT_AUTOTAG_MIN_MARGIN`
+still gate nothing at runtime.
+
+Verified: `./check.sh --fast`; `pytest tests/test_calibration.py tests/test_autotag.py -q` 56 passed
+(5 calibration tests + the new wiring test); falsification
+`write_a_short_fragment_in_a_crowded_library` caught. No full run: the owner asked for quick runs on
+small changes (the change is one module plus its wiring and docs).
