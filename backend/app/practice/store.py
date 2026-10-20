@@ -2837,6 +2837,13 @@ def _sequence_verdict(
         return "none", identification.reason
     raw = identification.best.piece_id if identification.best else None
     if band == "none":
+        # A decode may lower a write to an offer, but it may not turn an offer into
+        # silence. Two pieces the material explains equally well land either side of
+        # the prompt probability by a hair (0.4999 rather than 0.5), and hiding both
+        # answers is worse than showing two: nothing is written either way, and the
+        # player is the one who can tell them apart.
+        if identification.band == "suggest":
+            return "suggest", identification.reason
         return band, identification.reason
     if belief.chosen != raw:
         moved = "points here" if band == "auto" else "leans here"

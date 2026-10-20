@@ -1296,3 +1296,26 @@ def test_the_accuracy_report_reads_the_sitting_as_a_sequence(fresh_db) -> None:
         f"{quality.auto_attempted} attempted of {quality.evaluated}"
     )
     assert quality.auto_correct == quality.auto_attempted
+
+
+def test_a_segment_two_pieces_explain_equally_is_offered_not_silenced(fresh_db) -> None:
+    """A tie is an offer, not a write and not silence.
+
+    The same material is tagged once as each of two pieces, so the third instance is
+    explained exactly as well by both. The sitting's decode lands a hair under the prompt
+    probability on a split like that, and the per-segment band said "too close to another
+    piece" — the player must still be shown both answers, because nothing is written either
+    way and only the player can tell them apart.
+    """
+    piece_a, piece_b = two_pieces()
+    labelled_drill(0, PIECE_A, piece_a)
+    labelled_drill(1, PIECE_A, piece_b)
+    sitting_id = make_sitting(11, [PIECE_A])
+
+    segments = store.sitting_detail(sitting_id).segments
+    assert len(segments) == 1
+    segment = segments[0]
+    assert segment.piece_id is None, "a tie must never be written"
+    assert segment.candidates, "and it must still be offered"
+    assert segment.candidates[0].band == "suggest", segment.candidates[:1]
+    assert "close" in (segment.candidates[0].reason or "")
