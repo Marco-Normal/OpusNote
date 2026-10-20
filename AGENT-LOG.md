@@ -4919,3 +4919,44 @@ Verified: `./check.sh --fast` (58 s); `test_practice_rhythm.py` 11 passed; `run_
 green including 11 new assertions (bar per week, first+extra == total, table matching the chart,
 adherence wording, technique panel, and switching to 28 days actually refetching); falsifications
 `forget_which_sitting_was_first` and `start_the_week_on_sunday`, both caught; `./check.sh --full`.
+
+## 2026-10-19 — sight-reading agent — the hour of practice is the player's, not the file's; a portrait of the notes
+
+Scope: `backend/app/practice/{schema,store,models,api,portrait}.py`,
+`backend/tests/{test_practice_rhythm,test_practice_portrait,test_migration_upgrade}.py`,
+`frontend/src/{lib/{types,api}.ts,components/RhythmView.svelte}`, `backend/tools/e2e_browser.py`,
+three falsifications, `docs/{FEATURES,ENGINEERING,PERFORMANCE}.md`.
+
+Did: `sittings` gained `tz_offset_minutes` (additive, nullable; `SCHEMA_VERSION` 7 → 8), written at
+ingest beside the `local_date` it produced. The rhythm read now buckets minutes by the **player's**
+hour of day — a sitting that crosses an hour is split at the boundary, so the 24 buckets add up to
+the window's minutes — and reports the daily-minutes serial correlation at 1, 7 and 14 days with
+empty days kept as zeros. New `GET /api/practice/analytics/portrait?days=90` is the note-level
+portrait: register (keys, range, centre, octaves, pitch classes), touch (mean/min/max velocity,
+distinct values, entropy, velocity-ratio dB, by local hour), texture (attacks at 40 ms, notes per
+attack, chord share), travel (semitones, metres at 17 cm/octave) and interval regularity (CV inside
+phrases ≤ 2 s).
+
+Two decisions. **The offset is stored, not re-derived.** `local_date`'s own docstring already said
+the historic offset is not recoverable from a UTC instant; the column was missing, so an evening
+could only be read as UTC. Sittings older than the column carry `NULL` and use the caller's offset
+(`tz_offset_minutes` on both routes); a default of 0 would be a confident lie. **The portrait is a
+separate route with its own cache**, because it is four scans of the window's notes (2.99 s cold,
+0.035 s warm on the owner's 1,030,319-note library) and the Progress tab must not pay that to draw
+its tiles. Its key is the inputs it is a function of — notes' count and highest id, sittings' count
+and highest id, window, offset — following `_passages_derived`'s rule; `forget_references()` clears
+it with the other caches.
+
+This also corrects a real misreading: the practice log's minutes sit at UTC hours 17:00–02:00, which
+is the player's 14:00–23:00 at UTC−3. Every "after 22:00" figure read from that file without the
+offset was three hours wrong.
+
+Impact on the other side: `sittings` gained one nullable column; the two analytics routes gained an
+optional `tz_offset_minutes` query parameter (both still answer without it); `RhythmSummary` gained
+`hours`, `autocorrelations` and `tz_offset_minutes`; `AppView`/`ENTITIES` unchanged. No existing
+field changed shape, no tunable, no wire format.
+
+Verified: `./check.sh --fast`; backend 1128 passed (25 of them the new rhythm/portrait tests);
+`run_e2e.sh practice_log` green including the new hour/portrait assertions; falsifications
+`forget_which_clock_the_hour_is_on`, `count_the_whole_sitting_in_its_start_hour` and
+`let_the_portrait_answer_for_a_stale_library`, all caught; `./check.sh --full`.

@@ -3911,6 +3911,34 @@ def scenario_practice_log(browser) -> None:
         page.locator("[data-rhythm-technique]").count() == 1,
         "the technique panel renders from the segment measurements",
     )
+    check(
+        page.locator("[data-hour]").count() == 24,
+        "the day chart carries all 24 hours, so an empty hour is a visible zero",
+    )
+    check(
+        abs(sum(hour["minutes"] for hour in rhythm["hours"]) - rhythm["minutes"]) < 0.5,
+        "the hour buckets add up to the window's minutes",
+    )
+    check(
+        page.locator("[data-rhythm-lag]").count() == 3,
+        "one serial correlation per lag (1, 7 and 14 days)",
+    )
+
+    # The portrait is a separate request over the notes, so it arrives after the rhythm
+    # tiles; waiting on its own state is what proves the second read landed rather than that
+    # the placeholder is still on screen.
+    page.wait_for_selector('[data-portrait="ready"]', timeout=30_000)
+    portrait = api("/api/practice/analytics/portrait?days=90")
+    check(
+        page.get_attribute('[data-portrait="ready"]', "data-portrait-notes")
+        == str(portrait["notes"]),
+        f"the portrait counts the same notes the endpoint does ({portrait['notes']})",
+    )
+    check(
+        page.get_attribute('[data-portrait="ready"]', "data-portrait-keys")
+        == str(portrait["keyboard"]["distinct_keys"]),
+        "and the same spread of keys",
+    )
 
     # The window is a real request, not a filter over a preloaded list: a window the view was
     # not showing must come from the server.

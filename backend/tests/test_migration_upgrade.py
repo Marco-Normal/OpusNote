@@ -89,7 +89,7 @@ EXPECTED_COLUMNS: dict[str, set[str]] = {
     "sitting_marks": {"id", "sitting_id", "onset_ms", "epoch_ms"},
     "sittings": {
         "id", "started_ms", "ended_ms", "started_at", "ended_at", "local_date",
-        "source", "closed_ms", "legacy_id",
+        "source", "closed_ms", "legacy_id", "tz_offset_minutes",
     },
     "skills": {"id", "slug", "name", "description", "sort_order"},
     "user_skills": {

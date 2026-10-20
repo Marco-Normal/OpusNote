@@ -52,6 +52,11 @@ CREATE TABLE IF NOT EXISTS sittings (
     -- waiting out the whole gap. A closed sitting takes no further notes — coming
     -- back after switching the piano off starts a new one, deliberately.
     closed_ms     INTEGER,
+    -- The player's UTC offset when the sitting started, in minutes east of UTC.
+    -- `local_date` is derived from it at ingest; keeping it is what makes an
+    -- hour-of-day read possible without guessing, and it stays right across a
+    -- DST change the clock above cannot describe after the fact.
+    tz_offset_minutes INTEGER,
     -- The id this row had in the standalone practice-logger, or NULL. Importing
     -- matches on this rather than on the primary key, for the same reason the
     -- repertoire importer does: the two id spaces are independent, and colliding
@@ -263,6 +268,10 @@ END;
 ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("sittings", "legacy_id", "INTEGER"),
     ("sittings", "closed_ms", "INTEGER"),
+    # Phase 23c — the offset `local_date` was computed with. Nullable on purpose: sittings
+    # recorded before this column existed have no recoverable offset, and a zero would be a
+    # confident lie that reads every evening as UTC.
+    ("sittings", "tz_offset_minutes", "INTEGER"),
     ("segments", "source", "TEXT"),
     # D1: the CREATE at :118 declares this ON DELETE SET NULL; an ALTER that omits the
     # reference leaves upgraded databases with a dangling `workout_id` when a workout is

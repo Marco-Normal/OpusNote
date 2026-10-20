@@ -15,6 +15,7 @@ from ..hostinfo import require_loopback
 from ..store import open_connection
 from ..workout import store as workout_store
 from . import capture_status, jobs, store
+from .portrait import portrait
 from .capture_status import CaptureReport
 from .legacy import LegacyDatabaseMissing, import_legacy_practice
 from .models import (
@@ -28,6 +29,7 @@ from .models import (
     CaptureReportIn,
     PracticeImportReport,
     PracticeKindRequest,
+    PracticePortrait,
     PracticeStatus,
     PiecePractice,
     PiecePracticeDetail,
@@ -292,14 +294,34 @@ def analytics_summary(
 @router.get("/analytics/rhythm", response_model=RhythmSummary)
 def analytics_rhythm(
     days: int = Query(default=90, ge=1, le=3650),
+    tz_offset_minutes: int | None = Query(default=None, ge=-840, le=840),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> RhythmSummary:
-    """How practice is distributed over weeks, days and segment technique.
+    """How practice is distributed over weeks, days, hours and segment technique.
 
     Separate from ``/analytics/summary`` because that one is polled every twenty seconds while
     the Log is open, and this window can be a year wide. Nothing here reads `note_events`.
+
+    ``tz_offset_minutes`` is only the fallback for sittings recorded before the offset was
+    stored with them; every newer sitting carries the offset its evening was logged in, which
+    is the one that can still describe a DST change the host clock has since forgotten.
     """
-    return store.rhythm(conn, days)
+    return store.rhythm(conn, days, tz_offset_minutes)
+
+
+@router.get("/analytics/portrait", response_model=PracticePortrait)
+def analytics_portrait(
+    days: int = Query(default=90, ge=1, le=3650),
+    tz_offset_minutes: int | None = Query(default=None, ge=-840, le=840),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> PracticePortrait:
+    """The note-level portrait: register, touch, texture, travel and regularity.
+
+    A pass over every note in the window, so it is its own request rather than a section of
+    the rhythm read: that one is paid when the Progress tab opens, this one only when the
+    portrait is asked for. ``details`` of the cost are in PERFORMANCE.md.
+    """
+    return portrait(conn, days, tz_offset_minutes)
 
 
 @router.get("/pieces", response_model=list[PiecePractice])

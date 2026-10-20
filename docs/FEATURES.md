@@ -358,7 +358,19 @@ reading.
   or more sittings, which weekdays carry the practice, and the technique averages the segments
   already measure — note rate, touch, the two hands, restarts per minute and pedal blur. The
   window is 4 weeks, 3 months or a year, and each is a fresh request rather than a filter over
-  one preloaded list.
+  one preloaded list. The same view answers **when**: minutes by hour of the player's own day
+  (a 21:00 evening stays at 21:00 for a reader in another timezone, and a sitting that crosses
+  an hour is split at it), plus how strongly the daily minutes line up with themselves one,
+  seven and fourteen days earlier — a description of the habit's rhythm, with empty days
+  counted as zeros.
+- **The portrait (Rhythm).** A second read over the window's notes describes what the playing
+  *used*: the keys and octaves it visited, the range and its centre of gravity, how far the
+  hands travelled (in semitones, and in metres at the 17 cm an octave a standard key span
+  implies), how many notes sound at once (onsets within 40 ms are one attack), how varied the
+  touch was (distinct velocities, the entropy of the velocity histogram, a velocity-ratio
+  dynamic range), and how regular the intervals were inside phrases. It is loaded after the
+  tiles because it is a pass over every note in the window, and it is descriptive rather than a
+  mark — the panel says so.
 
 **Every screen has an address.** `#/repertoire/piece/12`, `#/log/sitting/34` and
 `#/stats/attempt/56` can be pasted between machines, and Back works. `/` or `Ctrl`/`Cmd`+`K`

@@ -92,6 +92,22 @@ with no practice inside the window are reported as zeros rather than skipped —
 information — and `elapsed_days` is the service's own honesty about a window longer than the record,
 so adherence is never computed against days that could not have been practised.
 
+The same read buckets minutes by **hour of the player's day**. `sittings.tz_offset_minutes` is
+written once, with the `local_date` it produced, because the two are one decision: the offset that
+turned an instant into a calendar day is the only one that can still describe an evening after a
+DST change the host clock has since forgotten. Sittings recorded before the column existed carry
+`NULL` and use the caller's offset, sent as `tz_offset_minutes`; a zero there would be a confident
+lie that reads every evening as UTC. A sitting that crosses an hour is split at the boundary, so
+the 24 buckets add up to the window's minutes.
+
+`GET /api/practice/analytics/portrait?days=90` is the note-level read and is deliberately a
+*different* route from the rhythm one: it is four scans of the window's notes, ~3 s on the owner's
+million-note library, and the Progress tab must not pay that to draw its tiles. It is fetched after
+them, given its own cache keyed on the inputs it is a function of — notes are append-only, so their
+count and highest id name the set, together with the sittings' and the window — and reports
+register, touch, texture, travel and interval regularity. The `keyboard` field is the register
+profile (`register` is a reserved attribute name on a Pydantic model).
+
 Every payload that names a library piece carries the three fields that name it, because a title
 alone does not identify one: `SegmentSummary.piece_title`/`composer_name`/**`piece_opus`**,
 `PracticePassageOut.piece_opus`, `SegmentCandidate.opus` (`title`/`composer_name` unprefixed there,

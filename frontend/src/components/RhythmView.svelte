@@ -12,7 +12,7 @@
    * the totals and lose the split, which is the whole point of the split.
    */
   import { api } from '../lib/api';
-  import type { RhythmSummary } from '../lib/types';
+  import type { PracticePortrait, RhythmSummary } from '../lib/types';
   import BarChart from './BarChart.svelte';
 
   const WINDOWS = [
@@ -22,11 +22,18 @@
   ];
 
   const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const NOTE_NAMES = ['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B'];
 
   let days = $state(90);
   let data = $state<RhythmSummary | null>(null);
   let loading = $state(false);
   let error = $state<string | null>(null);
+
+  // The portrait is a pass over every note in the window, so it is its own request and it
+  // arrives after the tiles: the shape of the weeks must not wait for a million notes.
+  let portrait = $state<PracticePortrait | null>(null);
+  let portraitBusy = $state(false);
+  let portraitError = $state<string | null>(null);
 
   async function load(): Promise<void> {
     loading = true;
@@ -40,10 +47,27 @@
     }
   }
 
+  async function loadPortrait(): Promise<void> {
+    portraitBusy = true;
+    portraitError = null;
+    try {
+      portrait = await api.practice.portrait(days);
+    } catch (cause) {
+      portraitError = cause instanceof Error ? cause.message : String(cause);
+    } finally {
+      portraitBusy = false;
+    }
+  }
+
   // Runs on mount and whenever the window changes; `days` is read so it is tracked.
   $effect(() => {
     void days;
     void load();
+  });
+
+  $effect(() => {
+    void days;
+    void loadPortrait();
   });
 
   const weeks = $derived(data?.weeks ?? []);
@@ -94,6 +118,73 @@
     if (value === null || value === undefined) return '—';
     return `${value}${unit}`;
   }
+
+  function signed(value: number | null | undefined): string {
+    if (value === null || value === undefined) return '—';
+    return `${value > 0 ? '+' : ''}${value.toFixed(2)}`;
+  }
+
+  /** Scientific pitch: MIDI 60 is C4, which is also how the library's ranges read. */
+  function noteName(midi: number | null): string {
+    if (midi === null || midi === undefined) return '—';
+    return `${NOTE_NAMES[midi % 12]}${Math.floor(midi / 12) - 1}`;
+  }
+
+  const hourPeak = $derived(
+    (data?.hours ?? []).reduce((best, row) => Math.max(best, row.minutes), 0),
+  );
+
+  /** The hours that actually hold practice, for the sentence under the chart. */
+  const practisedHours = $derived((data?.hours ?? []).filter((row) => row.minutes > 0));
+
+  const morningHours = $derived(practisedHours.filter((row) => row.hour < 12).length);
+  const earliestHour = $derived(practisedHours.length > 0 ? practisedHours[0].hour : null);
+  const latestHour = $derived(
+    practisedHours.length > 0 ? practisedHours[practisedHours.length - 1].hour : null,
+  );
+
+  const correlation = $derived(
+    Object.fromEntries((data?.autocorrelations ?? []).map((row) => [row.lag, row.r])),
+  );
+
+  const strongestLag = $derived(
+    (data?.autocorrelations ?? []).reduce(
+      (best, row) => (row.r !== null && (best.r === null || Math.abs(row.r) > Math.abs(best.r)) ? row : best),
+      { lag: 0, r: null as number | null, pairs: 0 },
+    ),
+  );
+
+  const octaveItems = $derived(
+    (portrait?.keyboard.octaves ?? []).map((row) => ({
+      label: `C${row.octave}`,
+      value: row.notes,
+      hint: row.notes === 1 ? '1 note' : `${row.notes} notes`,
+    })),
+  );
+
+  const pitchClassItems = $derived(
+    (portrait?.keyboard.pitch_classes ?? [])
+      .filter((row) => row.notes > 0)
+      .slice()
+      .sort((a, b) => b.notes - a.notes)
+      .map((row) => ({
+        label: NOTE_NAMES[row.pitch_class],
+        value: row.notes,
+        hint: portrait
+          ? `${((row.notes / Math.max(portrait.notes, 1)) * 100).toFixed(1)}% of the notes`
+          : '',
+      })),
+  );
+
+  const spanItems = $derived(
+    (portrait?.velocity_spans ?? []).map((row) => ({
+      label: ['First quarter', 'Second quarter', 'Third quarter', 'Last quarter'][row.span],
+      value: row.mean_velocity ?? 0,
+      hint: row.notes === 0 ? 'no notes' : `${row.notes} notes`,
+    })),
+  );
+
+  const travelMetres = $derived(portrait ? Math.round(portrait.travel.metres) : 0);
 </script>
 
 <section class="card panel">
@@ -245,6 +336,60 @@
     </section>
   </div>
 
+  <section class="card panel" data-rhythm-hours={data.hours.length}>
+    <h3>When in the day</h3>
+    <div class="hour-chart" aria-hidden="true">
+      {#each data.hours as row (row.hour)}
+        <div
+          class="hour"
+          class:empty={row.minutes === 0}
+          data-hour={row.hour}
+          data-hour-minutes={row.minutes}
+          title={`${String(row.hour).padStart(2, '0')}:00 — ${row.minutes} min in ${row.sittings} sitting(s)`}
+        >
+          <div
+            class="bar"
+            style="height: {hourPeak > 0 ? Math.max(1, (row.minutes / hourPeak) * 100) : 0}%"
+          ></div>
+          <span class="tick muted">{row.hour % 3 === 0 ? row.hour : ''}</span>
+        </div>
+      {/each}
+    </div>
+    <p class="muted small">
+      On the player's own clock, not the file's — a 21:00 evening stays at 21:00 for a reader
+      in another timezone. A sitting that crosses an hour is split at it, so these bars add up
+      to the window's minutes.
+      {#if earliestHour !== null && latestHour !== null}
+        Every minute in this window falls between {String(earliestHour).padStart(2, '0')}:00 and
+        {String(latestHour).padStart(2, '0')}:00, and {morningHours === 0
+          ? 'none of it before noon'
+          : `${morningHours} hour(s) of it before noon`}.
+      {/if}
+    </p>
+    <div class="tiles">
+      {#each [1, 7, 14] as lag (lag)}
+        <div class="tile">
+          <span class="k">{lag === 1 ? '1 day' : `${lag} days`}</span>
+          <span class="v" data-rhythm-lag={lag}>{signed(correlation[lag])}</span>
+        </div>
+      {/each}
+      <div class="tile">
+        <span class="k">Days in window</span>
+        <span class="v">{data.elapsed_days}</span>
+      </div>
+    </div>
+    <p class="muted small">
+      These three numbers are the daily minutes correlated with themselves one, seven and
+      fourteen days earlier, with empty days kept as zeros. A positive value means a long day
+      tends to follow another long day at that distance; negative means the opposite. It is a
+      description of the habit, not a claim about why.
+      {#if strongestLag.r !== null}
+        The strongest of the three is {strongestLag.lag}
+        {strongestLag.lag === 1 ? 'day' : 'days'} at {signed(strongestLag.r)}.
+      {/if}
+    </p>
+  </section>
+
   <section class="card panel" data-rhythm-technique={data.technique.segments}>
     <h3>How it was played</h3>
     {#if data.technique.segments === 0}
@@ -296,6 +441,134 @@
       </p>
     {/if}
   </section>
+
+  {#if portraitError}
+    <section class="card panel" data-portrait="error">
+      <h3>The portrait</h3>
+      <p class="error">{portraitError}</p>
+    </section>
+  {:else if !portrait}
+    <section class="card panel" data-portrait="loading">
+      <h3>The portrait</h3>
+      <p class="muted small">
+        {portraitBusy
+          ? 'Reading every note in the window — this one takes a moment.'
+          : 'Nothing loaded.'}
+      </p>
+    </section>
+  {:else}
+    <section
+      class="card panel"
+      data-portrait="ready"
+      data-portrait-notes={portrait.notes}
+      data-portrait-keys={portrait.keyboard.distinct_keys}
+    >
+      <h3>The keys you used</h3>
+      {#if portrait.notes === 0}
+        <p class="muted small">No notes in this window.</p>
+      {:else}
+        <div class="tiles">
+          <div class="tile">
+            <span class="k">Notes</span>
+            <span class="v">{portrait.notes.toLocaleString()}</span>
+          </div>
+          <div class="tile">
+            <span class="k">Keys used</span>
+            <span class="v">{portrait.keyboard.distinct_keys}<small> of 88</small></span>
+          </div>
+          <div class="tile">
+            <span class="k">Range</span>
+            <span class="v"
+              >{noteName(portrait.keyboard.lowest)}<small>–{noteName(portrait.keyboard.highest)}</small></span
+            >
+          </div>
+          <div class="tile">
+            <span class="k">Centre</span>
+            <span class="v">{noteName(portrait.keyboard.mean_pitch)}</span>
+          </div>
+          <div class="tile">
+            <span class="k">Travel</span>
+            <span class="v"
+              >{travelMetres >= 1000 ? (travelMetres / 1000).toFixed(1) : travelMetres}<small
+                >{travelMetres >= 1000 ? ' km' : ' m'}</small
+              ></span
+            >
+          </div>
+          <div class="tile">
+            <span class="k">Attacks</span>
+            <span class="v">{portrait.texture.attacks.toLocaleString()}</span>
+          </div>
+          <div class="tile">
+            <span class="k">Notes / attack</span>
+            <span class="v">{fmt(portrait.texture.notes_per_attack)}</span>
+          </div>
+          <div class="tile">
+            <span class="k">Chords</span>
+            <span class="v"
+              >{portrait.texture.chord_share === null
+                ? '—'
+                : `${Math.round(portrait.texture.chord_share * 100)}%`}</span
+            >
+          </div>
+        </div>
+
+        <div class="grid inner">
+          <div>
+            <h4>Which octaves</h4>
+            <BarChart items={octaveItems} unit=" notes" empty="No notes in this window." />
+          </div>
+          <div>
+            <h4>Which notes</h4>
+            <BarChart items={pitchClassItems} unit=" notes" empty="No notes in this window." />
+          </div>
+        </div>
+      {/if}
+
+      <h3>How it felt</h3>
+      <div class="tiles">
+        <div class="tile">
+          <span class="k">Touch</span>
+          <span class="v">{fmt(portrait.touch.mean_velocity)}<small> velocity</small></span>
+        </div>
+        <div class="tile">
+          <span class="k">Palette</span>
+          <span class="v">{portrait.touch.distinct_velocities}<small> of 127</small></span>
+        </div>
+        <div class="tile">
+          <span class="k">Spread</span>
+          <span class="v">{fmt(portrait.touch.entropy_bits)}<small> bits</small></span>
+        </div>
+        <div class="tile">
+          <span class="k">Dynamic range</span>
+          <span class="v">{fmt(portrait.touch.dynamic_range_db)}<small> dB*</small></span>
+        </div>
+        <div class="tile">
+          <span class="k">Regularity</span>
+          <span class="v">{fmt(portrait.timing.cv)}<small> CV</small></span>
+        </div>
+        <div class="tile">
+          <span class="k">Attacks / min</span>
+          <span class="v">{fmt(portrait.texture.attacks_per_minute)}</span>
+        </div>
+      </div>
+
+      {#if spanItems.length > 0}
+        <h4>Loudness across the window</h4>
+        <BarChart items={spanItems} unit=" velocity" empty="No notes in this window." />
+      {/if}
+
+      <p class="muted small">
+        Descriptive, not a mark. <em>Touch</em> is MIDI velocity, and the *dB figure is a
+        velocity ratio (20 log₁₀ max/min), not a sound-pressure level — it cannot be compared
+        across instruments or rooms. <em>Notes per attack</em> groups onsets within 40 ms, so a
+        rolled chord is one attack; above 1 means something was sounding together.
+        <em>Regularity</em> is the coefficient of variation of the gaps between attacks inside
+        phrases (2 s or less), so a pause between thoughts is not counted as uneven playing.
+        <em>Travel</em> converts semitones at 17 cm per octave — an intuition, not a
+        measurement of the hands.
+      </p>
+    </section>
+  {/if}
 {/if}
 
 <style>
@@ -345,6 +618,47 @@
     font-size: 0.72rem;
     color: var(--muted);
     font-weight: 400;
+  }
+
+  .hour-chart {
+    display: flex;
+    align-items: flex-end;
+    gap: 1px;
+    height: 110px;
+    padding-top: 0.3rem;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .hour {
+    flex: 1 1 0;
+    min-width: 0;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    gap: 0.2rem;
+  }
+
+  .hour .bar {
+    background: var(--accent);
+    border-radius: 2px 2px 0 0;
+    min-height: 0;
+  }
+
+  .hour.empty .bar {
+    background: var(--track);
+  }
+
+  .hour .tick {
+    font-size: 0.65rem;
+    text-align: center;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+
+  .grid.inner {
+    grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+    margin-top: 0.2rem;
   }
 
   .chart-wrap {

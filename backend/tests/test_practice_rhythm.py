@@ -196,3 +196,82 @@ def test_the_endpoint_reports_the_same_numbers_the_store_does(client, conn) -> N
     assert body["weeks"][-1]["first_minutes"] == direct.weeks[-1].first_minutes == 55.0
     assert body["weeks"][-1]["extra_minutes"] == 12.0
     assert body["window_end"] == date.today().isoformat()
+
+
+# --- the player's clock, not the file's -------------------------------------------------
+
+
+def _at(day: date, hour: int, minute: int, offset_minutes: int) -> int:
+    """The UTC epoch of a local wall-clock time, at a given UTC offset."""
+    local = datetime.combine(day, time(hour, minute), tzinfo=__import__("datetime").timezone.utc)
+    return int((local - timedelta(minutes=offset_minutes)).timestamp() * 1000)
+
+
+def _sitting_at(conn, start_ms: int, minutes: float, offset_minutes: int | None) -> int:
+    end_ms = start_ms + int(minutes * 60_000)
+    cursor = conn.execute(
+        "INSERT INTO sittings"
+        " (started_ms, ended_ms, started_at, ended_at, local_date, tz_offset_minutes, source)"
+        " VALUES (?, ?, ?, ?, ?, ?, 'web_midi')",
+        (
+            start_ms,
+            end_ms,
+            store.utc_text(start_ms),
+            store.utc_text(end_ms),
+            store.local_date(start_ms, offset_minutes or 0),
+            offset_minutes,
+        ),
+    )
+    conn.commit()
+    return int(cursor.lastrowid)
+
+
+def test_an_evening_is_read_on_the_players_clock_not_on_utc(conn) -> None:
+    """The bug this column exists to fix: a 21:30 sitting read as 00:30.
+
+    The offset is three hours west, so the stored epoch falls on the next UTC day. Reading
+    the hour off ``started_ms`` would put an evening's practice at midnight and make a
+    night owl out of someone who was in bed.
+    """
+    day = date.today()
+    _sitting_at(conn, _at(day, 21, 30, -180), 30, -180)
+
+    summary = store.rhythm(conn)
+    assert summary.hours[21].minutes == 30.0
+    assert summary.hours[21].sittings == 1
+    assert summary.hours[0].minutes == 0.0
+
+
+def test_a_sitting_recorded_before_the_offset_existed_uses_the_callers(conn) -> None:
+    """Old rows carry no offset, and a zero would be a confident lie. The caller supplies
+    the player's offset for exactly those rows, and the same row reads differently under a
+    different caller — which is the proof it is not being guessed from the file."""
+    day = date.today()
+    start = _at(day, 21, 30, -180)
+    _sitting_at(conn, start, 30, None)
+
+    assert store.rhythm(conn, tz_offset_minutes=-180).hours[21].minutes == 30.0
+    assert store.rhythm(conn, tz_offset_minutes=0).hours[0].minutes == 30.0
+
+
+def test_a_sitting_that_crosses_midnight_is_split_at_the_hour(conn) -> None:
+    """An hour bucket that takes the whole sitting would move 60 minutes of playing into
+    the hour it merely started in."""
+    day = date.today()
+    _sitting_at(conn, _at(day, 23, 40, -180), 80, -180)
+
+    summary = store.rhythm(conn)
+    assert summary.hours[23].minutes == 20.0
+    assert summary.hours[0].minutes == 60.0
+
+
+def test_the_daily_series_keeps_the_empty_days(conn) -> None:
+    """A habit is a series of days including the ones left empty: dropping them would ask
+    whether long sittings follow long sittings and answer a different question."""
+    today = date.today()
+    for weeks_back in (2, 1, 0):
+        _sitting_at(conn, _at(today - timedelta(days=7 * weeks_back), 20, 0, 0), 20, 0)
+
+    weekly = next(lag for lag in store.rhythm(conn, days=21).autocorrelations if lag.lag == 7)
+    assert weekly.pairs == 14
+    assert weekly.r is not None and weekly.r > 0.9

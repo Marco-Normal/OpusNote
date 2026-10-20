@@ -40,6 +40,7 @@ import type {
   Recording,
   RepertoireStatus,
   RatingHistory,
+  PracticePortrait,
   RhythmSummary,
   ScoreResult,
   SegmentSummary,
@@ -55,6 +56,16 @@ import type {
 } from './types';
 
 const BASE = '/api';
+
+/**
+ * The browser's UTC offset in minutes east of UTC, the sign `Date` reports inverted.
+ *
+ * The server falls back to it only for sittings that do not carry their own offset; every
+ * newer sitting remembers the offset it was recorded in.
+ */
+function localOffsetMinutes(): number {
+  return -new Date().getTimezoneOffset();
+}
 
 /**
  * One batch of played notes.
@@ -507,7 +518,22 @@ export const api = {
      * A separate request from `summary` on purpose: the Log polls that one every twenty
      * seconds, and this window can be a year wide, so it is fetched when its view opens.
      */
-    rhythm: (days = 90) => request<RhythmSummary>(`/practice/analytics/rhythm?days=${days}`),
+    rhythm: (days = 90) =>
+      request<RhythmSummary>(
+        `/practice/analytics/rhythm?days=${days}&tz_offset_minutes=${localOffsetMinutes()}`,
+      ),
+
+    /**
+     * The note-level portrait: register, touch, texture, travel and regularity.
+     *
+     * Its own request because it is a pass over every note in the window — roughly three
+     * seconds on a million-note library — so it must not ride on the rhythm read that the
+     * Progress tab opens with.
+     */
+    portrait: (days = 90) =>
+      request<PracticePortrait>(
+        `/practice/analytics/portrait?days=${days}&tz_offset_minutes=${localOffsetMinutes()}`,
+      ),
 
     tempo: (pieceId: number) => request<TempoSeries>(`/practice/analytics/tempo?piece_id=${pieceId}`),
 

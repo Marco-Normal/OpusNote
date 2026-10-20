@@ -553,6 +553,33 @@ class WeekdayMinutes(BaseModel):
     practised_days: int
 
 
+class HourMinutes(BaseModel):
+    """Minutes that began in one hour of the player's day, ``0`` = midnight local.
+
+    A sitting that crosses an hour boundary is split at it, so the hour buckets add up to the
+    window's minutes. Bucketing on the stored UTC would put a 21:00 practice at midnight for a
+    player three hours west, which is the reading this field exists to stop.
+    """
+
+    hour: int
+    minutes: float
+    #: Sittings whose *start* fell in this hour. A sitting counts once, even when it is split.
+    sittings: int
+
+
+class LagCorrelation(BaseModel):
+    """Pearson correlation of the daily-minutes series with itself at ``lag`` days.
+
+    Missing days are zeros, not gaps: a habit is a series of days including the ones left
+    empty, and dropping them would ask whether long sittings follow long sittings.
+    """
+
+    lag: int
+    r: float | None = None
+    #: Overlapping pairs the correlation was computed from; fewer than three is not evidence.
+    pairs: int = 0
+
+
 class TechniqueSummary(BaseModel):
     """What the segment metrics say about *how* the time was spent.
 
@@ -602,7 +629,151 @@ class RhythmSummary(BaseModel):
     weeks: list[RhythmWeek] = Field(default_factory=list)
     session_counts: list[SessionCountBucket] = Field(default_factory=list)
     weekdays: list[WeekdayMinutes] = Field(default_factory=list)
+    #: Minutes by local hour of day, all 24 present, so an empty hour is a visible zero.
+    hours: list[HourMinutes] = Field(default_factory=list)
+    #: Serial correlation of daily minutes at 1, 7 and 14 days — is there a weekly rhythm?
+    autocorrelations: list[LagCorrelation] = Field(default_factory=list)
+    #: The offset used for sittings that do not carry their own (recorded before the column).
+    tz_offset_minutes: int = 0
     technique: TechniqueSummary
+
+
+class PitchClassNotes(BaseModel):
+    """Notes played on one pitch class, ``0`` = C. Rehearsal of a piece in one key shows."""
+
+    pitch_class: int
+    notes: int
+
+
+class OctaveNotes(BaseModel):
+    """Notes played in one octave, scientific pitch: MIDI 60 is ``C4``."""
+
+    octave: int
+    notes: int
+
+
+class RegisterProfile(BaseModel):
+    """Which part of the keyboard the window actually used.
+
+    ``mean_pitch`` is the centre of gravity of the notes, not the middle of the range: a
+    hand that stays in the middle and one that visits both ends have the same range and
+    different centres.
+    """
+
+    distinct_keys: int = 0
+    lowest: int | None = None
+    highest: int | None = None
+    span_semitones: int | None = None
+    mean_pitch: float | None = None
+    octaves: list[OctaveNotes] = Field(default_factory=list)
+    pitch_classes: list[PitchClassNotes] = Field(default_factory=list)
+
+
+class HourTouch(BaseModel):
+    """Mean velocity of the notes that began in one local hour."""
+
+    hour: int
+    notes: int
+    mean_velocity: float | None = None
+
+
+class VelocitySpan(BaseModel):
+    """Mean velocity in one quarter of the window, oldest first.
+
+    Equal *time* slices, not equal sitting counts, so a lull does not get a quarter of its
+    own and a busy week cannot outvote a quiet month.
+    """
+
+    span: int
+    notes: int
+    mean_velocity: float | None = None
+
+
+class TouchProfile(BaseModel):
+    """How hard and how variously the window was played.
+
+    Entropy is over the velocity histogram in bits: 0 means one dynamic repeated for
+    everything, ``log2(127)`` ≈ 7 means an even spread over the whole MIDI range. It is a
+    property of MIDI touch, not of acoustic loudness — the dynamic range figures are a
+    velocity proxy, and comparing them across instruments or rooms is meaningless.
+    """
+
+    notes: int = 0
+    mean_velocity: float | None = None
+    min_velocity: int | None = None
+    max_velocity: int | None = None
+    distinct_velocities: int = 0
+    entropy_bits: float | None = None
+    #: ``20 * log10(max / min)`` over MIDI velocity — a proxy, never a sound-pressure level.
+    dynamic_range_db: float | None = None
+    by_hour: list[HourTouch] = Field(default_factory=list)
+
+
+class TextureProfile(BaseModel):
+    """How many notes sound together.
+
+    An *attack* is a group of notes whose onsets are within 40 ms of each other, so a
+    rolled chord counts as one attack rather than as a run. ``notes_per_attack`` above 1
+    is polyphony; a window of single-line practice sits near 1.
+    """
+
+    attacks: int = 0
+    notes_per_attack: float | None = None
+    #: Attacks sounding three or more notes at once.
+    chord_attacks: int = 0
+    chord_share: float | None = None
+    attacks_per_minute: float | None = None
+
+
+class TravelProfile(BaseModel):
+    """How far the hands moved, in semitones and in a deliberately silly unit.
+
+    The distance is between consecutive attacks' mean pitches, so a chord costs the jump
+    to its centre rather than the jump to its top note. ``metres`` uses the 17 cm per
+    octave a standard piano key span implies; it is a conversion for intuition, not a
+    measurement of hand travel.
+    """
+
+    semitones: float = 0.0
+    metres: float = 0.0
+    mean_leap: float | None = None
+    max_leap: float | None = None
+
+
+class TimingProfile(BaseModel):
+    """Interval regularity inside phrases (gaps of 2 s or less).
+
+    ``cv`` is the coefficient of variation of inter-attack intervals: 0 is metronomic, and
+    above ~1 the intervals vary more than their own mean. Gaps longer than 2 s are phrase
+    boundaries and are excluded — a pause is not an uneven rhythm.
+    """
+
+    intervals: int = 0
+    mean_interval_ms: float | None = None
+    cv: float | None = None
+
+
+class PracticePortrait(BaseModel):
+    """The note-level portrait of a window: register, touch, texture, travel, regularity.
+
+    Deliberately a separate response from :class:`RhythmSummary`, which never reads
+    ``note_events``: this one is a pass over every note in the window (roughly a second on
+    the owner's million-note library) and is fetched only when the portrait is asked for,
+    not when the Progress tab opens.
+    """
+
+    days: int
+    window_start: str | None = None
+    window_end: str
+    minutes: float = 0.0
+    notes: int = 0
+    tz_offset_minutes: int = 0
+    keyboard: RegisterProfile = Field(default_factory=RegisterProfile)
+    touch: TouchProfile = Field(default_factory=TouchProfile)
+    texture: TextureProfile = Field(default_factory=TextureProfile)
+    travel: TravelProfile = Field(default_factory=TravelProfile)
+    timing: TimingProfile = Field(default_factory=TimingProfile)
+    velocity_spans: list[VelocitySpan] = Field(default_factory=list)
 
 
 class SittingCloseResult(BaseModel):

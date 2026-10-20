@@ -851,6 +851,20 @@ export interface RhythmTechnique {
   blurs_per_minute: number | null;
 }
 
+/** Minutes that began in one hour of the player's day, 0 = midnight local. */
+export interface HourMinutes {
+  hour: number;
+  minutes: number;
+  sittings: number;
+}
+
+/** Daily minutes correlated with themselves at `lag` days. */
+export interface LagCorrelation {
+  lag: number;
+  r: number | null;
+  pairs: number;
+}
+
 export interface RhythmSummary {
   days: number;
   window_start: string | null;
@@ -866,7 +880,97 @@ export interface RhythmSummary {
   weeks: RhythmWeek[];
   session_counts: SessionCountBucket[];
   weekdays: WeekdayMinutes[];
+  /** All 24 hours local to the player, so an empty hour is a visible zero. */
+  hours: HourMinutes[];
+  autocorrelations: LagCorrelation[];
+  /** The offset used only for sittings recorded before the offset was stored. */
+  tz_offset_minutes: number;
   technique: RhythmTechnique;
+}
+
+/** Notes played on one pitch class, 0 = C. */
+export interface PitchClassNotes {
+  pitch_class: number;
+  notes: number;
+}
+
+/** Notes played in one octave, scientific pitch: MIDI 60 is C4. */
+export interface OctaveNotes {
+  octave: number;
+  notes: number;
+}
+
+export interface RegisterProfile {
+  distinct_keys: number;
+  lowest: number | null;
+  highest: number | null;
+  span_semitones: number | null;
+  mean_pitch: number | null;
+  octaves: OctaveNotes[];
+  pitch_classes: PitchClassNotes[];
+}
+
+export interface HourTouch {
+  hour: number;
+  notes: number;
+  mean_velocity: number | null;
+}
+
+/** Mean velocity in one quarter of the practised span, oldest first. */
+export interface VelocitySpan {
+  span: number;
+  notes: number;
+  mean_velocity: number | null;
+}
+
+export interface TouchProfile {
+  notes: number;
+  mean_velocity: number | null;
+  min_velocity: number | null;
+  max_velocity: number | null;
+  distinct_velocities: number;
+  entropy_bits: number | null;
+  /** A velocity proxy (20 log10 max/min), never a sound-pressure level. */
+  dynamic_range_db: number | null;
+  by_hour: HourTouch[];
+}
+
+export interface TextureProfile {
+  attacks: number;
+  notes_per_attack: number | null;
+  chord_attacks: number;
+  chord_share: number | null;
+  attacks_per_minute: number | null;
+}
+
+export interface TravelProfile {
+  semitones: number;
+  metres: number;
+  mean_leap: number | null;
+  max_leap: number | null;
+}
+
+export interface TimingProfile {
+  intervals: number;
+  mean_interval_ms: number | null;
+  /** Coefficient of variation of intervals inside phrases: 0 is metronomic. */
+  cv: number | null;
+}
+
+/** The note-level portrait of a window — a pass over its notes, fetched on demand. */
+export interface PracticePortrait {
+  days: number;
+  window_start: string | null;
+  window_end: string;
+  minutes: number;
+  notes: number;
+  tz_offset_minutes: number;
+  keyboard: RegisterProfile;
+  touch: TouchProfile;
+  texture: TextureProfile;
+  travel: TravelProfile;
+  timing: TimingProfile;
+  velocity_spans: VelocitySpan[];
 }
 
 export interface PracticeImportReport {
