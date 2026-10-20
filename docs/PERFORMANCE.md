@@ -545,6 +545,35 @@ first and decodes each sitting chain afterwards — the same ranking work it alr
 decode — so the accuracy report did not become the slow path (~15 s for 443 leave-one-out queries on
 the real library, unchanged order).
 
+### 1.15 Two more terms, in the loop every open pays for
+
+**A recognition change is also a cost change.** Phase 22e added a hand term and an interval term to
+the matcher's score. Both are derived once per fingerprint — a segment's notes split at middle C and
+its interval classes, beside the pitch-class profile that was already built — so the segment side
+costs **0.2 ms per 400-note segment** (2.37 ms for twelve). The comparison side is the one that
+matters, because a sitting's open runs it O(open sections × labelled examples) times:
+
+| | a comparison | 443 examples |
+| --- | ---: | ---: |
+| three terms (22d) | 2.3 µs | 1.01 ms |
+| five terms, as shipped | **4.6 µs** | 2.05 ms |
+
+On the live library's largest undecided sitting (49 open sections × 1,148 examples = 56,252
+comparisons) that is about **130 ms on a ~400 ms open**, and it is the price of 22e's accuracy: +2.4
+points of top-1 at 32 pieces and one-hand drills found more often. Stated as trade, not as free.
+
+**The first cut cost three times as much, and the fix is R14 again.** That version called `cosine`
+twice inside `hand_overlap`, packed a tuple per comparison and weighted by hand shares after the
+fact — **15.4 µs a comparison**, measured on the fixture's sitting 31 (17 open sections × 443
+examples, 247 ms warm). Scaling each profile to unit length once, when the fingerprint is built, turns
+every term into a dot product (`_dot`): no square roots in the loop, no packing, the same arithmetic
+to within 3.3e-16 (checked on 200 random profile pairs). The lesson is the same one §1.13 records —
+the cost of a term is what it re-derives, not what it computes.
+
+**What was deliberately not done.** Gating the hand term to one-handed segments only would make the
+common case free and give up most of the measured gain (the 32-piece corpus is mostly two-handed too).
+Vectorising with numpy is still refused for the reason §1.13 gives.
+
 ## 2. The rules
 
 **R1 — Cost is a function of the request, not of the library.** If a click's cost grows with the
@@ -622,6 +651,11 @@ three numbers, 41 % of a click. This is R2 one level down: hoist the derivation,
 the callee an explicit parameter for it so the cheap path is the obvious one. Then prove the scores
 are unchanged, not merely plausible: dump the before and after and compare digests.
 
+**R15 — A term you always compute is charged at every weight (1.15).** `compare` scores all five
+terms whatever the weights say, so adding one is a change to the hottest loop in the app, not to a
+reported number. Measure the comparison before and after, state the milliseconds it adds to the
+click that pays for it, and scale each side's vectors once rather than dividing inside the loop.
+
 ---
 
 ## 3. The map — what must stay cheap
@@ -634,7 +668,7 @@ If you touch one of these, you own its complexity.
 | `store._notes_for_segments` | one query per sitting; the notes in the group's range | `test_reading_a_sitting_does_not_read_its_notes_once_per_open_section` |
 | `store._notes_in_range` | one segment's notes on `idx_events_sitting` — never its sitting's | `test_the_range_read_returns_the_slice_a_whole_sitting_read_would` |
 | `store.cached_references` | nothing on a hit; **only the inputs that moved** when the version moves (1.10) | `test_one_label_change_re_derives_only_that_segment`, `test_the_incremental_references_equal_a_full_rebuild`, `forget_the_old_piece_when_a_label_moves.sh`, `keep_an_empty_piece_in_the_pooled_signatures.sh` |
-| `similarity.rank`, `store.candidates_for_sitting` | the sitting's open sections × the labelled examples — and nothing re-derived inside that loop (R14, 1.13) | `test_scoring_again_does_not_re_derive_a_length_it_already_knew`, `test_opening_a_sitting_derives_the_share_weights_once`, `falsifications/rederive_the_profile_length_every_time.sh`, `falsifications/derive_the_share_weights_per_section.sh` |
+| `similarity.rank`, `store.candidates_for_sitting` | the sitting's open sections × the labelled examples — **4.6 µs a comparison with all five terms** — and nothing re-derived inside that loop (R14, 1.13; 1.15) | `test_scoring_again_does_not_re_derive_a_length_it_already_knew`, `test_opening_a_sitting_derives_the_share_weights_once`, `falsifications/rederive_the_profile_length_every_time.sh`, `falsifications/derive_the_share_weights_per_section.sh` |
 | `store._passages_derived` | nothing on a hit; one sitting's segments and notes when they move | `test_reading_a_sitting_again_does_not_derive_its_passages_again`, `test_a_label_written_after_a_read_is_answered_not_remembered` |
 | `store.list_sittings_conn` | the returned rows and *their* notes — never the log | `test_listing_the_newest_sittings_does_not_read_the_older_ones` |
 | `PracticeLogView.refreshQuietly` | one run at a time, and the detail only when the list row says it moved (R12, 1.11) | `lib/pollGate.test.ts`, `falsifications/poll_the_sitting_every_tick.sh`, `falsifications/let_the_polls_overlap.sh` |

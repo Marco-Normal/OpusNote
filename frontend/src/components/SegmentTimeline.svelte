@@ -1015,7 +1015,9 @@
                   data-candidate={candidate.piece_id}
                   title="notes {percent(candidate.pitch_class)} · tempo {percent(
                     candidate.tempo,
-                  )} · register {percent(candidate.register_overlap)}"
+                  )} · register {percent(candidate.register_overlap)} · hands {percent(
+                    candidate.hand,
+                  )} · intervals {percent(candidate.interval)}"
                   onclick={() => onassign(segment.id, candidate.piece_id)}
                 >
                   {candidateNames.get(candidate.piece_id) ?? pieceLabel(candidate)}{candidate.from_context

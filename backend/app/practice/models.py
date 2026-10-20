@@ -205,6 +205,16 @@ class SegmentCandidate(BaseModel):
     tempo: float
     #: Named with the suffix because a bare `register` shadows a BaseModel method.
     register_overlap: float
+    #: The hand and interval terms (Phase 22e). Always reported, even while their weight
+    #: is zero: the number beside a candidate is the arithmetic behind it, not a subset.
+    hand: float = 0.0
+    interval: float = 0.0
+    #: Phase 22e terms, reported whether or not they carry weight: the numbers beside a
+    #: candidate are the arithmetic behind its score, and leaving a term out would make the
+    #: displayed parts stop adding up to the whole.
+    hand: float = 0.0
+    #: Interval-class agreement between consecutive attacks, which survives transposition.
+    interval: float = 0.0
     support: int
     margin: float
     #: The band the *top* candidate fell in — 'auto', 'suggest' or 'none'. Rows

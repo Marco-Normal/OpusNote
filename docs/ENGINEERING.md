@@ -33,6 +33,15 @@ what makes the generator and the scorer replaceable without touching the browser
 Technology: Python 3.11 / FastAPI / SQLite / music21 on the server; Svelte 5 / TypeScript / Vite
 in the browser, with OpenSheetMusicDisplay for engraving and Tone.js for audio.
 
+**Recognition is five terms, and the weights belong to the code.** `backend/app/practice/similarity.py`
+scores a segment against every labelled example on its pitch-class profile, its tempo as a ratio, its
+register overlap, its two hands compared separately, and the interval classes between consecutive
+attacks (`DEFAULT_WEIGHTS`, 0.75 / 0.10 / 0.15 / 0.10 / 0.05, measured in
+[ECOSYSTEM.md](ECOSYSTEM.md) Phase 22e). They are constants, not settings: they are a statement about
+the arithmetic, and the sweeps that choose them live in `backend/tools/measure_autotag.py`. Adding a
+sixth term means re-measuring the comparison cost in [PERFORMANCE.md](PERFORMANCE.md) § 1.15 — every
+comparison is inside the loop the open of a sitting pays for.
+
 **Storage is rows except where a row costs more than its fact.** The sustain pedal's raw CC64 stream
 is packed — 6-byte records in chunks of at most 512, never split inside one millisecond — because a
 continuous controller writes about fifteen values a second and a row plus two indexes cost 51 bytes
@@ -339,7 +348,7 @@ Every environment variable is optional.
 | `SRT_AUTOTAG_CONTAINMENT_WEIGHT` | `0.25` | Phase 22b: how much of a match's score comes from local content rather than from the whole-segment average. Chosen by the sweep in `tools/measure_autotag.py` |
 | `SRT_AUTOTAG_SEQUENCE_SWITCH` | `0.10` | Phase 22d: the chance a sitting moves to another piece between two segments, shared over the pieces not currently believed. Measured on the owner's library at 42 changes in 412 adjacent pairs (10.2%); higher lets a real change through, lower makes the sitting stickier |
 | `SRT_AUTOTAG_SEQUENCE_TEMPERATURE` | `0.02` | Phase 22d: how confidently one segment's candidate scores speak. Scores are 0–1 and margins are ~0.03, so 0.02 is what makes a small lead decisive inside a sitting; it is a softmax temperature applied to the scores as they are, never a re-scoring |
-| `SRT_AUTOTAG_AUTO_PROBABILITY` | `0.99` | Phase 22d: probability at or above which the sitting's decode is written without asking. Chosen against 93.7% coverage at 99.8% precision, versus 58.5% at 100% for the per-segment band; `1.0` writes nothing, which is how the tests withhold the decision |
+| `SRT_AUTOTAG_AUTO_PROBABILITY` | `0.99` | Phase 22d: probability at or above which the sitting's decode is written without asking. Chosen against 93.5% coverage at 100% precision, versus 58.5% at 100% for the per-segment band; `1.0` writes nothing, which is how the tests withhold the decision |
 | `SRT_AUTOTAG_PROMPT_PROBABILITY` | `0.50` | Phase 22d: probability at or above which a decode is *offered* rather than written |
 | `SRT_MAX_UPLOAD_MB` | `512` | Largest recording accepted by the upload endpoint |
 | `SRT_PIANO_DIR` | `<data dir>/piano` | Where the one-time sampled piano is kept and served from |

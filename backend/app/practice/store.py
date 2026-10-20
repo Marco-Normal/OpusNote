@@ -2760,6 +2760,8 @@ def _candidate_out(
                 pitch_class=round(candidate.pitch_class, 4),
                 tempo=round(candidate.tempo, 4),
                 register_overlap=round(candidate.register, 4),
+                hand=round(candidate.hand, 4),
+                interval=round(candidate.interval, 4),
                 support=candidate.support,
                 margin=round(candidate.margin, 4),
                 band=band if position == 0 else "listed",

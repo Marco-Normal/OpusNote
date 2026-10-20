@@ -93,6 +93,10 @@ DRILLS_PER_PIECE = 9
 DRILL_BARS = 3
 ATTACK_WINDOW_MS = 50
 
+#: The weights Phase 22e replaced, kept by name so the two new terms are always measured
+#: against the same baseline rather than against ``DEFAULT_WEIGHTS``, which moves.
+PRE_22E_WEIGHTS = Weights(pitch_class=0.75, tempo=0.10, register=0.15)
+
 #: One drill in three repeats an earlier passage slower, which is what repeated
 #: section practice looks like and what the matcher most needs to get right.
 REPEAT_SHARE = 0.34
@@ -551,6 +555,10 @@ def evaluate_sequence(
             truth = drills[belief.key].piece_id
             outcome.total += 1
             outcome.correct_top += int(belief.chosen == truth)
+            top_three = sorted(
+                belief.probabilities.items(), key=lambda item: (-item[1], item[0])
+            )[:3]
+            outcome.correct_top3 += int(truth in {piece for piece, _ in top_three})
             verdict = sequence.band(
                 belief,
                 auto_probability=auto_probability,
@@ -620,6 +628,28 @@ def main() -> int:
         outcome = evaluate(drills, weights=weights)
         results.append((label, weights, outcome))
         report(label, outcome)
+
+    print("\nHands and intervals on top of the 22d weights (Phase 22e):")
+    for label, weights in (
+        ("22d (0.75/0.10/0.15)", PRE_22E_WEIGHTS),
+        ("22e shipped", DEFAULT_WEIGHTS),
+        ("+hand 0.20", Weights(0.75, 0.10, 0.15, hand=0.20)),
+        ("+hand 0.30", Weights(0.75, 0.10, 0.15, hand=0.30)),
+        ("+interval 0.05 only", Weights(0.75, 0.10, 0.15, interval=0.05)),
+        ("+hand 0.20 interval 0.05", Weights(0.75, 0.10, 0.15, hand=0.20, interval=0.05)),
+    ):
+        report(label, evaluate(drills, weights=weights))
+
+    print(f"\nBy kind, the 22d weights against the 22e ones:")
+    aware = evaluate(drills, weights=DEFAULT_WEIGHTS)
+    plain = evaluate(drills, weights=PRE_22E_WEIGHTS)
+    for transform in sorted(plain.by_transform):
+        before = plain.by_transform[transform]
+        after = aware.by_transform[transform]
+        print(
+            f"  {transform:<18} {before.correct_top:2d}/{before.total:<2d} -> "
+            f"{after.correct_top:2d}/{after.total:<2d}"
+        )
 
     print(f"\nBands at the shipped weights, with the sitting context applied:")
     for auto, prompt, margin in (

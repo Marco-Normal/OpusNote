@@ -306,13 +306,15 @@ Nothing about the result changes either way; with background preparation switche
   disk makes the log wait rather than pile requests on top of each other.
 - **Piece recognition.** Tagging a segment by hand makes it a reference; the next time similar
   material is played, the timeline offers the piece it believes it was, with the confidence and
-  the arithmetic behind it. A sufficiently confident match is filled in automatically and
+  the arithmetic behind it — including the two hands compared separately and the shape between
+  notes, which is what lets a one-hand drill match the passage it is instead of resembling the whole
+  piece. A sufficiently confident match is filled in automatically and
   marked *guessed*, with *It's right* and *Not this* beside it. Nothing is applied without a
   way to disagree, and correcting a guess is what teaches the matcher that two pieces sound
   alike. The whole sitting is read as one sequence, not one segment at a time: a run of drills from
   a single piece can therefore name a segment that is too mixed to name on its own, while a genuine
-  change of piece inside a sitting is kept — measured on the owner's library, 93.7% of tagged
-  segments are written that way at 99.8% precision, where the segment alone reached 58.5%. The
+  change of piece inside a sitting is kept — measured on the owner's library, 93.5% of tagged
+  segments are written that way at 100% precision, where the segment alone reached 58.5%. The
   **Recognising what you played** panel reports accuracy on the user's own library by hiding each
   tagged segment in turn *and reading the rest of its sitting*, so its figure is the one the app
   actually achieves, and it reports how often automatically written labels survived review. When the

@@ -1240,13 +1240,14 @@ def make_sitting(index: int, drills: list[list[int]], *, gap_ms: int = 30_000) -
 def test_the_sitting_writes_the_label_one_segment_would_only_offer(fresh_db) -> None:
     """A segment too mixed to name alone is still nameable inside its sitting.
 
-    The mixed drill is half of one piece and half of another, so on its own the match is
-    close enough that the per-segment band only offers it. Next to a drill that is
+    The mixed drill is mostly one piece with a handful of the other's notes, so on its own
+    the decode only offers it (0.98 of the way to a written label). Next to a drill that is
     unmistakably the first piece, the sitting is the evidence the segment lacked — and the
     label is written, which is the coverage the sequence pass buys.
     """
     piece_a, _piece_b = distinct_library()
-    mixed = [60, 62, 64, 65, 67, 52, 55, 57]
+    # Measured: alone this decodes to 0.9835 (offered), beside PIECE_A to 0.9981 (written).
+    mixed = [60, 62, 64, 65, 67, 48, 52, 55]
 
     alone = store.sitting_detail(make_sitting(10, [mixed])).segments
     assert [segment.piece_id for segment in alone] == [None], "alone, it is only offered"

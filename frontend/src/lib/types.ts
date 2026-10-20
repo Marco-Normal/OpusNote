@@ -551,6 +551,10 @@ export interface SegmentCandidate {
   pitch_class: number;
   tempo: number;
   register_overlap: number;
+  /** Phase 22e: agreement on each hand's own shape (register split at middle C). */
+  hand: number;
+  /** Phase 22e: agreement on interval classes between attacks, which survives transposition. */
+  interval: number;
   support: number;
   margin: number;
   /** 'auto' | 'suggest' | 'none' for the top row; 'listed' for the alternatives. */

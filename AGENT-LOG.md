@@ -5002,3 +5002,41 @@ Verified: `./check.sh --fast`; backend `pytest tests -q` 1147 passed (19 sequenc
 autotag tests); falsifications `offer_but_never_write_what_the_sitting_decided`,
 `let_a_sitting_never_change_piece`, `count_the_band_the_segment_alone_would_write`, all caught;
 `./check.sh --full`.
+
+## 2026-10-19 — sight-reading agent — score the two hands apart, and the shape between notes
+
+Scope: `backend/app/practice/{similarity,models,store}.py`, `frontend/src/lib/types.ts`,
+`frontend/src/components/SegmentTimeline.svelte`,
+`backend/tests/{test_similarity,test_autotag}.py`, `backend/tools/measure_autotag.py`, two
+falsifications, `docs/{ECOSYSTEM,ENGINEERING,FEATURES,PERFORMANCE}.md`.
+
+Did: two more terms in the recognition score. A fingerprint now keeps its notes split at middle C
+(`HAND_SPLIT = 60`; the MIDI channel does not carry the hand) and its interval classes between
+consecutive attacks. `hand_overlap` compares the hands separately, weighting each by
+`min(share(left), share(right))` so a two-handed reference is not charged for the hand a drill did
+not play; `interval_overlap` compares the shape between notes, which a transposition does not move.
+`Weights` gained `hand` and `interval`, `compare` returns them, `Candidate`/`SegmentCandidate` carry
+them, the timeline's tooltip prints them. Defaults measured, not chosen: `0.10` and `0.05` beside the
+`0.75 / 0.10 / 0.15` lead.
+
+Why these numbers. On the 8-piece corpus top-1 84.7% → 87.5% (one-hand drills 6/11 → 8/11); at 32
+pieces 61.8% → 64.2% whole and 26.4% → 29.5% on quarter-length fragments — the axis where a library
+is big enough to confuse — with the per-segment band's precision there 87.5% → 100%. On the owner's
+own library the terms are exactly neutral: 98.2% top-1 either way, because 431 of her 443 labelled
+segments are two-handed. The gain is stated where it exists and the neutrality where it does not.
+
+Cost, measured and recorded in PERFORMANCE §1.15: a comparison 2.3 → 4.6 µs (443 examples: 1.01 →
+2.05 ms), about 130 ms on the live library's largest undecided sitting (~400 ms open). The first cut
+was 15.4 µs a comparison because `hand_overlap` called `cosine` twice and packed a tuple per call;
+scaling each profile to unit length once when the fingerprint is built turned every term into a dot
+product, with the arithmetic unchanged to 3.3e-16 on 200 random pairs.
+
+Two consequences. The sequence band barely moved: 93.5% of the owner's 443 segments are now written
+at **100%** precision, where 22d wrote 93.7% at 99.8%. And `test_the_sitting_writes_the_label_one
+_segment_would_only_offer` had to be retuned — the sharper score pushed its mixed drill over the
+write threshold on its own, so the drill is now `[60, 62, 64, 65, 67, 48, 52, 55]` (0.9835 alone,
+0.9981 beside PIECE_A), measured with the store's containment weight.
+
+Verified: `./check.sh --fast`; `pytest tests/test_similarity.py tests/test_autotag.py -q` 89 passed
+(7 new hand/interval tests); falsifications `pool_the_two_hands_into_one_profile` and
+`hear_the_interval_shape_as_pitches`, both caught; `./check.sh --full`.

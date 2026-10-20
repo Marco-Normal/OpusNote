@@ -227,7 +227,7 @@ this document carries the rest.
 | 19 | **Playing back what was actually played** | A stale same-pitch note-off silences re-struck notes at the pedal-up — 1,747 notes in the owner's own sessions. Plus one owner for the pedal threshold. **Landed.** | medium |
 | 20 | **Deliberate practice, the piano-side toolkit, and audio takes** | *How* a segment was practised (20a); hands-free control from the unused sostenuto pedal, count-in choice, real URLs and a command palette (20b); undo and a humane streak (20c); journal and library depth (20d); low-bitrate audio takes captured in-app (20e). Five slices, independently shippable. **20a–20e landed.** | medium–high |
 | 21 | **The log at speed, and the blur you can find** | Blur positions cached beside the count and marked on the sitting strip; and an edit path that applies the server's own answer instead of refetching the matcher's accuracy, the machine's health and the week's ratings after every click. **Landed.** | low |
-| 22 | **Hearing the piece** | Where the playing actually turns over (an adaptive gap with a 2 s floor, plus minimum and maximum sizes), and a matcher that survives a growing library (tempo-invariant local shingles pooled per piece, IDF containment, a hybrid score). Passages and piece-sessions are derived from attempts, so the log shows *n* attempts at one passage rather than *n* unrelated rows. **Landed 22a–22d**, 22d reading a whole sitting as one sequence so a mixed segment is named by its neighbours.  One acceptance number was corrected to its measurement and one decision was dropped after measuring: see § *Phase 22* below. | high |
+| 22 | **Hearing the piece** | Where the playing actually turns over (an adaptive gap with a 2 s floor, plus minimum and maximum sizes), and a matcher that survives a growing library (tempo-invariant local shingles pooled per piece, IDF containment, a hybrid score). Passages and piece-sessions are derived from attempts, so the log shows *n* attempts at one passage rather than *n* unrelated rows. **Landed 22a–22e**, 22d reading a whole sitting as one sequence so a mixed segment is named by its neighbours, 22e comparing the two hands separately and the shape between notes.  One acceptance number was corrected to its measurement and one decision was dropped after measuring: see § *Phase 22* below. | high |
 | 23 | **The pedal as a quick-action surface** | The sostenuto's one hard-coded action becomes three gestures on the same pedal — single, double, hold — each bound in Setup to one action or to nothing: a review flag, start/finish a workout, arm/stop the take, or finish the sitting. A review flag is a raw mark event in its own table, drawn on the sitting strip beside the blur hairlines. **Landed.** | medium |
 | 24 | **The sitting is ready before you open it** | A finished sitting is segmented, measured and classified by a background worker instead of by the first click that opens it, and a read never waits on work already scheduled: it answers *preparing* and fills in a moment later. Measuring the request found that ~1 s of the wait was not scheduling at all — the matcher's reference cache was being thrown away by writes that cannot change it, so the invalidation rule is narrowed to references. **Landed.** | medium |
 | 26 | **The pedal as a position, not a bit** | The recorded CC64 curve is sent back out to the piano, so its own damper performs the half-pedalling; the sampled piano gets a proportional ring instead of a switch; and the segment row reports the share of its span spent part-way down. `SCHEMA_VERSION` 5 → 6 for one additive column. **Landed.** | medium |
@@ -1867,7 +1867,8 @@ already computed, transition = stay 0.90 / move 0.10 shared over the other piece
 something no single segment can. At `switch=0.10`, `temperature=0.02`, `auto_probability=0.99` it
 wrote **93.7% of the 443 labelled segments at 99.8% precision** (one wrong of 402), where the
 per-segment band wrote 58.5% at 100%; top-1 is unchanged at 98.2% and it followed 83.3% of the real
-piece changes. It is a *rescue*, not an override: a segment whose own evidence points elsewhere is
+piece changes. (With 22e's weights the same measurement reads 93.5% at 100% precision — the figures
+here are the ones taken at the time.) It is a *rescue*, not an override: a segment whose own evidence points elsewhere is
 left alone (a mix ranking the other piece by 0.068 stays that piece), while the half-and-half drill
 in the tests is written only because its neighbour outvotes its own 0.089 margin. Cost is 0.11 ms
 for five segments and 1.27 ms for forty-nine, beside a 273 ms ranking pass.
@@ -1889,6 +1890,24 @@ sequence band is now the **single decision owner**: `similarity.identify`'s scor
 still computed and unit-tested, but nothing in the store reads it, so `SRT_AUTOTAG_SCORE_AUTO`,
 `SRT_AUTOTAG_SCORE_PROMPT` and `SRT_AUTOTAG_MIN_MARGIN` gate nothing at runtime — 22e retires them
 with the fitted probability rather than leaving two bands to disagree.
+
+**22e — the two hands, and the shape between notes.** The score above pools every note into one
+pitch-class profile, so a right-hand drill of a passage is compared against its reference as though
+the left hand had been played too: pooled, that drill scores **0.77** against the two-handed passage
+its neighbours score 1.0 against. Two more terms fix that without a new corpus. A fingerprint now
+keeps its notes split at middle C (`HAND_SPLIT = 60`, because the MIDI channel does not carry the
+hand) and its interval classes between consecutive attacks. `hand_overlap` compares the hands
+**separately, and only as far as both sides contain them** — a two-handed reference is not charged
+for the hand the drill left out — and `interval_overlap` compares the shape between notes, which a
+transposition does not move at all. The weights are `hand = 0.10` and `interval = 0.05` beside the
+`pitch_class = 0.75` lead, chosen by measurement rather than by taste: on the 8-piece corpus top-1
+goes 84.7% → **87.5%**, with one-hand drills 6/11 → 8/11; at **32 pieces 61.8% → 64.2%** on whole
+drills and **26.4% → 29.5%** on quarter-length fragments, which is the axis where a library is big
+enough to confuse; and the auto band's precision at 32 pieces goes 87.5% → 100%. On the owner's own
+library the two terms are **exactly neutral** (98.2% top-1 either way) because 431 of her 443
+labelled segments are two-handed — the honest reason not to claim a gain there. Cost is **2.3 → 4.6
+µs a comparison** ([PERFORMANCE.md](PERFORMANCE.md) § 1.15), and the sequenced band barely moves:
+93.5% of segments written at 100% precision.
 
 **Non-goals.** No score alignment, so a passage is still inferred from sound rather than known to be
 bars 40–48; no section generation or looping; no per-hand inference; no audio; no persisted group

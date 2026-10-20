@@ -14,13 +14,17 @@ import pytest
 from app.practice.sessionize import Note
 from app.practice.similarity import (
     DEFAULT_WEIGHTS,
+    NEUTRAL_HAND,
+    NEUTRAL_INTERVAL,
     NEUTRAL_TEMPO,
     Example,
     Fingerprint,
     Weights,
     cosine,
     fingerprint,
+    hand_overlap,
     identify,
+    interval_overlap,
     rank,
     register_overlap,
     tempo_proximity,
@@ -52,6 +56,75 @@ def example(segment_id: int, piece_id: int, *pitches: int, spacing_ms: int = 250
         piece_id=piece_id,
         fingerprint=fingerprint(notes(list(pitches), spacing_ms=spacing_ms), attack_window_ms=WINDOW),
     )
+
+
+# --------------------------------------------------------------------------
+# Hands and intervals
+# --------------------------------------------------------------------------
+
+
+def two_hands(right: list[int], left: list[int], *, spacing_ms: int = 250) -> list[Note]:
+    """The right hand first, then the left: two hands of one passage, played in turn."""
+    return notes(right, spacing_ms=spacing_ms) + notes(
+        left, spacing_ms=spacing_ms, start_ms=1_000 + len(right) * spacing_ms
+    )
+
+
+def test_the_two_hands_are_compared_apart():
+    """A right-hand drill scores 1.0 against its own two-handed passage.
+
+    Pooled, the same drill scores 0.77 against it — the left hand's notes dilute the shape
+    it is being compared on, which is exactly what made a one-hand drill unrecognisable.
+    """
+    right = [60, 62, 64, 65, 67]
+    both = fingerprint(two_hands(right, [41, 42, 44, 46, 49]), attack_window_ms=WINDOW)
+    drill = profile(*right)
+
+    assert hand_overlap(drill, both) == pytest.approx(1.0)
+    assert cosine(drill.pc_profile, both.pc_profile) < 0.8
+
+
+def test_a_right_hand_drill_does_not_look_like_a_left_hand_one():
+    """Neither side has notes in the other's register, so the term abstains."""
+    assert hand_overlap(profile(60, 62, 64, 65, 67), profile(41, 43, 45, 46, 48)) == NEUTRAL_HAND
+
+
+def test_a_drill_is_not_charged_for_the_hand_it_did_not_play():
+    """The two-handed reference and the bare drill score the same: no penalty for omission."""
+    right = [60, 62, 64, 65, 67]
+    both = fingerprint(two_hands(right, [41, 42, 44, 46, 49]), attack_window_ms=WINDOW)
+    drill = profile(*right)
+
+    assert hand_overlap(drill, both) == pytest.approx(hand_overlap(drill, drill))
+
+
+def test_the_interval_shape_follows_the_tune_into_another_key():
+    """Transposed by three semitones, the pitch-class profile is nearly disjoint, the
+    interval shape is identical, and that is what lets a piece played in a different key
+    still be recognised as the same music."""
+    original = profile(60, 62, 64, 65, 67)
+    transposed = profile(63, 65, 67, 68, 70)
+
+    assert interval_overlap(original, transposed) == pytest.approx(1.0)
+    assert cosine(original.pc_profile, transposed.pc_profile) < 0.9
+
+
+def test_an_octave_is_the_same_interval_shape():
+    """An octave up is interval class 0, so the same tune an octave higher still matches."""
+    assert interval_overlap(profile(60, 62, 64), profile(72, 74, 76)) == pytest.approx(1.0)
+
+
+def test_a_different_shape_scores_lower_than_the_same_one():
+    assert interval_overlap(profile(60, 62, 64), profile(60, 65, 71)) < 0.95
+
+
+def test_a_segment_too_short_for_an_interval_says_nothing():
+    """One attack is zero intervals: the term abstains rather than claiming a shape it
+    cannot have — the same rule as a one-note tempo."""
+    single = profile(60)
+
+    assert single.interval_count == 0
+    assert interval_overlap(single, profile(60, 62, 64)) == NEUTRAL_INTERVAL
 
 
 # --------------------------------------------------------------------------
@@ -155,8 +228,9 @@ def test_an_identical_stretch_scores_one():
     segment = profile(60, 64, 67, 72)
     from app.practice.similarity import compare
 
-    total, pitch, tempo, register = compare(segment, segment)
+    total, pitch, tempo, register, hand, interval = compare(segment, segment)
     assert (pitch, tempo, register) == (1.0, 1.0, 1.0)
+    assert (hand, interval) == (1.0, 1.0), "a stretch is as like itself on every term"
     assert total == pytest.approx(1.0)
 
 
@@ -239,7 +313,12 @@ def test_scoring_again_does_not_re_derive_a_length_it_already_knew(monkeypatch):
         f"{calls['n']} lengths that had not changed"
     )
 
-    assert cold == len(examples) + 1, "one length per profile, derived once"
+    # Four profiles are compared per fingerprint — the whole-segment one, the two hands
+    # and the intervals — and each is derived once per fingerprint, not once per pair.
+    assert cold == 4 * (len(examples) + 1), (
+        f"one length per profile, derived once; {cold} derivations for "
+        f"{len(examples) + 1} fingerprints"
+    )
 
 
 # --------------------------------------------------------------------------
