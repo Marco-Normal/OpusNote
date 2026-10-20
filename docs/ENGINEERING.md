@@ -337,6 +337,10 @@ Every environment variable is optional.
 | `SRT_AUTOTAG_SCORE_PROMPT` | `0.55` | Score at or above which a match is offered |
 | `SRT_AUTOTAG_MIN_NOTES` | `8` | Below this many notes a segment is not recognised at all |
 | `SRT_AUTOTAG_CONTAINMENT_WEIGHT` | `0.25` | Phase 22b: how much of a match's score comes from local content rather than from the whole-segment average. Chosen by the sweep in `tools/measure_autotag.py` |
+| `SRT_AUTOTAG_SEQUENCE_SWITCH` | `0.10` | Phase 22d: the chance a sitting moves to another piece between two segments, shared over the pieces not currently believed. Measured on the owner's library at 42 changes in 412 adjacent pairs (10.2%); higher lets a real change through, lower makes the sitting stickier |
+| `SRT_AUTOTAG_SEQUENCE_TEMPERATURE` | `0.02` | Phase 22d: how confidently one segment's candidate scores speak. Scores are 0–1 and margins are ~0.03, so 0.02 is what makes a small lead decisive inside a sitting; it is a softmax temperature applied to the scores as they are, never a re-scoring |
+| `SRT_AUTOTAG_AUTO_PROBABILITY` | `0.99` | Phase 22d: probability at or above which the sitting's decode is written without asking. Chosen against 93.7% coverage at 99.8% precision, versus 58.5% at 100% for the per-segment band; `1.0` writes nothing, which is how the tests withhold the decision |
+| `SRT_AUTOTAG_PROMPT_PROBABILITY` | `0.50` | Phase 22d: probability at or above which a decode is *offered* rather than written |
 | `SRT_MAX_UPLOAD_MB` | `512` | Largest recording accepted by the upload endpoint |
 | `SRT_PIANO_DIR` | `<data dir>/piano` | Where the one-time sampled piano is kept and served from |
 | `SRT_BACKUP_DIR` | `<data dir>/backups` | Where the nightly JSON exports are written |

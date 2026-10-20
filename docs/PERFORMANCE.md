@@ -529,6 +529,22 @@ long you leave a sitting undecided. The honest summary is that the cost moved fr
 not worth their complexity: the reference mass inside `containment` (~30 ms) and a prepared
 `Fingerprint` register tuple (~20 ms).
 
+### 1.14 A decision that needed the sitting, not one segment
+
+**Not a speed case study — a cost that had to stay negligible.** Phase 22d reads each sitting as a
+hidden Markov sequence, so the matcher now makes one decision per sitting instead of one per
+segment. The decode is pure Python over the candidate scores already computed:
+**0.114 ms for 5 segments and 1.269 ms for 49**, against the 273 ms ranking pass it decorates (1.13).
+It allocates nothing per comparison and adds no query.
+
+**Why it is written that way.** The tempting implementation re-scores pairs inside the decode, which
+would put the ranking cost *inside* the loop that is meant to be free. Instead `_decode_sitting`
+turns each segment's existing `Candidate` list into emissions and the whole pass is O(segments ×
+pieces²) with pieces in single digits. `identification_quality` now ranks every considered segment
+first and decodes each sitting chain afterwards — the same ranking work it already did, plus the
+decode — so the accuracy report did not become the slow path (~15 s for 443 leave-one-out queries on
+the real library, unchanged order).
+
 ## 2. The rules
 
 **R1 — Cost is a function of the request, not of the library.** If a click's cost grows with the

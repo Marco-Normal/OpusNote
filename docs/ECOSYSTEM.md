@@ -227,7 +227,7 @@ this document carries the rest.
 | 19 | **Playing back what was actually played** | A stale same-pitch note-off silences re-struck notes at the pedal-up — 1,747 notes in the owner's own sessions. Plus one owner for the pedal threshold. **Landed.** | medium |
 | 20 | **Deliberate practice, the piano-side toolkit, and audio takes** | *How* a segment was practised (20a); hands-free control from the unused sostenuto pedal, count-in choice, real URLs and a command palette (20b); undo and a humane streak (20c); journal and library depth (20d); low-bitrate audio takes captured in-app (20e). Five slices, independently shippable. **20a–20e landed.** | medium–high |
 | 21 | **The log at speed, and the blur you can find** | Blur positions cached beside the count and marked on the sitting strip; and an edit path that applies the server's own answer instead of refetching the matcher's accuracy, the machine's health and the week's ratings after every click. **Landed.** | low |
-| 22 | **Hearing the piece** | Where the playing actually turns over (an adaptive gap with a 2 s floor, plus minimum and maximum sizes), and a matcher that survives a growing library (tempo-invariant local shingles pooled per piece, IDF containment, a hybrid score). Passages and piece-sessions are derived from attempts, so the log shows *n* attempts at one passage rather than *n* unrelated rows. **Landed 22a–22c.** One acceptance number was corrected to its measurement and one decision was dropped after measuring: see § *Phase 22* below. | high |
+| 22 | **Hearing the piece** | Where the playing actually turns over (an adaptive gap with a 2 s floor, plus minimum and maximum sizes), and a matcher that survives a growing library (tempo-invariant local shingles pooled per piece, IDF containment, a hybrid score). Passages and piece-sessions are derived from attempts, so the log shows *n* attempts at one passage rather than *n* unrelated rows. **Landed 22a–22d**, 22d reading a whole sitting as one sequence so a mixed segment is named by its neighbours.  One acceptance number was corrected to its measurement and one decision was dropped after measuring: see § *Phase 22* below. | high |
 | 23 | **The pedal as a quick-action surface** | The sostenuto's one hard-coded action becomes three gestures on the same pedal — single, double, hold — each bound in Setup to one action or to nothing: a review flag, start/finish a workout, arm/stop the take, or finish the sitting. A review flag is a raw mark event in its own table, drawn on the sitting strip beside the blur hairlines. **Landed.** | medium |
 | 24 | **The sitting is ready before you open it** | A finished sitting is segmented, measured and classified by a background worker instead of by the first click that opens it, and a read never waits on work already scheduled: it answers *preparing* and fills in a moment later. Measuring the request found that ~1 s of the wait was not scheduling at all — the matcher's reference cache was being thrown away by writes that cannot change it, so the invalidation rule is narrowed to references. **Landed.** | medium |
 | 26 | **The pedal as a position, not a bit** | The recorded CC64 curve is sent back out to the piano, so its own damper performs the half-pedalling; the sampled piano gets a proportional ring instead of a switch; and the segment row reports the share of its span spent part-way down. `SCHEMA_VERSION` 5 → 6 for one additive column. **Landed.** | medium |
@@ -1859,6 +1859,36 @@ is still true of how the owner practises; it just does not need a rule.
 The auto band was **not** re-tuned: the shipped band (0.85 / 0.55 / 0.10) is the only row of the
 32-piece table with 100% precision, and it meets the real-library floor. Choosing by measurement and
 keeping the existing numbers is a result, not a non-event.
+
+**22d — the sitting read as a sequence.** The band above scored every segment on its own, which
+throws away what the sitting is: of 412 adjacent labelled pairs in the owner's library, only 42
+change piece (**10.2%**). A hidden Markov pass over the sitting — emission = the candidate scores
+already computed, transition = stay 0.90 / move 0.10 shared over the other pieces — therefore knows
+something no single segment can. At `switch=0.10`, `temperature=0.02`, `auto_probability=0.99` it
+wrote **93.7% of the 443 labelled segments at 99.8% precision** (one wrong of 402), where the
+per-segment band wrote 58.5% at 100%; top-1 is unchanged at 98.2% and it followed 83.3% of the real
+piece changes. It is a *rescue*, not an override: a segment whose own evidence points elsewhere is
+left alone (a mix ranking the other piece by 0.068 stays that piece), while the half-and-half drill
+in the tests is written only because its neighbour outvotes its own 0.089 margin. Cost is 0.11 ms
+for five segments and 1.27 ms for forty-nine, beside a 273 ms ranking pass.
+
+The synthetic sweep (`tools/measure_autotag.py`) says where it stops being true. Grouped drills
+8 pieces: top-1 93.1% → **100%**, auto 29.2% → **95.8% at 100%**. Interleaved drills — a change of
+piece at every boundary, eight times the measured rate — top-1 **79.2%** against 84.7% per segment,
+auto 58.3% at 92.9% precision: the model assumes what the log shows, so a library that really
+switched that often would lose accuracy rather than gain it. 32-piece whole-drill auto goes 18.4% →
+**77.8% at 100%** at `p=0.99`. The recorded limit is quarter-length fragments at 32 pieces — 24.0%
+coverage at 72.5% precision — because a short fragment's emission is too flat to let the prior help;
+that is 22e's job (calibration), and it does not bite this library, where 429 of 443 segments hold
+25 notes or more.
+
+Two owners moved. The per-segment context nudge (promote the previous piece within `CONTEXT_MARGIN`)
+is retired from the timeline's suggestions and from the auto-tag pass, because the decode charges
+the same evidence once and correctly; `from_context` survives only as a flag on the payload. And the
+sequence band is now the **single decision owner**: `similarity.identify`'s score/margin band is
+still computed and unit-tested, but nothing in the store reads it, so `SRT_AUTOTAG_SCORE_AUTO`,
+`SRT_AUTOTAG_SCORE_PROMPT` and `SRT_AUTOTAG_MIN_MARGIN` gate nothing at runtime — 22e retires them
+with the fitted probability rather than leaving two bands to disagree.
 
 **Non-goals.** No score alignment, so a passage is still inferred from sound rather than known to be
 bars 40–48; no section generation or looping; no per-hand inference; no audio; no persisted group

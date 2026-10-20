@@ -197,10 +197,10 @@ def test_the_content_term_tells_one_note_apart_twins_apart(fresh_db, monkeypatch
     sitting_id = make_drill(10, PIECE_A)
 
     # `settings` is a frozen dataclass, so it is replaced rather than mutated — the same way
-    # the server-hardening tests narrow a limit. Only the decision is withheld; the scores
-    # are the shipped ones.
+    # the server-hardening tests narrow a limit. Only the decision is withheld (no decoded
+    # probability reaches 1, so nothing is written); the scores are the shipped ones.
     monkeypatch.setattr(
-        store, "settings", dataclasses.replace(store.settings, autotag_min_margin=1.0)
+        store, "settings", dataclasses.replace(store.settings, autotag_auto_probability=1.0)
     )
     segment = store.sitting_detail(sitting_id).segments[0]
     assert segment.candidates[0].piece_id == piece_a
@@ -214,7 +214,7 @@ def test_the_candidates_carry_the_arithmetic_that_produced_them(fresh_db, monkey
     # One note apart, so the two pieces do differ in score. The decision is withheld so that
     # the ranking is what the payload carries rather than an empty list on a written label.
     monkeypatch.setattr(
-        store, "settings", dataclasses.replace(store.settings, autotag_min_margin=1.0)
+        store, "settings", dataclasses.replace(store.settings, autotag_auto_probability=1.0)
     )
     segment = store.sitting_detail(make_drill(10, PIECE_A)).segments[0]
 
@@ -1208,3 +1208,91 @@ def test_opening_a_sitting_derives_the_share_weights_once(fresh_db, monkeypatch)
         "the share weights must not be derived again per open section: "
         f"2 sections cost {after_small} derivations, 8 cost {after_large}"
     )
+
+
+def make_sitting(index: int, drills: list[list[int]], *, gap_ms: int = 30_000) -> int:
+    """One sitting holding several drills, spread far enough to be separate segments.
+
+    Thirty seconds is past the eight-second segment gap and well short of the five-minute
+    sitting gap, which is exactly the shape of practising: a run at one thing, a pause,
+    then the next.
+    """
+    base = BASE_MS + index * STEP_MS
+    events = []
+    cursor = 0
+    for pitches in drills:
+        for position, pitch in enumerate(pitches):
+            events.append(
+                WireNote(
+                    epoch_ms=base + cursor + position * 250,
+                    pitch=pitch,
+                    velocity=70,
+                    duration_ms=200,
+                    channel=0,
+                )
+            )
+        cursor += gap_ms
+    result = store.ingest(EventBatch(tz_offset_minutes=0, events=events))
+    assert result.sitting_id is not None
+    return result.sitting_id
+
+
+def test_the_sitting_writes_the_label_one_segment_would_only_offer(fresh_db) -> None:
+    """A segment too mixed to name alone is still nameable inside its sitting.
+
+    The mixed drill is half of one piece and half of another, so on its own the match is
+    close enough that the per-segment band only offers it. Next to a drill that is
+    unmistakably the first piece, the sitting is the evidence the segment lacked — and the
+    label is written, which is the coverage the sequence pass buys.
+    """
+    piece_a, _piece_b = distinct_library()
+    mixed = [60, 62, 64, 65, 67, 52, 55, 57]
+
+    alone = store.sitting_detail(make_sitting(10, [mixed])).segments
+    assert [segment.piece_id for segment in alone] == [None], "alone, it is only offered"
+
+    together = store.sitting_detail(make_sitting(11, [PIECE_A, mixed])).segments
+    assert [segment.piece_id for segment in together] == [piece_a, piece_a], (
+        "the neighbour's piece is the answer the mixed segment could not reach alone: "
+        + str([(segment.piece_id, segment.candidates[:1]) for segment in together])
+    )
+
+
+def test_a_real_piece_change_inside_a_sitting_survives_the_sequence(fresh_db) -> None:
+    """The failure mode of smoothing, stated as its own test: a sitting that really does
+    change piece must change labels, or the model would quietly relabel your practice."""
+    piece_a, piece_b = distinct_library()
+    sitting_id = make_sitting(12, [PIECE_A, PIECE_C])
+    labels = [segment.piece_id for segment in store.sitting_detail(sitting_id).segments]
+    assert labels == [piece_a, piece_b]
+
+
+
+def test_the_accuracy_report_reads_the_sitting_as_a_sequence(fresh_db) -> None:
+    """The report has to measure the scorer that writes labels.
+
+    Same mixed drill as above, hand-labelled this time: leave-one-out on its own would only
+    offer it, so a report that scored the per-segment band would claim the app writes less
+    than it does. The sitting's other segment is the evidence, and both the accuracy and the
+    coverage must count it.
+    """
+    piece_a, piece_b = two_pieces()
+    # Two drills per piece: one alone in its piece cannot be found by leave-one-out, because
+    # hiding it also hides the only example that piece had.
+    labelled_drill(0, PIECE_A, piece_a)
+    labelled_drill(1, PIECE_A, piece_a)
+    labelled_drill(2, PIECE_C, piece_b)
+    labelled_drill(3, PIECE_C, piece_b)
+    mixed = [60, 62, 64, 65, 67, 52, 55, 57]
+    sitting_id = make_sitting(11, [PIECE_A, mixed])
+    for segment in store.sitting_detail(sitting_id).segments:
+        store.assign_piece(segment.id, piece_a)
+
+    quality = store.identification_quality()
+    assert quality.evaluated == 6
+    assert quality.correct_top == quality.evaluated
+    assert quality.auto_attempted == quality.evaluated, (
+        "every labelled segment should be written by the sequence, not just offered: "
+        f"{quality.auto_attempted} attempted of {quality.evaluated}"
+    )
+    assert quality.auto_correct == quality.auto_attempted

@@ -309,9 +309,15 @@ Nothing about the result changes either way; with background preparation switche
   the arithmetic behind it. A sufficiently confident match is filled in automatically and
   marked *guessed*, with *It's right* and *Not this* beside it. Nothing is applied without a
   way to disagree, and correcting a guess is what teaches the matcher that two pieces sound
-  alike. The **Recognising what you played** panel reports accuracy on the user's own library
-  by hiding each tagged segment in turn, and reports how often automatically written labels
-  survived review. One-hand drilling is the case it finds hardest, and the panel says so.
+  alike. The whole sitting is read as one sequence, not one segment at a time: a run of drills from
+  a single piece can therefore name a segment that is too mixed to name on its own, while a genuine
+  change of piece inside a sitting is kept — measured on the owner's library, 93.7% of tagged
+  segments are written that way at 99.8% precision, where the segment alone reached 58.5%. The
+  **Recognising what you played** panel reports accuracy on the user's own library by hiding each
+  tagged segment in turn *and reading the rest of its sitting*, so its figure is the one the app
+  actually achieves, and it reports how often automatically written labels survived review. When the
+  sitting contradicts a segment, the row says so (*the rest of the sitting points here*) and both
+  answers stay one click away. One-hand drilling is the case it finds hardest, and the panel says so.
 - **Half-pedalling is measured.** The segment row reports the share of its span the pedal spent
   part-way down, beside the share it spent fully down; the two are disjoint, so a segment that was 20%
   pedalled and 30% half-pedalled was doing something for half of it. A continuous pedal has a third state

@@ -43,7 +43,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.config import settings  # noqa: E402
 from app.music import generator  # noqa: E402
 from app.music.expected import extract_expected  # noqa: E402
-from app.practice import shingles  # noqa: E402
+from app.practice import sequence, shingles  # noqa: E402
 from app.practice.sessionize import Note  # noqa: E402
 from app.practice.similarity import (  # noqa: E402
     DEFAULT_WEIGHTS,
@@ -51,6 +51,7 @@ from app.practice.similarity import (  # noqa: E402
     Weights,
     fingerprint,
     identify,
+    rank,
 )
 
 #: Keys cycled to synthesise a larger library than the eight hand-written pieces. Two
@@ -455,6 +456,118 @@ def evaluate_fragments(
     return outcome
 
 
+def sittings(drills: list[Drill], *, order: str) -> list[list[int]]:
+    """The same drills arranged into sittings, in the two orders that matter.
+
+    ``grouped`` is a sitting on one piece: nine drills of it in a row, which is what
+    working on a piece looks like and where a sequence model should help most.
+    ``interleaved`` takes one drill of every piece per round — a switch at every single
+    boundary — which is the adversarial order. A decoder that looks good only grouped has
+    not been tested, because the failure a sequence model invites is smoothing a real
+    change of piece into the piece before it.
+    """
+    per_piece: dict[int, list[int]] = {}
+    for index, drill in enumerate(drills):
+        per_piece.setdefault(drill.piece_id, []).append(index)
+    if order == "grouped":
+        return [per_piece[piece] for piece in sorted(per_piece)]
+    if order == "interleaved":
+        rounds = max(len(indices) for indices in per_piece.values())
+        return [
+            [per_piece[piece][index] for piece in sorted(per_piece)]
+            for index in range(rounds)
+        ]
+    raise ValueError(f"unknown sitting order {order!r}")
+
+
+def evaluate_sequence(
+    drills: list[Drill],
+    *,
+    order: str = "grouped",
+    fraction: float = 1.0,
+    switch: float = 0.2,
+    temperature: float = 0.1,
+    auto_probability: float = 0.9,
+    prompt_probability: float = 0.5,
+    min_notes: int = 8,
+    weights: Weights = DEFAULT_WEIGHTS,
+    containment_weight: float = 0.0,
+    seed: int = 7,
+) -> Outcome:
+    """Leave-one-out accuracy when each sitting is decoded as a sequence.
+
+    The per-segment candidates come from ``similarity.rank`` — the shipped scorer — and
+    the model is ``practice.sequence``, so this measures the path the app takes rather
+    than a second implementation of it. Scoring is still leave-one-out: the segment being
+    asked about is never one of its own examples, in the ranking or in the pooled content
+    signatures.
+    """
+    rng = random.Random(seed)
+    queries = [middle_notes(drill, fraction, rng) for drill in drills]
+    prints = [fingerprint(query.notes, attack_window_ms=ATTACK_WINDOW_MS) for query in queries]
+    examples = _examples(drills, list(range(len(drills))))
+    features = [shingles.features(query.notes) for query in queries]
+    pooled: dict[int, collections.Counter] = {}
+    for index, query in enumerate(queries):
+        pooled.setdefault(query.piece_id, collections.Counter()).update(features[index])
+
+    outcome = Outcome()
+    for keys in sittings(drills, order=order):
+        fragments: list[sequence.Fragment] = []
+        for index in keys:
+            others = [example for example in examples if example.segment_id != index]
+            shares = None
+            if containment_weight > 0:
+                truth = drills[index].piece_id
+                signatures = {
+                    piece: (pooled[piece] - features[index]) if piece == truth else signature
+                    for piece, signature in pooled.items()
+                }
+                signatures = {piece: sig for piece, sig in signatures.items() if sig}
+                feature_weights = shingles.idf(signatures)
+                shares = {
+                    piece: shingles.containment(features[index], signature, feature_weights)
+                    for piece, signature in signatures.items()
+                }
+            ranked = rank(
+                prints[index],
+                others,
+                weights=weights,
+                shares=shares,
+                containment_weight=containment_weight,
+            )
+            fragments.append(
+                sequence.Fragment(
+                    key=index,
+                    options=tuple(
+                        sequence.Option(candidate.piece_id, candidate.score)
+                        for candidate in ranked
+                    ),
+                    notes=prints[index].note_count,
+                )
+            )
+        beliefs = sequence.decode(fragments, switch=switch, temperature=temperature)
+        for belief in beliefs:
+            truth = drills[belief.key].piece_id
+            outcome.total += 1
+            outcome.correct_top += int(belief.chosen == truth)
+            verdict = sequence.band(
+                belief,
+                auto_probability=auto_probability,
+                prompt_probability=prompt_probability,
+                min_notes=min_notes,
+            )
+            if verdict == "auto":
+                outcome.auto_attempted += 1
+                outcome.auto_correct += int(belief.chosen == truth)
+            elif verdict == "suggest":
+                outcome.offered_attempted += 1
+                outcome.offered_correct += int(belief.chosen == truth)
+            else:
+                outcome.unidentified += 1
+    return outcome
+
+
 def report(label: str, outcome: Outcome) -> None:
     """Percentages with their counts beside them.
 
@@ -614,6 +727,76 @@ def main() -> int:
         print(f"  {auto:>5.2f} {margin:>7.2f} | {whole.auto_coverage:>10.1%} "
               f"{whole.auto_precision:>11.1%} {quarter.auto_coverage:>12.1%} "
               f"{quarter.auto_precision:>13.1%}")
+
+    print(
+        "\nA sitting as a sequence. `grouped` is nine drills of one piece in a row, which is"
+        "\nwhat working on a piece looks like; `interleaved` changes piece at every boundary,"
+        "\nwhich is the order that shows whether smoothing swallows a real switch. Shipped"
+        "\nper-segment matcher for comparison, then the model at a few parameter settings:"
+    )
+    report("per segment + context", evaluate(drills, weights=DEFAULT_WEIGHTS, use_context=True))
+    for order in ("grouped", "interleaved"):
+        for switch, temperature in (
+            (0.10, 0.01),
+            (0.10, 0.02),
+            (0.10, 0.05),
+            (0.20, 0.05),
+            (0.20, 0.10),
+            (0.50, 0.20),
+        ):
+            report(
+                f"{order} p {switch} T {temperature}",
+                evaluate_sequence(
+                    drills,
+                    order=order,
+                    switch=switch,
+                    temperature=temperature,
+                    containment_weight=settings.autotag_containment_weight,
+                ),
+            )
+
+    print(
+        "\nWhat probability should a written label need? The auto band is the only band that"
+        "\nchanges the log without asking, so its error rate is what these numbers buy. Same"
+        f"\ncorpus, containment {settings.autotag_containment_weight}:"
+    )
+    print(f"  {'order':>11} {'p(auto)':>8} | {'coverage':>9} {'precision':>10} {'n':>4}")
+    for order in ("grouped", "interleaved"):
+        for auto_probability in (0.70, 0.80, 0.90, 0.95, 0.99):
+            outcome = evaluate_sequence(
+                drills,
+                order=order,
+                switch=0.10,
+                temperature=0.02,
+                auto_probability=auto_probability,
+                containment_weight=settings.autotag_containment_weight,
+            )
+            print(
+                f"  {order:>11} {auto_probability:>8.2f} | {outcome.auto_coverage:>9.1%} "
+                f"{outcome.auto_precision:>10.1%} {outcome.auto_attempted:>4}"
+            )
+
+    print(
+        "\nThe same question on the 32-piece corpus, grouped whole-length and at a quarter"
+        "\nlength, because a library that keeps growing is where the band really has to hold:"
+    )
+    print(f"  {'length':>8} {'p(auto)':>8} | {'coverage':>9} {'precision':>10} {'top-1':>7} {'n':>4}")
+    for fraction in (1.0, 0.25):
+        for auto_probability in (0.70, 0.80, 0.90, 0.95, 0.99):
+            outcome = evaluate_sequence(
+                large,
+                order="grouped",
+                fraction=fraction,
+                switch=0.10,
+                temperature=0.02,
+                auto_probability=auto_probability,
+                containment_weight=settings.autotag_containment_weight,
+            )
+            print(
+                f"  {fraction:>8.0%} {auto_probability:>8.2f} | {outcome.auto_coverage:>9.1%} "
+                f"{outcome.auto_precision:>10.1%} {outcome.accuracy:>7.1%} "
+                f"{outcome.auto_attempted:>4}"
+            )
     return 0
 
 

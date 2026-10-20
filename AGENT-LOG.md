@@ -4960,3 +4960,45 @@ Verified: `./check.sh --fast`; backend 1128 passed (25 of them the new rhythm/po
 `run_e2e.sh practice_log` green including the new hour/portrait assertions; falsifications
 `forget_which_clock_the_hour_is_on`, `count_the_whole_sitting_in_its_start_hour` and
 `let_the_portrait_answer_for_a_stale_library`, all caught; `./check.sh --full`.
+
+## 2026-10-19 — sight-reading agent — read the sitting as a sequence, and let the segment lose
+
+Scope: `backend/app/practice/{sequence,store,config}.py`, `backend/tests/{test_sequence,test_autotag}.py`,
+`backend/tools/measure_autotag.py`, three falsifications,
+`docs/{ECOSYSTEM,ENGINEERING,FEATURES,PERFORMANCE}.md`.
+
+Did: the matcher now decides per **sitting**, not per segment. New pure module
+`app/practice/sequence.py` decodes a sitting with a hidden Markov model over pieces — emission = the
+candidate scores `similarity.rank` already produced, transition = stay / move with the move price
+shared over the other pieces — and reports each segment's piece, confidence and runner-up. A labelled
+segment is pinned as an anchor; the band comes from the decoded probability
+(`SRT_AUTOTAG_AUTO_PROBABILITY` 0.99 to write, `SRT_AUTOTAG_PROMPT_PROBABILITY` 0.50 to offer,
+`SRT_AUTOTAG_SEQUENCE_SWITCH` 0.10, `SRT_AUTOTAG_SEQUENCE_TEMPERATURE` 0.02). The timeline's
+suggestions reorder the decoded piece first, the auto-tag pass writes from the decode, and
+`identification_quality` counts the sequenced band. No schema change, no new endpoint, no wire
+change: the candidate payload keeps its fields and its top-three limit, and `from_context` keeps its meaning.
+
+Two decisions. **The switch rate is measured, not tuned.** Of 412 adjacent labelled pairs in the
+owner's library 42 change piece (10.2%); 0.10 cites that number. **The sequence is the only decision
+owner.** The per-segment context nudge is retired from these paths because the decode charges the
+same evidence once, and `similarity.identify`'s own band is still computed and tested but nothing
+reads it — `SRT_AUTOTAG_SCORE_AUTO`, `SRT_AUTOTAG_SCORE_PROMPT` and `SRT_AUTOTAG_MIN_MARGIN` gate
+nothing at runtime. They are retired with the fitted probability in the next step rather than left
+to disagree with it.
+
+It is a rescue, not an override, and the tests say so: a mix whose own evidence points at another
+piece by 0.068 keeps it, while a half-and-half drill that leads by 0.089 is written because its
+neighbour outvotes it. `candidates_for_sitting` no longer passes `context_piece_id`, so opening a
+sitting and the background pass decide identically.
+
+Measured: owner's library, 443 labelled segments, 7 pieces — per-segment top-1 98.2%/auto 58.5% at
+100%; sequenced top-1 98.2%/auto **93.7% at 99.8%** (one wrong of 402), 83.3% of real switches
+followed. Synthetic (8 pieces): grouped top-1 93.1% → 100%, auto 29.2% → 95.8% at 100%; interleaved
+at eight times the real switch rate top-1 **79.2%** vs 84.7% per segment (the honest failure case);
+32-piece whole-drill auto 18.4% → 77.8% at 100%; 32-piece quarter fragments 24.0% at 72.5% precision,
+recorded as the limit calibration is meant to fix. Decode costs 0.11 ms / 1.27 ms for 5 / 49 segments.
+
+Verified: `./check.sh --fast`; backend `pytest tests -q` 1147 passed (19 sequence tests, 3 new
+autotag tests); falsifications `offer_but_never_write_what_the_sitting_decided`,
+`let_a_sitting_never_change_piece`, `count_the_band_the_segment_alone_would_write`, all caught;
+`./check.sh --full`.

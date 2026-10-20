@@ -199,6 +199,28 @@ class Settings:
     #: the report rather than quietly sampling.
     autotag_quality_limit: int = _env_int("SRT_AUTOTAG_QUALITY_LIMIT", 400)
 
+    # --- reading a sitting as a sequence ------------------------------------
+    #: How often a sitting changes piece between two adjacent segments. Measured on
+    #: the owner's labelled library: 42 changes in 412 boundaries, 10.2%. It is the
+    #: price the sequence charges for moving, so the value decides whether the model
+    #: is overly sticky or lets one bad segment drag its neighbours.
+    autotag_sequence_switch: float = _env_float("SRT_AUTOTAG_SEQUENCE_SWITCH", 0.10)
+    #: Softmax temperature over the per-segment scores. The margin between the right
+    #: piece and the next is small (order 0.03), so a temperature near 0.1 lets the
+    #: switch price swallow every real change; 0.02 is the sweep's knee. See
+    #: `backend/tools/measure_autotag.py` and `docs/ECOSYSTEM.md` §10.
+    autotag_sequence_temperature: float = _env_float(
+        "SRT_AUTOTAG_SEQUENCE_TEMPERATURE", 0.02
+    )
+    #: The probability a decoded piece needs before the label is written without
+    #: asking. Measured on the owner's library: 93.7% of segments at 99.8% precision
+    #: (one wrong label in 402), against 58.5% at 100% for the per-segment band.
+    autotag_auto_probability: float = _env_float("SRT_AUTOTAG_AUTO_PROBABILITY", 0.99)
+    #: The probability at or above which the piece is offered rather than written.
+    autotag_prompt_probability: float = _env_float(
+        "SRT_AUTOTAG_PROMPT_PROBABILITY", 0.5
+    )
+
     # --- serving over the LAN ---------------------------------------------
     #: Largest recording accepted by the upload endpoint, in megabytes. A cap that
     #: only trusts the client's declared size is not a cap, so it is enforced while

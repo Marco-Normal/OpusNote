@@ -36,6 +36,7 @@ from . import passages
 from . import pedal_stream
 from . import schema as practice_schema
 from . import segment
+from . import sequence as sitting_sequence
 from . import shingles
 from .metrics import SegmentMetrics, segment_metrics
 from .pedal import (
@@ -2770,6 +2771,96 @@ def _candidate_out(
     return out
 
 
+def _decode_sitting(
+    order: Sequence[int],
+    *,
+    ranked: dict[int, Sequence[Candidate]],
+    note_counts: dict[int, int],
+    pinned: dict[int, int] | None = None,
+) -> dict[int, sitting_sequence.Belief]:
+    """Read one sitting's segments as a sequence: each one borrows from its neighbours.
+
+    A sitting is nearly always one piece at a time — 10.2% of the owner's adjacent
+    segments change piece — so the segment either side is evidence the per-segment
+    score does not have. `sequence.py` is the model; this is the wiring. Candidate
+    scores are the emission, a segment that already has a label is pinned to it, and
+    moving to another piece costs what the measured switch rate says it should.
+
+    Decoding the whole sitting before writing anything matters: the old pass wrote
+    each label as it went, which made the answer depend on the order the rows came
+    back in and let one confident mistake become the next segment's context.
+    """
+    settled = dict(pinned or {})
+    fragments: list[sitting_sequence.Fragment] = []
+    for segment_id in order:
+        if segment_id in settled:
+            options = (sitting_sequence.Option(settled[segment_id], 1.0),)
+        else:
+            options = tuple(
+                sitting_sequence.Option(candidate.piece_id, candidate.score)
+                for candidate in ranked.get(segment_id, ())
+            )
+        fragments.append(
+            sitting_sequence.Fragment(
+                key=segment_id,
+                options=options,
+                notes=note_counts.get(segment_id, 0),
+            )
+        )
+    return {
+        belief.key: belief
+        for belief in sitting_sequence.decode(
+            fragments,
+            switch=settings.autotag_sequence_switch,
+            temperature=settings.autotag_sequence_temperature,
+        )
+    }
+
+
+def _sequence_verdict(
+    belief: sitting_sequence.Belief, identification: Identification
+) -> tuple[str, str]:
+    """The band and the sentence for a segment whose neighbours had a say.
+
+    The band comes from the decoded probability, not from the score thresholds: the
+    thresholds judge one segment alone, which is the question the sitting's context
+    just answered differently. The sentence tries to stay true to *why* — a piece
+    pulled forward by its neighbours should not read "confident match".
+    """
+    band = sitting_sequence.band(
+        belief,
+        auto_probability=settings.autotag_auto_probability,
+        prompt_probability=settings.autotag_prompt_probability,
+        min_notes=settings.autotag_min_notes,
+    )
+    if belief.chosen is None:
+        return "none", identification.reason
+    raw = identification.best.piece_id if identification.best else None
+    if band == "none":
+        return band, identification.reason
+    if belief.chosen != raw:
+        moved = "points here" if band == "auto" else "leans here"
+        return band, f"the rest of the sitting {moved}"
+    if band == identification.band:
+        return band, identification.reason
+    # The band changed but the piece did not: the score said one thing and the
+    # sitting said another, so neither sentence alone is the whole story.
+    return band, "confident match" if band == "auto" else "worth a look"
+
+
+def _chosen_first(
+    candidates: Sequence[Candidate], piece_id: int | None
+) -> list[Candidate]:
+    """Put the piece the sitting settled on first, keeping the rest in score order."""
+    ranked = list(candidates)
+    if piece_id is None:
+        return ranked
+    for position, candidate in enumerate(ranked):
+        if candidate.piece_id == piece_id:
+            return [candidate, *ranked[:position], *ranked[position + 1 :]]
+    return ranked
+
+
 def candidates_for_sitting(conn: sqlite3.Connection, sitting_id: int) -> dict[int, list[SegmentCandidate]]:
     """What each unlabelled segment of a sitting might be.
 
@@ -2820,14 +2911,17 @@ def candidates_for_sitting(conn: sqlite3.Connection, sitting_id: int) -> dict[in
     )
 
     out: dict[int, list[SegmentCandidate]] = {}
-    context: int | None = None
-    # In order, carrying the last resolved piece forward: a sitting is normally one
-    # piece at a time, and the segment being identified may itself be the evidence
-    # for the next one.
+    identifications: dict[int, Identification] = {}
+    note_counts: dict[int, int] = {}
+    pinned: dict[int, int] = {}
     for row in rows:
         segment_id = int(row["id"])
         if row["piece_id"] is not None:
             context = int(row["piece_id"])
+            # A segment you have already labelled is not a question — it is the
+            # anchor the rest of the sitting is read against.
+            pinned[segment_id] = context
+            continue
         if segment_id not in wanted:
             continue
         identification = segment_identification(
@@ -2836,17 +2930,40 @@ def candidates_for_sitting(conn: sqlite3.Connection, sitting_id: int) -> dict[in
             examples=examples,
             signatures=signatures,
             notes=notes_by_segment.get(segment_id, []),
-            context_piece_id=context,
+            # No context nudge here: the sequence below is the smoothing, and
+            # charging the previous piece twice is how a wrong label spreads.
+            context_piece_id=None,
             share_weights=share_weights,
         )
-        if identification.candidates:
-            out[segment_id] = _candidate_out(
-                conn,
-                list(identification.candidates),
-                reason=identification.reason,
-                band=identification.band,
-                context_piece_id=context,
-            )
+        identifications[segment_id] = identification
+        note_counts[segment_id] = len(notes_by_segment.get(segment_id, []))
+
+    beliefs = _decode_sitting(
+        [int(row["id"]) for row in rows],
+        ranked={
+            segment_id: identification.candidates
+            for segment_id, identification in identifications.items()
+        },
+        note_counts=note_counts,
+        pinned=pinned,
+    )
+    context = None
+    for row in rows:
+        segment_id = int(row["id"])
+        if row["piece_id"] is not None:
+            context = int(row["piece_id"])
+        identification = identifications.get(segment_id)
+        if identification is None or not identification.candidates:
+            continue
+        belief = beliefs[segment_id]
+        band, reason = _sequence_verdict(belief, identification)
+        out[segment_id] = _candidate_out(
+            conn,
+            _chosen_first(identification.candidates, belief.chosen),
+            reason=reason,
+            band=band,
+            context_piece_id=context,
+        )
     return out
 
 
@@ -2880,12 +2997,15 @@ def _record_outcome(
 
 
 def _autotag_rows(conn: sqlite3.Connection, rows: list[sqlite3.Row]) -> AutotagReport:
-    """Identify a run of segments, carrying each segment's context forward.
+    """Identify a run of segments by reading each sitting as one sequence.
 
-    The context is the piece of the last segment already decided *in this same
-    pass*, which is what makes a sitting behave like one piece: the first segment
-    may need a real match or your help, and the rest of the sitting then leans the
-    way the sitting is already going.
+    A run of drills from one piece is a sequence, and the segment either side is
+    evidence the segment's own score does not carry. So each sitting in the run is
+    decoded whole before anything is written: a segment you have already labelled is
+    pinned as an anchor, the blanks between anchors borrow from both sides, and a
+    change of piece has to beat the measured switch rate. Writing as we went — which
+    is what this pass used to do — made the answer depend on the order the rows came
+    back in and let one confident mistake become the next segment's context.
     """
     report = AutotagReport(considered=len(rows))
     # The same reference material, and the same cache, as the timeline's suggestions. This pass
@@ -2901,35 +3021,86 @@ def _autotag_rows(conn: sqlite3.Connection, rows: list[sqlite3.Row]) -> AutotagR
         )
         report.unresolved = len(rows)
         return report
-    # This sitting's notes, read once for the whole run rather than once per segment.
-    notes_by_segment = _notes_for_segments(conn, rows)
 
-    # Context starts from whatever this sitting already has, so re-running over an
-    # old sitting does not lose what the earlier segments say.
-    context: int | None = None
+    # The caller hands rows in play order within a sitting, and by sitting; a new
+    # sitting is a boundary of the sequence, never a link in it.
+    runs: list[tuple[int, list[sqlite3.Row]]] = []
     for row in rows:
-        if row["piece_id"] is not None:
-            context = int(row["piece_id"])
-            continue
-        identification = segment_identification(
-            conn, int(row["id"]), examples=examples, signatures=signatures,
-            notes=notes_by_segment.get(int(row["id"]), []),
-            context_piece_id=context,
-            share_weights=share_weights,
-        )
-        if identification.band == "auto" and identification.best is not None:
-            best = identification.best
-            conn.execute(
-                "UPDATE segments SET piece_id = ?1, confidence = ?2, identified_by = 'similarity'"
-                " WHERE id = ?3",
-                (best.piece_id, round(best.score, 4), int(row["id"])),
+        sitting_id = int(row["sitting_id"])
+        if not runs or runs[-1][0] != sitting_id:
+            runs.append((sitting_id, []))
+        runs[-1][1].append(row)
+
+    for sitting_id, asked in runs:
+        wanted = {int(row["id"]) for row in asked}
+        # The anchors: a segment that already has a piece is what the blanks are read
+        # against, including the ones this pass is not allowed to touch.
+        chain = conn.execute(
+            f"SELECT {_SEGMENT_COLUMNS} FROM segments g"
+            " WHERE g.sitting_id = ? ORDER BY g.start_ms",
+            (sitting_id,),
+        ).fetchall()
+        notes_by_segment = _notes_for_segments(conn, chain)
+        identifications: dict[int, Identification] = {}
+        for row in chain:
+            segment_id = int(row["id"])
+            if segment_id not in wanted:
+                continue
+            identifications[segment_id] = segment_identification(
+                conn,
+                segment_id,
+                examples=examples,
+                signatures=signatures,
+                notes=notes_by_segment.get(segment_id, []),
+                # The sequence is the smoothing now; the old per-segment context nudge
+                # would charge the previous piece twice.
+                context_piece_id=None,
+                share_weights=share_weights,
             )
-            context = best.piece_id
-            report.assigned += 1
-        elif identification.band == "suggest":
-            report.offered += 1
-        else:
-            report.unresolved += 1
+        beliefs = _decode_sitting(
+            [int(row["id"]) for row in chain],
+            ranked={
+                segment_id: identification.candidates
+                for segment_id, identification in identifications.items()
+            },
+            note_counts={
+                segment_id: len(notes_by_segment.get(segment_id, ()))
+                for segment_id in wanted
+            },
+            pinned={
+                int(row["id"]): int(row["piece_id"])
+                for row in chain
+                if row["piece_id"] is not None
+            },
+        )
+        for row in asked:
+            segment_id = int(row["id"])
+            identification = identifications[segment_id]
+            belief = beliefs[segment_id]
+            band, _reason = _sequence_verdict(belief, identification)
+            if band == "auto" and belief.chosen is not None:
+                chosen = next(
+                    (
+                        candidate
+                        for candidate in identification.candidates
+                        if candidate.piece_id == belief.chosen
+                    ),
+                    None,
+                )
+                conn.execute(
+                    "UPDATE segments SET piece_id = ?1, confidence = ?2,"
+                    " identified_by = 'similarity' WHERE id = ?3",
+                    (
+                        belief.chosen,
+                        round(chosen.score if chosen else belief.confidence, 4),
+                        segment_id,
+                    ),
+                )
+                report.assigned += 1
+            elif band == "suggest":
+                report.offered += 1
+            else:
+                report.unresolved += 1
     return report
 
 
@@ -2987,7 +3158,10 @@ def identification_quality(db_path: Path | None = None) -> IdentificationQuality
     Every labelled segment is now a reference (Phase 22b retired the reference window),
     and the mix over local content is applied here exactly as the live matcher applies it —
     a report that measured a different scorer than the one that writes labels would be a
-    number nobody could act on.
+    number nobody could act on. The sitting is then read as a sequence, exactly as the
+    timeline and the ingest pass read it, because the band that gets written is the
+    decoded one: reporting the per-segment band would understate the coverage the app
+    now has and hide the errors the sequence introduces.
 
     The work is quadratic in the number of labels, so the newest
     ``autotag_quality_limit`` are evaluated and the report says how many were left
@@ -3028,14 +3202,12 @@ def identification_quality(db_path: Path | None = None) -> IdentificationQuality
                 f"{quality.skipped} older ones were left out to keep the report quick"
             )
 
-        context: int | None = None
-        previous_sitting: int | None = None
+        # Rank every segment first: the sequence reads a whole sitting at once, so the
+        # per-segment work has to be done before any band is decided. Without this pass
+        # the report would measure the scorer the app no longer uses.
+        ranked: dict[int, Identification] = {}
         for row in considered:
             segment_id = int(row["id"])
-            sitting_id = int(row["sitting_id"])
-            if sitting_id != previous_sitting:
-                context = None
-                previous_sitting = sitting_id
             truth = int(row["piece_id"])
             # Leave-one-out over the pooled signatures too: the segment being asked about
             # must not be part of the evidence that answers it.
@@ -3043,33 +3215,58 @@ def identification_quality(db_path: Path | None = None) -> IdentificationQuality
             remainder = pooled[truth] - local[segment_id]
             if remainder:
                 signatures[truth] = remainder
-            identification = identify(
+            ranked[segment_id] = identify(
                 prints[segment_id],
                 [example for example in examples if example.segment_id != segment_id],
                 score_auto=settings.autotag_score_auto,
                 score_prompt=settings.autotag_score_prompt,
                 min_margin=settings.autotag_min_margin,
                 min_notes=settings.autotag_min_notes,
-                context_piece_id=context,
                 shares=_shares(local[segment_id], signatures),
                 containment_weight=settings.autotag_containment_weight,
             )
-            top = identification.best.piece_id if identification.best else None
-            quality.correct_top += int(top == truth)
-            quality.correct_top3 += int(
-                truth in [candidate.piece_id for candidate in identification.candidates[:3]]
+
+        chains: list[list[sqlite3.Row]] = []
+        for row in considered:
+            if not chains or int(chains[-1][-1]["sitting_id"]) != int(row["sitting_id"]):
+                chains.append([])
+            chains[-1].append(row)
+
+        for chain in chains:
+            beliefs = _decode_sitting(
+                [int(row["id"]) for row in chain],
+                ranked={
+                    segment_id: identification.candidates
+                    for segment_id, identification in ranked.items()
+                },
+                note_counts={
+                    int(row["id"]): prints[int(row["id"])].note_count for row in chain
+                },
             )
-            if identification.band == "auto":
-                quality.auto_attempted += 1
-                quality.auto_correct += int(top == truth)
-            elif identification.band == "suggest":
-                quality.offered_attempted += 1
-                quality.offered_correct += int(top == truth)
-            else:
-                quality.unresolved += 1
-            # The next segment in this sitting gets to know what this one is, exactly
-            # as the live pass does.
-            context = truth
+            for row in chain:
+                segment_id = int(row["id"])
+                truth = int(row["piece_id"])
+                belief = beliefs[segment_id]
+                ordered = _chosen_first(ranked[segment_id].candidates, belief.chosen)
+                top = belief.chosen
+                quality.correct_top += int(top == truth)
+                quality.correct_top3 += int(
+                    truth in [candidate.piece_id for candidate in ordered[:3]]
+                )
+                band = sitting_sequence.band(
+                    belief,
+                    auto_probability=settings.autotag_auto_probability,
+                    prompt_probability=settings.autotag_prompt_probability,
+                    min_notes=settings.autotag_min_notes,
+                )
+                if band == "auto":
+                    quality.auto_attempted += 1
+                    quality.auto_correct += int(top == truth)
+                elif band == "suggest":
+                    quality.offered_attempted += 1
+                    quality.offered_correct += int(top == truth)
+                else:
+                    quality.unresolved += 1
         return quality
     finally:
         conn.close()
