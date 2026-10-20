@@ -127,7 +127,10 @@
   /** Scientific pitch: MIDI 60 is C4, which is also how the library's ranges read. */
   function noteName(midi: number | null): string {
     if (midi === null || midi === undefined) return '—';
-    return `${NOTE_NAMES[midi % 12]}${Math.floor(midi / 12) - 1}`;
+    // The centre of gravity is a mean, so it is not on a key. Naming it rounds to the
+    // nearest one; a fractional index would read as `undefined`.
+    const key = Math.round(midi);
+    return `${NOTE_NAMES[key % 12]}${Math.floor(key / 12) - 1}`;
   }
 
   const hourPeak = $derived(
@@ -175,6 +178,8 @@
           : '',
       })),
   );
+
+  const spanBaseline = $derived(portrait?.velocity_spans[0]?.mean_velocity ?? null);
 
   const spanItems = $derived(
     (portrait?.velocity_spans ?? []).map((row) => ({
@@ -554,7 +559,26 @@
 
       {#if spanItems.length > 0}
         <h4>Loudness across the window</h4>
-        <BarChart items={spanItems} unit=" velocity" empty="No notes in this window." />
+        <div class="tiles">
+          {#each spanItems as row (row.label)}
+            <div class="tile">
+              <span class="k">{row.label}</span>
+              <span class="v"
+                >{row.value === 0 ? '—' : row.value.toFixed(1)}<small
+                  >{row.value === 0
+                    ? ''
+                    : spanBaseline !== null && row.label !== 'First quarter'
+                      ? ` ${signed(row.value - spanBaseline)}`
+                      : ' velocity'}</small
+                ></span
+              >
+            </div>
+          {/each}
+        </div>
+        <p class="muted small">
+          Mean touch in each quarter of the practised span, with the change from the first
+          quarter beside it. Velocity is a MIDI number out of 127, not a sound-pressure level.
+        </p>
       {/if}
 
       <p class="muted small">
