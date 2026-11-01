@@ -15,7 +15,6 @@
     SegmentSummary,
   } from '../lib/types';
   import { formatDuration } from '../lib/clock';
-  import { pieceLabel } from '../lib/pieceLabel';
   import { formatMinutes, formatSize } from '../lib/types';
   import type { PiecePracticeDetail } from '../lib/types';
   import LineChart from './LineChart.svelte';
@@ -25,58 +24,14 @@
   import TakeList from './TakeList.svelte';
   import type { Loop } from '../lib/waveform';
 
-  type Grouping = 'none' | 'composer' | 'difficulty';
-
-  const VIEW_STORAGE_KEY = 'srt.repertoire.view';
-  const SORT_KEYS = ['title', 'composer', 'last_played', 'least_time', 'most_time'] as const;
-  type SortKey = (typeof SORT_KEYS)[number];
-  const GROUPINGS = ['none', 'composer', 'difficulty'] as const;
-
-  /**
-   * The library's filters and sort, remembered across reloads.
-   *
-   * Validated rather than trusted: the value is whatever a previous version of this page
-   * wrote, and an unknown sort key would silently leave the list in an order nobody chose.
-   */
-  function readView(): { status: string; composer: string; grouping: Grouping; sort: SortKey } {
-    const fallback = {
-      status: '',
-      composer: '',
-      grouping: 'composer' as Grouping,
-      sort: 'title' as SortKey,
-    };
-    try {
-      const raw = localStorage.getItem(VIEW_STORAGE_KEY);
-      if (!raw) return fallback;
-      const parsed = JSON.parse(raw) as Record<string, unknown>;
-      return {
-        status: typeof parsed.status === 'string' ? parsed.status : '',
-        composer: typeof parsed.composer === 'string' ? parsed.composer : '',
-        grouping: (GROUPINGS as readonly string[]).includes(parsed.grouping as string)
-          ? (parsed.grouping as Grouping)
-          : 'composer',
-        sort: (SORT_KEYS as readonly string[]).includes(parsed.sort as string)
-          ? (parsed.sort as SortKey)
-          : 'title',
-      };
-    } catch {
-      // Storage may be unavailable (private mode) or hold something that is not ours.
-      return fallback;
-    }
-  }
+  import PieceList from './PieceList.svelte';
+  import JournalSection from './JournalSection.svelte';
 
   let status = $state<RepertoireStatus | null>(null);
   let pieces = $state<PieceSummary[]>([]);
   let composers = $state<Composer[]>([]);
   let suggestions = $state<Map<number, PracticeSuggestion>>(new Map());
   let detail = $state<PieceDetail | null>(null);
-
-  const savedView = readView();
-  let search = $state('');
-  let statusFilter = $state(savedView.status);
-  let composerFilter = $state(savedView.composer);
-  let grouping = $state<Grouping>(savedView.grouping);
-  let sort = $state<SortKey>(savedView.sort);
 
   let loading = $state(true);
   let detailLoading = $state(false);
@@ -87,38 +42,22 @@
   // null = closed, 'new' = creating, a PieceDetail = editing that piece.
   let editing = $state<PieceDetail | 'new' | null>(null);
   let confirmingDelete = $state(false);
-  let journalDate = $state(localDate());
-  let journalContent = $state('');
-  let journalMinutes = $state<number | null>(null);
+
   let savingJournal = $state(false);
-  // Which entry is open for editing, and the draft of it. One at a time: the journal
-  // is prose, and two half-edited paragraphs is a way to lose one of them.
-  let editingEntry = $state<number | null>(null);
-  let editDate = $state('');
-  let editMinutes = $state<number | null>(null);
-  let editContent = $state('');
-  //: Set when the entry is being written about a sitting, from the Log tab.
+  let journalSectionRef = $state<ReturnType<typeof JournalSection> | null>(null);
+
+  // Set when the entry is being written about a sitting, from the Log tab.
   let journalSitting = $state<number | null>(null);
   let journalMeasured = $state<string | null>(null);
-  //: The newest entries across the library, shown where a piece would be.
+  // The newest entries across the library, shown where a piece would be.
   let feedEntries = $state<JournalEntry[]>([]);
   let feedSearch = $state('');
   let feedTimer: ReturnType<typeof setTimeout> | null = null;
   let feedTag = $state('');
-  let journalTags = $state('');
-  let journalDifficulty = $state<number | null>(null);
-  let journalFluency = $state<number | null>(null);
-  //: The take the entry being written is about, set by the recording's own button.
+  // The take the entry being written is about, set by the recording's own button.
   let journalTake = $state<number | null>(null);
-  let journalForm = $state<HTMLElement | null>(null);
-  let editTags = $state('');
-  let editDifficulty = $state<number | null>(null);
-  let editFluency = $state<number | null>(null);
   /** Per-piece logged minutes, the widest window the read allows, for the effort sorts. */
   let practiceByPiece = $state<PiecePractice[]>([]);
-  /** Multi-select for bulk status edits. */
-  let selected = $state<Set<number>>(new Set());
-  let bulkStatus = $state<'active' | 'paused' | 'completed'>('paused');
 
   $effect(() => {
     // Read `feedSearch` here so this re-runs when it changes, and pass the value into
@@ -307,62 +246,17 @@
   }
 
   /** "coda, slow" → ["coda", "slow"]. The server trims and de-duplicates too. */
-  function parseTags(value: string): string[] {
-    return value
-      .split(',')
-      .map((tag) => tag.trim())
-      .filter((tag) => tag.length > 0);
-  }
-
-  const practiceIndex = $derived(new Map(practiceByPiece.map((row) => [row.piece_id, row])));
-
-  /**
-   * The library's order.
-   *
-   * A piece the practice read does not mention has no row at all rather than a zero —
-   * `by_piece` inner-joins segments — so absence is read as *never played, no minutes*.
-   * That is the strongest form of both answers and it is what puts an untouched piece
-   * first under "least time invested".
-   */
-  function sorted(rows: PieceSummary[]): PieceSummary[] {
-    const copy = [...rows];
-    if (sort === 'title') return copy.sort((a, b) => a.title.localeCompare(b.title));
-    if (sort === 'composer') {
-      return copy.sort((a, b) => (a.composer_name ?? '').localeCompare(b.composer_name ?? ''));
-    }
-    if (sort === 'last_played') {
-      return copy.sort((a, b) => {
-        const left = practiceIndex.get(a.id)?.last_played ?? '';
-        const right = practiceIndex.get(b.id)?.last_played ?? '';
-        return left === right ? a.title.localeCompare(b.title) : left.localeCompare(right);
-      });
-    }
-    const minutes = (id: number) => practiceIndex.get(id)?.minutes ?? 0;
-    return copy.sort((a, b) =>
-      sort === 'least_time'
-        ? minutes(a.id) - minutes(b.id) || a.title.localeCompare(b.title)
-        : minutes(b.id) - minutes(a.id) || a.title.localeCompare(b.title),
-    );
-  }
-
   /** The widest window the read allows, so "least time invested" means what it says. */
   async function loadPracticeByPiece(): Promise<void> {
     practiceByPiece = await api.practice.piecePractice(3650).catch(() => []);
   }
 
-  /**
-   * Bulk status, one request per piece.
-   *
-   * Sequential rather than parallel on purpose: this is a single-user library of tens of
-   * pieces, and a partial failure is easier to reason about when the requests are ordered.
-   */
-  async function applyBulk(): Promise<void> {
+  async function applyBulk(selectedIds: number[], statusToApply: 'active' | 'paused' | 'completed'): Promise<void> {
     busy = true;
     try {
-      for (const id of selected) {
-        await api.repertoire.updatePiece(id, { status: bulkStatus });
+      for (const id of selectedIds) {
+        await api.repertoire.updatePiece(id, { status: statusToApply });
       }
-      selected = new Set();
       await load();
     } catch (cause) {
       error = cause instanceof Error ? cause.message : String(cause);
@@ -371,24 +265,17 @@
     }
   }
 
-  // The filters and the sort persist, which is the "saved filters" this app actually needs.
-  $effect(() => {
-    try {
-      localStorage.setItem(
-        VIEW_STORAGE_KEY,
-        JSON.stringify({ status: statusFilter, composer: composerFilter, grouping, sort }),
-      );
-    } catch {
-      // Storage may be unavailable (private mode); the view still works for this session.
-    }
-  });
-
   /** Write a journal entry about a take: set the date and the link, then show the form. */
   function writeAboutTake(recordingId: number): void {
-    journalDate = localDate();
     journalSitting = null;
     journalTake = recordingId;
-    journalForm?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    journalSectionRef?.scrollFormIntoView();
+  }
+
+  function localDate(): string {
+    const now = new Date();
+    const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
+    return local.toISOString().slice(0, 10);
   }
 
   async function addPassage(body: {
@@ -427,41 +314,24 @@
     }
   }
 
-  /**
-   * Today in the player's own timezone.
-   *
-   * `toISOString().slice(0, 10)` is UTC, so anywhere west of Greenwich it offers
-   * yesterday's date through the whole evening — which is when practice happens.
-   */
-  function localDate(): string {
-    const now = new Date();
-    const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
-    return local.toISOString().slice(0, 10);
-  }
-
-  async function addJournalEntry(): Promise<void> {
-    if (!detail || !journalContent.trim()) return;
+  async function addJournalEntry(data: {
+    entry_date: string;
+    content: string;
+    practice_minutes: number | null;
+    sitting_id: number | null;
+    tags: string[];
+    difficulty: number | null;
+    fluency: number | null;
+    media_id: number | null;
+  }): Promise<void> {
+    if (!detail || !data.content.trim()) return;
     savingJournal = true;
     error = null;
     try {
       const pieceId = detail.id;
-      await api.repertoire.createJournal(pieceId, {
-        entry_date: journalDate,
-        content: journalContent.trim(),
-        practice_minutes: journalMinutes,
-        sitting_id: journalSitting,
-        tags: parseTags(journalTags),
-        difficulty: journalDifficulty,
-        fluency: journalFluency,
-        media_id: journalTake,
-      });
-      journalContent = '';
-      journalMinutes = null;
+      await api.repertoire.createJournal(pieceId, data);
       journalSitting = null;
       journalMeasured = null;
-      journalTags = '';
-      journalDifficulty = null;
-      journalFluency = null;
       journalTake = null;
       await afterWrite(pieceId);
     } catch (cause) {
@@ -471,36 +341,22 @@
     }
   }
 
-  function startEditing(entry: JournalEntry): void {
-    editingEntry = entry.id;
-    editDate = entry.entry_date;
-    editMinutes = entry.practice_minutes;
-    editContent = entry.content;
-    editTags = entry.tags.join(', ');
-    editDifficulty = entry.difficulty;
-    editFluency = entry.fluency;
-    error = null;
-  }
-
-  function cancelEditing(): void {
-    editingEntry = null;
-    editContent = '';
-  }
-
-  async function saveEdit(entry: JournalEntry): Promise<void> {
-    if (!detail || !editContent.trim()) return;
+  async function saveEdit(
+    entry: JournalEntry,
+    editData: {
+      entry_date: string;
+      content: string;
+      practice_minutes: number | null;
+      tags: string[];
+      difficulty: number | null;
+      fluency: number | null;
+    },
+  ): Promise<void> {
+    if (!detail || !editData.content.trim()) return;
     savingJournal = true;
     error = null;
     try {
-      await api.repertoire.updateJournal(entry.id, {
-        entry_date: editDate,
-        content: editContent.trim(),
-        practice_minutes: editMinutes,
-        tags: parseTags(editTags),
-        difficulty: editDifficulty,
-        fluency: editFluency,
-      });
-      editingEntry = null;
+      await api.repertoire.updateJournal(entry.id, editData);
       await afterWrite(detail.id);
     } catch (cause) {
       error = cause instanceof Error ? cause.message : String(cause);
@@ -629,36 +485,6 @@
     }
   }
 
-  const visible = $derived(
-    pieces.filter((piece) => {
-      if (statusFilter && piece.status !== statusFilter) return false;
-      if (composerFilter && String(piece.composer_id ?? '') !== composerFilter) return false;
-      if (search) {
-        const needle = search.trim().toLowerCase();
-        const haystack = `${piece.title} ${piece.composer_name ?? ''} ${piece.opus ?? ''}`.toLowerCase();
-        if (!haystack.includes(needle)) return false;
-      }
-      return true;
-    }),
-  );
-
-  const groups = $derived.by(() => {
-    if (grouping === 'none') return [{ label: '', rows: sorted(visible) }];
-    const buckets = new Map<string, PieceSummary[]>();
-    for (const piece of visible) {
-      const label =
-        grouping === 'composer'
-          ? (piece.composer_name ?? 'Unknown composer')
-          : (piece.difficulty ?? 'Unclassified');
-      const bucket = buckets.get(label);
-      if (bucket) bucket.push(piece);
-      else buckets.set(label, [piece]);
-    }
-    return [...buckets.entries()]
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([label, rows]) => ({ label, rows: sorted(rows) }));
-  });
-
   const suggestion = $derived(detail ? suggestions.get(detail.id) : undefined);
 
   /**
@@ -685,26 +511,6 @@
     void loadPracticeByPiece();
   });
 </script>
-
-{#snippet entryMeta(entry: JournalEntry)}
-  {#each entry.tags as tag (tag)}
-    <button
-      class="pill"
-      data-tag={tag}
-      title="Filter the journal by this tag"
-      onclick={() => (feedTag = tag)}>{tag}</button
-    >
-  {/each}
-  {#if entry.difficulty !== null}
-    <span class="pill mono" data-difficulty={entry.difficulty}>hard {entry.difficulty}/5</span>
-  {/if}
-  {#if entry.fluency !== null}
-    <span class="pill mono" data-fluency={entry.fluency}>went {entry.fluency}/5</span>
-  {/if}
-  {#if entry.media_id !== null}
-    <span class="pill" data-journal-take={entry.media_id}>written about a take</span>
-  {/if}
-{/snippet}
 
 <section class="card panel">
   <div class="spread wrap">
@@ -796,111 +602,24 @@
       {/if}
     </div>
   {:else}
-    <div class="filters">
-      <input
-        type="search"
-        placeholder="Search title, composer or opus…"
-        bind:value={search}
-        aria-label="Search the library"
-      />
-      <select bind:value={statusFilter} aria-label="Filter by status">
-        <option value="">Any status</option>
-        <option value="active">Active</option>
-        <option value="completed">Completed</option>
-        <option value="paused">Paused</option>
-      </select>
-      <select bind:value={composerFilter} aria-label="Filter by composer">
-        <option value="">Any composer</option>
-        {#each composers as composer (composer.id)}
-          <option value={String(composer.id)}>{composer.name}</option>
-        {/each}
-      </select>
-      <select bind:value={grouping} aria-label="Group by">
-        <option value="composer">Group by composer</option>
-        <option value="difficulty">Group by difficulty</option>
-        <option value="none">No grouping</option>
-      </select>
-      <select bind:value={sort} aria-label="Sort the library">
-        <option value="title">Title</option>
-        <option value="composer">Composer</option>
-        <option value="last_played">Last played</option>
-        <option value="least_time">Least time invested</option>
-        <option value="most_time">Most time invested</option>
-      </select>
-      <span class="muted small">{visible.length} shown</span>
-      <button class="primary" onclick={() => (editing = 'new')}>New piece</button>
-    </div>
-
-    {#if selected.size > 0}
-      <div class="row wrap" data-bulk={selected.size}>
-        <span class="muted small">{selected.size} selected</span>
-        <select bind:value={bulkStatus} aria-label="Status for the selected pieces">
-          <option value="active">Active</option>
-          <option value="paused">Paused</option>
-          <option value="completed">Completed</option>
-        </select>
-        <button class="primary" disabled={busy} onclick={() => void applyBulk()}>Set status</button>
-        <button class="ghost" onclick={() => (selected = new Set())}>Clear</button>
-      </div>
-    {/if}
-
     <div class="split" class:with-detail={detail !== null}>
-      <div class="list">
-        {#each groups as group (group.label)}
-          {#if group.label}
-            <h4 class="group">{group.label}</h4>
-          {/if}
-          {#each group.rows as piece (piece.id)}
-            <div class="piece-line">
-            <input
-              type="checkbox"
-              checked={selected.has(piece.id)}
-              aria-label={`Select ${piece.title}`}
-              onclick={() => {
-                const next = new Set(selected);
-                if (next.has(piece.id)) next.delete(piece.id);
-                else next.add(piece.id);
-                selected = next;
-              }}
-            />
-            <button
-              class="row-piece"
-              class:selected={detail?.id === piece.id}
-              aria-expanded={detail?.id === piece.id}
-              onclick={() => {
-                // Describe the state the click is about to produce, not the one it is in: a
-                // second click closes the piece, and the URL must not keep naming it.
-                app.reflect(
-                  detail?.id === piece.id
-                    ? { name: 'repertoire' }
-                    : { name: 'repertoire', entity: { kind: 'piece', id: piece.id } },
-                );
-                void open(piece.id);
-              }}
-            >
-              <span class="title">
-                {piece.title}
-                {#if piece.opus}<span class="muted opus">{piece.opus}</span>{/if}
-              </span>
-              <span class="meta">
-                {#if piece.key}<span class="tag">{piece.key}</span>{/if}
-                {#if piece.difficulty}<span class="tag">{piece.difficulty}</span>{/if}
-                <span class="tag" class:done={piece.status === 'completed'}>{piece.status}</span>
-              </span>
-              <span class="counts muted mono">
-                {#if piece.journal_entries}✎ {piece.journal_entries}{/if}
-                {#if piece.recording_count}♪ {piece.recording_count}{/if}
-                {#if piece.score_count}𝄞 {piece.score_count}{/if}
-              </span>
-            </button>
-            </div>
-          {/each}
-        {/each}
-
-        {#if visible.length === 0}
-          <p class="muted small">Nothing matches those filters.</p>
-        {/if}
-      </div>
+      <PieceList
+        {pieces}
+        {composers}
+        {practiceByPiece}
+        selectedPieceId={detail?.id ?? null}
+        {busy}
+        onSelectPiece={(id) => {
+          app.reflect(
+            detail?.id === id
+              ? { name: 'repertoire' }
+              : { name: 'repertoire', entity: { kind: 'piece', id } },
+          );
+          void open(id);
+        }}
+        onNewPiece={() => (editing = 'new')}
+        onBulkUpdate={applyBulk}
+      />
 
       {#if detailLoading}
         <div class="detail card"><p class="muted small">Loading…</p></div>
@@ -1038,172 +757,28 @@
             </p>
           {/if}
 
-          <h4>Journal <span class="muted">({detail.journal.length})</span></h4>
-          {#if detail.journal.length === 0}
-            <p class="muted small">No entries yet.</p>
-          {:else}
-            <ul class="journal">
-              {#each detail.journal as entry (entry.id)}
-                <li data-journal-entry={entry.id}>
-                  <div class="entry-head">
-                    <span>
-                      <span class="date mono">{entry.entry_date}</span>
-                      {#if entry.practice_minutes}
-                        <span class="pill">{entry.practice_minutes} min</span>
-                      {/if}
-                      {#if entry.sitting_id}
-                        <span
-                          class="muted small"
-                          title="Written about the sitting you played, from the Log tab"
-                          >about a logged session</span
-                        >
-                      {/if}
-                      {@render entryMeta(entry)}
-                    </span>
-                    <span class="row">
-                      {#if editingEntry === entry.id}
-                        <button
-                          class="ghost tiny"
-                          disabled={savingJournal || !editContent.trim()}
-                          onclick={() => void saveEdit(entry)}>Save entry</button
-                        >
-                        <button class="ghost tiny" onclick={cancelEditing}>Discard</button>
-                      {:else}
-                        <button
-                          class="ghost tiny"
-                          data-journal-edit={entry.id}
-                          onclick={() => startEditing(entry)}>Edit entry</button
-                        >
-                        <button
-                          class="ghost tiny"
-                          disabled={!app.host?.loopback}
-                          title={app.host?.loopback
-                            ? 'Delete this entry'
-                            : 'Only on the piano machine'}
-                          onclick={() => void removeJournalEntry(entry)}>×</button
-                        >
-                      {/if}
-                    </span>
-                  </div>
-                  {#if editingEntry === entry.id}
-                    <div class="journal-edit">
-                      <input type="date" bind:value={editDate} aria-label="Edit entry date" />
-                      <input
-                        type="number"
-                        min="0"
-                        max="1440"
-                        placeholder="min"
-                        bind:value={editMinutes}
-                        aria-label="Edit practice minutes"
-                      />
-                      <input
-                        type="text"
-                        bind:value={editTags}
-                        placeholder="tags, comma separated"
-                        aria-label="Edit tags"
-                      />
-                      <select bind:value={editDifficulty} aria-label="Edit how hard it felt">
-                        <option value={null}>difficulty —</option>
-                        {#each [1, 2, 3, 4, 5] as value (value)}
-                          <option value={value}>{value}</option>
-                        {/each}
-                      </select>
-                      <select bind:value={editFluency} aria-label="Edit how well it went">
-                        <option value={null}>fluency —</option>
-                        {#each [1, 2, 3, 4, 5] as value (value)}
-                          <option value={value}>{value}</option>
-                        {/each}
-                      </select>
-                      <textarea
-                        rows="4"
-                        bind:value={editContent}
-                        aria-label="Edit journal entry"
-                      ></textarea>
-                    </div>
-                  {:else}
-                    <p class="entry-body">{entry.content}</p>
-                  {/if}
-                </li>
-              {/each}
-            </ul>
-          {/if}
-
-
-          <form
-            class="journal-form"
-            bind:this={journalForm}
-            onsubmit={(event) => {
-              event.preventDefault();
-              void addJournalEntry();
+          <JournalSection
+            bind:this={journalSectionRef}
+            {detail}
+            {feedEntries}
+            bind:feedTag
+            bind:feedSearch
+            {savingJournal}
+            {journalSitting}
+            {journalMeasured}
+            {journalTake}
+            onOpenPiece={(id) => void open(id)}
+            onAddJournalEntry={addJournalEntry}
+            onSaveJournalEntry={saveEdit}
+            onRemoveJournalEntry={removeJournalEntry}
+            onClearSittingDraft={() => {
+              journalSitting = null;
+              journalMeasured = null;
             }}
-          >
-            {#if journalSitting !== null}
-              <p class="muted small measured" data-journal-sitting={journalSitting}>
-                About the session you just played{#if journalMeasured}: {journalMeasured}{/if}.
-                <button
-                  type="button"
-                  class="ghost tiny"
-                  onclick={() => {
-                    journalSitting = null;
-                    journalMeasured = null;
-                  }}>Write about the piece instead</button
-                >
-              </p>
-            {/if}
-            <div class="row">
-              <input type="date" bind:value={journalDate} aria-label="Entry date" required />
-              <input
-                type="number"
-                min="0"
-                max="1440"
-                placeholder="min"
-                bind:value={journalMinutes}
-                aria-label="Practice minutes"
-              />
-            </div>
-            <div class="row">
-              <input
-                type="text"
-                bind:value={journalTags}
-                placeholder="tags, comma separated"
-                aria-label="Tags for this entry"
-              />
-              <select bind:value={journalDifficulty} aria-label="How hard it felt">
-                <option value={null}>difficulty —</option>
-                {#each [1, 2, 3, 4, 5] as value (value)}
-                  <option value={value}>{value}</option>
-                {/each}
-              </select>
-              <select bind:value={journalFluency} aria-label="How well it went">
-                <option value={null}>fluency —</option>
-                {#each [1, 2, 3, 4, 5] as value (value)}
-                  <option value={value}>{value}</option>
-                {/each}
-              </select>
-            </div>
-            {#if journalTake !== null}
-              <p class="muted small" data-journal-take-draft={journalTake}>
-                About take {journalTake}.
-                <button type="button" class="ghost tiny" onclick={() => (journalTake = null)}>
-                  Not about a take
-                </button>
-              </p>
-            {/if}
-            <textarea
-              rows="3"
-              placeholder="What happened in this session?"
-              bind:value={journalContent}
-              aria-label="Journal entry"
-              required
-            ></textarea>
-            <button
-              type="submit"
-              data-journal-add
-              disabled={savingJournal || !journalContent.trim()}
-            >
-              {savingJournal ? '…' : 'Add'}
-            </button>
-          </form>
+            onClearTakeDraft={() => {
+              journalTake = null;
+            }}
+          />
 
           <h4>Scores <span class="muted">({scores.length})</span></h4>
           <p class="muted small">
@@ -1411,56 +986,23 @@
         <!-- The other direction round: the journal of the whole library, found by
              what it says rather than by which piece it belongs to. It is also what
              the detail pane shows when nothing is selected, which used to be blank. -->
-        <div class="detail card" data-journal-feed>
-          <h3>Recent notes</h3>
-          <p class="muted small">
-            The newest journal entries across the library. Pick a piece to read or add its
-            own.
-          </p>
-          <input
-            type="search"
-            placeholder="Search the journal…"
-            bind:value={feedSearch}
-            aria-label="Search the journal"
-          />
-          <input
-            type="text"
-            bind:value={feedTag}
-            placeholder="tag"
-            aria-label="Filter the journal by tag"
-          />
-          {#if feedEntries.length === 0}
-            <p class="muted small">
-              {feedSearch ? 'No entries mention that.' : 'Nothing written down yet.'}
-            </p>
-          {:else}
-            <ul class="journal feed">
-              {#each feedEntries as entry (entry.id)}
-                <li data-feed-entry={entry.id}>
-                  <div class="entry-head">
-                    <span>
-                      <span class="date mono">{entry.entry_date}</span>
-                      <button class="ghost tiny piece-link" onclick={() => void open(entry.piece_id)}>
-                        {entry.piece_title
-                          ? pieceLabel({
-                              title: entry.piece_title,
-                              composer_name: entry.composer_name,
-                              opus: entry.piece_opus,
-                            })
-                          : 'this piece'}
-                      </button>
-                    </span>
-                    {#if entry.practice_minutes}
-                      <span class="pill">{entry.practice_minutes} min</span>
-                    {/if}
-                    {@render entryMeta(entry)}
-                  </div>
-                  <p class="entry-body">{entry.content}</p>
-                </li>
-              {/each}
-            </ul>
-          {/if}
-        </div>
+        <JournalSection
+          bind:this={journalSectionRef}
+          detail={null}
+          {feedEntries}
+          bind:feedTag
+          bind:feedSearch
+          {savingJournal}
+          journalSitting={null}
+          journalMeasured={null}
+          journalTake={null}
+          onOpenPiece={(id) => void open(id)}
+          onAddJournalEntry={addJournalEntry}
+          onSaveJournalEntry={saveEdit}
+          onRemoveJournalEntry={removeJournalEntry}
+          onClearSittingDraft={() => {}}
+          onClearTakeDraft={() => {}}
+        />
       {/if}
     </div>
   {/if}
@@ -1512,28 +1054,6 @@
     color: var(--warn);
   }
 
-  .filters {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.4rem;
-    align-items: center;
-    border: 1px solid var(--line);
-    background: var(--surface-2);
-    border-radius: var(--radius);
-    padding: 0.5rem 0.6rem;
-  }
-
-  .filters input[type='search'] {
-    font: inherit;
-    flex: 1 1 14rem;
-    min-width: 10rem;
-    padding: 0.4rem 0.55rem;
-    border-radius: 8px;
-    border: 1px solid var(--line);
-    background: var(--surface);
-    color: var(--ink);
-  }
-
   .split {
     display: grid;
     gap: 0.75rem;
@@ -1544,94 +1064,6 @@
     .split.with-detail {
       grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
     }
-  }
-
-  .list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-    max-height: 34rem;
-    overflow-y: auto;
-  }
-
-  .group {
-    margin: 0.6rem 0 0.2rem;
-    font-size: 0.72rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--muted);
-  }
-
-  .piece-line {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-  }
-
-  .piece-line .row-piece {
-    flex: 1;
-    min-width: 0;
-  }
-
-  .row-piece {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto auto;
-    gap: 0.5rem;
-    align-items: center;
-    text-align: left;
-    padding: 0.45rem 0.55rem;
-    border-radius: 8px;
-    border: 1px solid transparent;
-    background: var(--surface-2);
-  }
-
-  .row-piece:hover {
-    border-color: var(--line);
-  }
-
-  .row-piece.selected {
-    background: var(--accent-soft);
-    border-color: var(--accent-line);
-  }
-
-  .title {
-    font-weight: 600;
-    font-size: 0.9rem;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .opus {
-    font-weight: 400;
-    font-size: 0.78rem;
-    margin-left: 0.35rem;
-  }
-
-  .meta {
-    display: flex;
-    gap: 0.25rem;
-    flex-wrap: wrap;
-  }
-
-  .tag {
-    font-size: 0.7rem;
-    padding: 0.05rem 0.4rem;
-    border-radius: 999px;
-    background: var(--surface);
-    border: 1px solid var(--line);
-    color: var(--muted);
-    white-space: nowrap;
-  }
-
-  .tag.done {
-    color: var(--good);
-    border-color: var(--good-line);
-  }
-
-  .counts {
-    font-size: 0.75rem;
-    white-space: nowrap;
   }
 
   .detail {
@@ -1765,102 +1197,6 @@
     padding: 0 0.35rem;
     font-size: 0.9rem;
     line-height: 1.4;
-  }
-
-  .entry-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.4rem;
-  }
-
-  /* Prose needs to keep its own line breaks, which an <input> could not hold at
-     all. The box is a paragraph until you ask to change it, so reading the journal
-     does not look like filling in a form. */
-  .entry-body {
-    white-space: pre-wrap;
-    margin: 0.25rem 0 0;
-  }
-
-  /* In the cross-piece feed the piece is the thing you came for, so it reads as the
-     link it is rather than as a caption. */
-  .piece-link {
-    padding: 0 0.2rem;
-    font-size: 0.78rem;
-    color: var(--accent);
-  }
-
-  .journal-form {
-    display: flex;
-    flex-direction: column;
-    gap: 0.3rem;
-    align-items: stretch;
-    margin-top: 0.35rem;
-  }
-
-  .journal-form .row,
-  .journal-edit {
-    display: flex;
-    gap: 0.3rem;
-    align-items: center;
-  }
-
-  .journal-edit {
-    flex-wrap: wrap;
-    margin-top: 0.3rem;
-  }
-
-  .journal-edit textarea {
-    flex: 1 1 100%;
-  }
-
-  .measured {
-    margin: 0;
-  }
-
-  .journal-form input,
-  .journal-form textarea,
-  .journal-edit input,
-  .journal-edit textarea {
-    font: inherit;
-    font-size: 0.84rem;
-    padding: 0.3rem 0.4rem;
-    border-radius: 7px;
-    border: 1px solid var(--line);
-    background: var(--surface);
-    color: var(--ink);
-    min-width: 0;
-  }
-
-  .journal-form textarea,
-  .journal-edit textarea {
-    resize: vertical;
-    line-height: 1.4;
-  }
-
-  .journal {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .journal li {
-    border-left: 2px solid var(--line);
-    padding-left: 0.6rem;
-  }
-
-  .journal p {
-    margin: 0.15rem 0 0;
-    font-size: 0.88rem;
-  }
-
-  .date {
-    font-size: 0.78rem;
-    color: var(--muted);
-    margin-right: 0.3rem;
   }
 
   h4 {

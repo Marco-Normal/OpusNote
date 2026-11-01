@@ -503,13 +503,28 @@ def upload_recording(
                         f"(id {similar['id']}, {label})"
                     ),
                 )
-            try:
-                stored = store_recording(
-                    staged, media_dir=media_dir, original_name=file.filename
-                )
-            except MediaError as exc:
-                raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+        # Transcode and store outside of any database transaction so ffmpeg
+        # never holds SQLite locks during heavy CPU/disk transcoding.
+        try:
+            stored = store_recording(
+                staged, media_dir=media_dir, original_name=file.filename
+            )
+        except MediaError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        with db.transaction(settings.db_path, immediate=True) as conn:
+            if not store.piece_exists(conn, piece_id):
+                raise HTTPException(status_code=404, detail=f"no piece {piece_id}")
+            existing = store.find_media_by_file_name(conn, stored.file_name)
+            if existing is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"that recording is already in the library "
+                        f"(id {existing['id']})"
+                    ),
+                )
             media_id = store.create_media(
                 conn,
                 piece_id=piece_id,

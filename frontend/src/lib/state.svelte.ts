@@ -23,16 +23,30 @@ import { parseRoute, routeHash, type Route, type RouteEntity } from './route';
 import { PianoPlayer, sharedPlayer, unlockOnFirstGesture, type Instrument } from './pianoPlayer';
 import type { AppView, HandChoice, HostInfo, PianoStatus, Profile, Workout } from './types';
 
-const LATENCY_STORAGE_KEY = 'srt.latencyMs';
-const BARS_STORAGE_KEY = 'srt.bars';
-const FOCUS_STORAGE_KEY = 'srt.focusMode';
-const CAPTURE_STORAGE_KEY = 'srt.capture';
-const MIDI_PIN_STORAGE_KEY = 'srt.midi.pin';
-const COUNT_IN_BARS_STORAGE_KEY = 'srt.countInBars';
-const CLICK_VOLUME_STORAGE_KEY = 'srt.clickVolume';
-const WEEKLY_TARGET_STORAGE_KEY = 'srt.weeklyTargetDays';
-const PINNED_LEVEL_STORAGE_KEY = 'srt.pinnedLevel';
-const PINNED_HAND_STORAGE_KEY = 'srt.pinnedHand';
+import {
+  BAR_CHOICES,
+  readBars,
+  writeBars,
+  readPinnedLevel,
+  writePinnedLevel,
+  readPinnedHand,
+  writePinnedHand,
+  readFocus,
+  writeFocus,
+  readCountInBars,
+  writeCountInBars,
+  readWeeklyTarget,
+  writeWeeklyTarget,
+  readClickVolume,
+  writeClickVolume,
+  readCapture,
+  writeCapture,
+  readPinnedFingerprint,
+  writePinnedFingerprint,
+  readStoredLatency,
+  writeStoredLatency,
+} from './preferences';
+export { BAR_CHOICES };
 
 /**
  * How often a pending gesture is asked whether its clock has run out.
@@ -41,106 +55,6 @@ const PINNED_HAND_STORAGE_KEY = 'srt.pinnedHand';
  * only while something is pending, so an idle pedal costs nothing.
  */
 const GESTURE_TICK_MS = 40;
-
-/** Exercise lengths offered in the UI. Length is a preference, not difficulty. */
-export const BAR_CHOICES = [4, 8, 12, 16] as const;
-
-function readBars(): number {
-  try {
-    const value = Number(localStorage.getItem(BARS_STORAGE_KEY));
-    return (BAR_CHOICES as readonly number[]).includes(value) ? value : 4;
-  } catch {
-    return 4;
-  }
-}
-
-/**
- * The pinned difficulty, or null for the adaptive choice.
- *
- * Kept as a session preference beside the bar count because it is the same kind of thing —
- * how you want to practise today — and cleared the same way, with a visible chip and an ×.
- */
-function readPinnedLevel(): number | null {
-  try {
-    const value = Number(localStorage.getItem(PINNED_LEVEL_STORAGE_KEY));
-    return Number.isInteger(value) && value >= 1 && value <= 10 ? value : null;
-  } catch {
-    return null;
-  }
-}
-
-/** The pinned hand, or null to let the difficulty decide. */
-function readPinnedHand(): HandChoice | null {
-  try {
-    const value = localStorage.getItem(PINNED_HAND_STORAGE_KEY);
-    return value === 'RH' || value === 'LH' || value === 'both' ? value : null;
-  } catch {
-    return null;
-  }
-}
-
-function readFocus(): boolean {
-  try {
-    return localStorage.getItem(FOCUS_STORAGE_KEY) === 'true';
-  } catch {
-    return false;
-  }
-}
-
-function readCountInBars(): number {
-  try {
-    const value = Number(localStorage.getItem(COUNT_IN_BARS_STORAGE_KEY));
-    return value === 0 || value === 1 || value === 2 ? value : 1;
-  } catch {
-    return 1;
-  }
-}
-
-function readWeeklyTarget(): number {
-  try {
-    const value = Number(localStorage.getItem(WEEKLY_TARGET_STORAGE_KEY));
-    return Number.isInteger(value) && value >= 1 && value <= 7 ? value : 4;
-  } catch {
-    return 4;
-  }
-}
-
-/** Click volume as a MIDI-style controller value, 0..127, so the app has one scale. */
-function readClickVolume(): number {
-  try {
-    const value = Number(localStorage.getItem(CLICK_VOLUME_STORAGE_KEY));
-    return Number.isFinite(value) && value >= 0 && value <= 127 ? value : 96;
-  } catch {
-    return 96;
-  }
-}
-
-function readCapture(): boolean {
-  try {
-    // Default on: the whole point of the log is that it happens without asking.
-    return localStorage.getItem(CAPTURE_STORAGE_KEY) !== 'false';
-  } catch {
-    return true;
-  }
-}
-
-function readPinnedFingerprint(): string | null {
-  try {
-    return localStorage.getItem(MIDI_PIN_STORAGE_KEY);
-  } catch {
-    return null;
-  }
-}
-
-function readStoredLatency(): number {
-  try {
-    const raw = localStorage.getItem(LATENCY_STORAGE_KEY);
-    const value = raw === null ? 0 : Number(raw);
-    return Number.isFinite(value) ? Math.max(0, Math.min(500, value)) : 0;
-  } catch {
-    return 0;
-  }
-}
 
 class AppState {
   view = $state<AppView>('practice');
@@ -649,49 +563,30 @@ class AppState {
   setLatency(value: number): void {
     const clamped = Math.max(0, Math.min(500, Math.round(value)));
     this.latencyMs = clamped;
-    try {
-      localStorage.setItem(LATENCY_STORAGE_KEY, String(clamped));
-    } catch {
-      // Storage may be unavailable (private mode); the in-memory value still works.
-    }
+    writeStoredLatency(clamped);
   }
 
   setBars(value: number): void {
     if (!(BAR_CHOICES as readonly number[]).includes(value)) return;
     this.bars = value;
-    try {
-      localStorage.setItem(BARS_STORAGE_KEY, String(value));
-    } catch {
-      // Storage may be unavailable (private mode); the in-memory value still works.
-    }
+    writeBars(value);
   }
 
   setWeeklyTargetDays(value: number): void {
     if (!Number.isInteger(value) || value < 1 || value > 7) return;
     this.weeklyTargetDays = value;
-    try {
-      localStorage.setItem(WEEKLY_TARGET_STORAGE_KEY, String(value));
-    } catch {
-      // Storage may be unavailable (private mode); the in-memory value still works.
-    }
+    writeWeeklyTarget(value);
   }
 
-  setCountInBars(value: number): void {    if (value !== 0 && value !== 1 && value !== 2) return;
+  setCountInBars(value: number): void {
+    if (value !== 0 && value !== 1 && value !== 2) return;
     this.countInBars = value;
-    try {
-      localStorage.setItem(COUNT_IN_BARS_STORAGE_KEY, String(value));
-    } catch {
-      // Storage may be unavailable (private mode); the in-memory value still works.
-    }
+    writeCountInBars(value);
   }
 
   setClickVolume(value: number): void {
     this.clickVolume = Math.max(0, Math.min(127, Math.round(value)));
-    try {
-      localStorage.setItem(CLICK_VOLUME_STORAGE_KEY, String(this.clickVolume));
-    } catch {
-      // As above.
-    }
+    writeClickVolume(this.clickVolume);
   }
 
   /** Pin the difficulty for deliberate practice, or null to go back to the adaptive choice. */
@@ -699,24 +594,14 @@ class AppState {
     const level = value === null ? null : Math.round(value);
     if (level !== null && (level < 1 || level > 10)) return;
     this.pinnedLevel = level;
-    try {
-      if (level === null) localStorage.removeItem(PINNED_LEVEL_STORAGE_KEY);
-      else localStorage.setItem(PINNED_LEVEL_STORAGE_KEY, String(level));
-    } catch {
-      // As above.
-    }
+    writePinnedLevel(level);
   }
 
   /** Pin which hand to read, or null to let the difficulty decide. */
   setPinnedHand(value: HandChoice | null): void {
     if (value !== null && value !== 'RH' && value !== 'LH' && value !== 'both') return;
     this.pinnedHand = value;
-    try {
-      if (value === null) localStorage.removeItem(PINNED_HAND_STORAGE_KEY);
-      else localStorage.setItem(PINNED_HAND_STORAGE_KEY, value);
-    } catch {
-      // As above.
-    }
+    writePinnedHand(value);
   }
 
   /** True when the player has asked for the material rather than been given it. */
@@ -726,11 +611,7 @@ class AppState {
 
   toggleFocus(): void {
     this.focusMode = !this.focusMode;
-    try {
-      localStorage.setItem(FOCUS_STORAGE_KEY, String(this.focusMode));
-    } catch {
-      // As above.
-    }
+    writeFocus(this.focusMode);
   }
 
   /**
@@ -860,11 +741,7 @@ class AppState {
 
   setCapture(enabled: boolean): void {
     this.captureEnabled = enabled;
-    try {
-      localStorage.setItem(CAPTURE_STORAGE_KEY, String(enabled));
-    } catch {
-      // Storage may be unavailable (private mode); the in-memory value still works.
-    }
+    writeCapture(enabled);
     if (enabled && this.midiConnected) this.capture.start();
     else this.capture.stop();
     if (enabled) this.startCaptureHeartbeat();
@@ -997,9 +874,9 @@ class AppState {
       if (active) {
         // Stored as a fingerprint so the choice survives the id changing, which is
         // exactly what happens when site data is cleared during a setup.
-        localStorage.setItem(MIDI_PIN_STORAGE_KEY, fingerprint(active));
+        writePinnedFingerprint(fingerprint(active));
       } else {
-        localStorage.removeItem(MIDI_PIN_STORAGE_KEY);
+        writePinnedFingerprint(null);
       }
     } catch (error) {
       this.midiError = error instanceof Error ? error.message : String(error);

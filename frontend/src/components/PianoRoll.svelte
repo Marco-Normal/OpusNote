@@ -6,13 +6,20 @@
    * exactly what a canvas is for, and exactly what the DOM is not. All the geometry
    * lives in `pianoRoll.ts`; this file only paints what those functions return, and
    * that split is what makes the direction notes fall testable at all.
+   *
+   * Optimized with offscreen static canvas layering: the static keyboard columns
+   * and bottom keybeds are pre-rendered once per resize/theme change and blitted
+   * directly to the display context, and CSS theme colors are cached rather than
+   * queried repeatedly via getComputedStyle on every animation frame.
    */
+  import { onMount } from 'svelte';
   import { formatClock } from '../lib/clock';
   import {
     keyLayout,
     pitchRange,
     visibleNotes,
     type RollNote,
+    type KeySlot,
   } from '../lib/pianoRoll';
 
   interface Props {
@@ -53,9 +60,112 @@
 
   const KEYBOARD_H = 44;
 
-  function ink(name: string, fallback: string): string {
-    const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-    return value || fallback;
+  interface ThemeInks {
+    white: string;
+    line: string;
+    accent: string;
+    muted: string;
+    ink: string;
+  }
+
+  let cachedInks: ThemeInks = {
+    white: '#fff',
+    line: '#d5d5d0',
+    accent: '#6b7cff',
+    muted: '#8a8a86',
+    ink: '#111',
+  };
+
+  function readInks(): ThemeInks {
+    if (typeof document === 'undefined') return cachedInks;
+    const style = getComputedStyle(document.documentElement);
+    return {
+      white: style.getPropertyValue('--surface').trim() || '#fff',
+      line: style.getPropertyValue('--line').trim() || '#d5d5d0',
+      accent: style.getPropertyValue('--accent').trim() || '#6b7cff',
+      muted: style.getPropertyValue('--muted').trim() || '#8a8a86',
+      ink: style.getPropertyValue('--ink').trim() || '#111',
+    };
+  }
+
+  onMount(() => {
+    cachedInks = readInks();
+    const observer = new MutationObserver(() => {
+      cachedInks = readInks();
+      lastBackdropKey = '';
+      draw();
+    });
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme', 'class', 'style'],
+    });
+    return () => observer.disconnect();
+  });
+
+  let offscreenCanvas: HTMLCanvasElement | null = null;
+  let lastBackdropKey = '';
+
+  function renderStaticLayers(
+    width: number,
+    height: number,
+    slotsList: readonly KeySlot[],
+    inks: ThemeInks,
+  ): HTMLCanvasElement {
+    const rollHeight = height - KEYBOARD_H;
+    if (!offscreenCanvas) {
+      offscreenCanvas = document.createElement('canvas');
+    }
+    if (offscreenCanvas.width !== width || offscreenCanvas.height !== height) {
+      offscreenCanvas.width = width;
+      offscreenCanvas.height = height;
+    }
+    const ctx = offscreenCanvas.getContext('2d');
+    if (!ctx) return offscreenCanvas;
+    ctx.clearRect(0, 0, width, height);
+
+    // 1. White keys as backdrop across the roll
+    ctx.fillStyle = inks.white;
+    for (const slot of slotsList) {
+      if (slot.black) continue;
+      ctx.fillRect(slot.left * width, 0, slot.width * width, rollHeight);
+    }
+    ctx.strokeStyle = inks.line;
+    ctx.lineWidth = 1;
+    for (const slot of slotsList) {
+      if (slot.black) continue;
+      ctx.strokeRect(slot.left * width + 0.5, -1, slot.width * width, rollHeight + 1);
+    }
+
+    // 2. The keyboard background & white keys
+    ctx.fillStyle = inks.white;
+    ctx.fillRect(0, rollHeight, width, KEYBOARD_H);
+    ctx.strokeStyle = inks.line;
+    ctx.beginPath();
+    ctx.moveTo(0, rollHeight + 0.5);
+    ctx.lineTo(width, rollHeight + 0.5);
+    ctx.stroke();
+    for (const slot of slotsList) {
+      if (slot.black) continue;
+      ctx.strokeRect(slot.left * width + 0.5, rollHeight, slot.width * width, KEYBOARD_H);
+    }
+
+    // 3. Black keys
+    ctx.fillStyle = inks.ink;
+    for (const slot of slotsList) {
+      if (!slot.black) continue;
+      ctx.fillRect(
+        slot.left * width,
+        rollHeight,
+        slot.width * width,
+        KEYBOARD_H * 0.62,
+      );
+    }
+
+    // 4. The key line
+    ctx.fillStyle = inks.accent;
+    ctx.fillRect(0, rollHeight - 1, width, 2);
+
+    return offscreenCanvas;
   }
 
   function draw(): void {
@@ -64,36 +174,38 @@
     const ratio = window.devicePixelRatio || 1;
     const width = Math.max(1, element.clientWidth);
     const height = Math.max(1, element.clientHeight);
-    element.width = Math.round(width * ratio);
-    element.height = Math.round(height * ratio);
+    const targetW = Math.round(width * ratio);
+    const targetH = Math.round(height * ratio);
+
+    if (element.width !== targetW || element.height !== targetH) {
+      element.width = targetW;
+      element.height = targetH;
+      lastBackdropKey = '';
+    }
+
     const context = element.getContext('2d');
     if (!context) return;
     context.setTransform(ratio, 0, 0, ratio, 0, 0);
     context.clearRect(0, 0, width, height);
 
     const rollHeight = height - KEYBOARD_H;
-    const white = ink('--surface', '#fff');
-    const line = ink('--line', '#d5d5d0');
-    const accent = ink('--accent', '#6b7cff');
-    const text = ink('--muted', '#8a8a86');
+    const inks = cachedInks;
 
-    // White keys as a backdrop across the roll, so the eye can follow a column up.
-    context.fillStyle = white;
-    for (const slot of slots) {
-      if (slot.black) continue;
-      context.fillRect(slot.left * width, 0, slot.width * width, rollHeight);
-    }
-    context.strokeStyle = line;
-    context.lineWidth = 1;
-    for (const slot of slots) {
-      if (slot.black) continue;
-      context.strokeRect(slot.left * width + 0.5, -1, slot.width * width, rollHeight + 1);
+    const backdropKey = `${width}x${height}@${slots.length}@${inks.white}@${inks.ink}@${inks.line}@${inks.accent}`;
+    if (backdropKey !== lastBackdropKey) {
+      renderStaticLayers(width, height, slots, inks);
+      lastBackdropKey = backdropKey;
     }
 
-    // The notes, and the ones being held right now drawn louder.
+    // 1. Draw static backdrop (roll white key columns)
+    if (offscreenCanvas) {
+      context.drawImage(offscreenCanvas, 0, 0, width, rollHeight, 0, 0, width, rollHeight);
+    }
+
+    // 2. The falling notes, held notes louder
     for (const placed of visibleNotes(nearby, slots, position, lookAhead)) {
       const sounding = placed.note.onset <= position;
-      context.fillStyle = accent;
+      context.fillStyle = inks.accent;
       context.globalAlpha = sounding ? 0.95 : 0.62;
       const x = placed.slot.left * width + 1;
       const w = Math.max(1, placed.slot.width * width - 2);
@@ -101,33 +213,23 @@
     }
     context.globalAlpha = 1;
 
-    // The keyboard, drawn last so it sits in front of the falling notes.
-    context.fillStyle = white;
-    context.fillRect(0, rollHeight, width, KEYBOARD_H);
-    context.strokeStyle = line;
-    context.beginPath();
-    context.moveTo(0, rollHeight + 0.5);
-    context.lineTo(width, rollHeight + 0.5);
-    context.stroke();
-    for (const slot of slots) {
-      if (slot.black) continue;
-      context.strokeRect(slot.left * width + 0.5, rollHeight, slot.width * width, KEYBOARD_H);
-    }
-    context.fillStyle = ink('--ink', '#111');
-    for (const slot of slots) {
-      if (!slot.black) continue;
-      context.fillRect(
-        slot.left * width,
-        rollHeight,
-        slot.width * width,
-        KEYBOARD_H * 0.62,
+    // 3. Draw static keyboard on top of falling notes
+    if (offscreenCanvas) {
+      context.drawImage(
+        offscreenCanvas,
+        0,
+        rollHeight - 1,
+        width,
+        KEYBOARD_H + 1,
+        0,
+        rollHeight - 1,
+        width,
+        KEYBOARD_H + 1,
       );
     }
-    // The key line: where a note is the moment it sounds.
-    context.fillStyle = accent;
-    context.fillRect(0, rollHeight - 1, width, 2);
 
-    context.fillStyle = text;
+    // 4. Timestamp clock text
+    context.fillStyle = inks.muted;
     context.font = '11px system-ui, sans-serif';
     context.fillText(formatClock(position), 6, rollHeight - 6);
   }

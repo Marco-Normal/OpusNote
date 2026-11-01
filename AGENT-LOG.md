@@ -5076,3 +5076,19 @@ Verified: `./check.sh --fast`; `pytest tests/test_calibration.py tests/test_auto
 (5 calibration tests + the new wiring test); falsification
 `write_a_short_fragment_in_a_crowded_library` caught. No full run: the owner asked for quick runs on
 small changes (the change is one module plus its wiring and docs).
+
+## 2026-11-01 — assistant — decompose giant components, isolate transcode locks, and optimize canvas rendering
+
+Scope: `frontend/src/components/{RepertoireView,PieceList,JournalSection,SegmentTimeline,TimelineTransport,SegmentRow,PianoRoll}.svelte`,
+`frontend/src/lib/{state.svelte.ts,preferences.ts,preferences.test.ts}`, `backend/app/repertoire/api.py`.
+
+Did:
+- Decomposed `RepertoireView.svelte` (1,873 -> 1,209 lines) by extracting `PieceList.svelte` (filters, bulk toolbar, piece list rows) and `JournalSection.svelte` (entry list, inline editing, add form, global feed).
+- Decomposed `SegmentTimeline.svelte` (1,368 -> 966 lines) by extracting `TimelineTransport.svelte` (transport controls, scrub buttons, playhead clock, roll toggle) and `SegmentRow.svelte` (individual attempt row with metrics, inferences, suggestions, and split/merge controls).
+- Extracted storage preferences from `state.svelte.ts` into a pure, testable module `preferences.ts` with 10 unit tests in `preferences.test.ts`.
+- Optimized `PianoRoll.svelte` canvas rendering: pre-rendered static keyboard columns and bottom keybeds to an offscreen canvas layer, cached CSS theme colors with MutationObserver rather than calling `getComputedStyle` 5x per frame, and guarded canvas buffer reallocation on matching dimensions.
+- Optimized `upload_recording` in `backend/app/repertoire/api.py`: moved `store_recording` ffmpeg transcode outside of database transactions, eliminating lock contention on SQLite WAL databases during media uploads.
+
+Contract: no schema change, no endpoint change, no UI attribute/data-hook regression.
+
+Verified: `./check.sh --fast`; e2e scenarios `repertoire`, `playback`, `log`, `bench`.

@@ -9,6 +9,8 @@
   import { api } from '../lib/api';
   import { app } from '../lib/state.svelte';
   import PianoRoll from './PianoRoll.svelte';
+  import TimelineTransport from './TimelineTransport.svelte';
+  import SegmentRow from './SegmentRow.svelte';
   import {
     loggedEvents,
     sustained,
@@ -17,7 +19,6 @@
     type SynthNote,
   } from '../lib/playback';
   import { formatClock, parseClock } from '../lib/clock';
-  import { PRACTICE_KINDS, kindCounts, practiceKindLabel } from '../lib/kinds';
   import { pieceColorSlots, segmentAtMs, segmentStep, seekPlan, stripTicks } from '../lib/timelineStrip';
   import type { StripRange } from '../lib/timelineStrip';
   import { pieceLabel, uniquePieceLabels } from '../lib/pieceLabel';
@@ -25,7 +26,6 @@
     type PieceSummary,
     type PracticeKind,
     type PracticePassage,
-    type SegmentMetrics,
     type SegmentSummary,
     type SittingDetail,
   } from '../lib/types';
@@ -60,55 +60,6 @@
     onidentify,
     onlabelpassage,
   }: Props = $props();
-
-  /** A segment the matcher wrote, rather than one you did. */
-  const inferred = (segment: SegmentSummary): boolean => segment.identified_by === 'similarity';
-
-  /**
-   * A suggestion is only worth showing when the matcher is actually putting a
-   * name forward. A "none" band means it looked and found nothing close, and
-   * listing the least-bad three anyway would be inviting a guess it has just
-   * declined to make.
-   */
-  const suggested = (segment: SegmentSummary): boolean =>
-    segment.piece_id === null && segment.candidates.length > 0 && segment.candidates[0].band === 'suggest';
-
-  const percent = (value: number): string => `${Math.round(value * 100)}%`;
-
-  /**
-   * The arithmetic for a journal draft, in one line.
-   *
-   * The prose box stays empty when the entry opens: the app has no language model and
-   * will not put words in the player's mouth. What a draft carries is the numbers
-   * that are already stored and are tedious to recall a day later.
-   */
-  function measuredSummary(segment: SegmentSummary): string {
-    const parts: string[] = [];
-    const minutes = (segment.end_ms - segment.start_ms) / 60_000;
-    if (minutes > 0) parts.push(`${minutes.toFixed(1)} min`);
-    if (segment.metrics?.median_tempo) {
-      parts.push(`${Math.round(segment.metrics.median_tempo)} BPM note rate`);
-    }
-    if (segment.metrics?.restarts) parts.push(`${segment.metrics.restarts} restarts`);
-    return parts.join(' · ') || `${segment.note_count} notes`;
-  }
-
-  /**
-   * Which half of the keyboard was played more firmly.
-   *
-   * Worded as registers, not as hands, because that is what it measures: the piano
-   * sends both hands on a single MIDI channel, so a passive log cannot separate them,
-   * and in crossed or single-hand writing the register does not follow the hand at
-   * all. It reports; it does not judge.
-   */
-  function balanceLabel(metrics: SegmentMetrics): string | null {
-    const low = metrics.mean_velocity_low;
-    const high = metrics.mean_velocity_high;
-    if (!low || !high) return null;
-    const gap = Math.round(((low - high) / Math.max(low, high)) * 100);
-    if (Math.abs(gap) < 8) return 'registers even';
-    return gap > 0 ? `lower half +${gap}%` : `upper half ${gap}%`;
-  }
 
   /** Split points, in seconds from the sitting start, keyed by segment. */
   let splitAt = $state<Record<number, string>>({});
@@ -598,83 +549,20 @@
     </button>
   </header>
 
-  <div class="row wrap transport" data-playing={playing ? 'true' : 'false'}>
-    {#if playing}
-      <button class="ghost tiny" data-stop onclick={stop}>Stop</button>
-      <span class="muted small">
-        Playing {playing.segmentId === null ? 'the sitting' : 'this segment'}
-      </span>
-    {:else}
-      <button
-        class="ghost tiny"
-        disabled={detail.note_count === 0}
-        onclick={() => void play(0, total, null)}
-      >
-        Play the sitting
-      </button>
-      <!-- Always present, disabled until there is somewhere to start from: a button that
-           appeared on the first drag would reflow the row above the strip and move the strip
-           out from under the pointer mid-scrub. -->
-      <button
-        class="ghost tiny"
-        data-play-from-here
-        disabled={detail.note_count === 0 || position <= 0 || position >= total - 1}
-        title="Play from where the playhead is, to the end of the sitting"
-        onclick={() => applySeek(position, wholeSitting)}
-      >
-        ▶ From here
-      </button>
-    {/if}
-
-    <span class="row jump">
-      <button
-        class="ghost tiny"
-        data-step-segment-back
-        disabled={detail.note_count === 0 || detail.segments.length === 0}
-        title="Back to the start of this segment, or to the previous one"
-        onclick={() => stepSegment(-1)}
-      >
-        « segment
-      </button>
-      <button
-        class="ghost tiny"
-        data-step-segment-forward
-        disabled={detail.note_count === 0 || detail.segments.length === 0}
-        title="On to the start of the next segment"
-        onclick={() => stepSegment(1)}
-      >
-        segment »
-      </button>
-    </span>
-
-    <span class="row jump">
-      <button class="ghost tiny" disabled={detail.note_count === 0} onclick={() => jump(-30)}>
-        « 30 s
-      </button>
-      <button class="ghost tiny" disabled={detail.note_count === 0} onclick={() => jump(30)}>
-        30 s »
-      </button>
-    </span>
-
-    <span class="pill mono" data-position>{formatClock(position / 1000)} / {formatClock(detail.duration_s)}</span>
-
-    <label class="row toggle">
-      <input type="checkbox" bind:checked={showRoll} data-roll-toggle />
-      Falling notes
-    </label>
-
-    <span class="muted small">
-      Press or drag the strip to move through the sitting — silent until something is playing, and
-      a press while listening carries the sound with it.
-      Played through
-      {app.instrument === 'midi'
-        ? 'the piano itself'
-        : app.instrument === 'piano'
-          ? 'the sampled piano'
-          : 'the synthesiser'}
-      — timing and touch are yours.
-    </span>
-  </div>
+  <TimelineTransport
+    {playing}
+    noteCount={detail.note_count}
+    segmentsCount={detail.segments.length}
+    durationS={detail.duration_s}
+    {position}
+    {total}
+    bind:showRoll
+    onStop={stop}
+    onPlaySitting={() => void play(0, total, null)}
+    onPlayFromHere={() => applySeek(position, wholeSitting)}
+    onStepSegment={stepSegment}
+    onJump={jump}
+  />
 
   {#if showRoll}
     <PianoRoll notes={loadedNotes} position={position / 1000} />
@@ -865,288 +753,27 @@
         {:else}
           {@const segment = row.segment}
           {@const index = segmentIndex.get(segment.id) ?? 0}
-          {@const tint = pieceColor(segment.piece_id)}
-        <li
-          class="segment"
-          class:selected={chosenSegment === segment.id}
-          data-segment={segment.id}
-        >
-          <div class="head row wrap">
-            <span class="mono range">{offset(segment.start_ms)}–{offset(segment.end_ms)}</span>
-            <span class="muted small">{segment.note_count} notes</span>
-            {#if segment.metrics?.median_tempo}
-              <span class="pill mono">{Math.round(segment.metrics.median_tempo)} BPM</span>
-            {/if}
-            {#if segment.metrics?.restarts}
-              <span class="pill warn" title="Silences long enough to read as starting again">
-                {segment.metrics.restarts} restarts
-              </span>
-            {/if}
-            {#if segment.metrics?.pedal_basis}
-              <span
-                class="pill mono"
-                data-pedal-changes={segment.metrics.pedal_changes}
-                title="Times the pedal crossed its threshold. MIDI's own rule: below 64 is up, so a part-depressed pedal is not counted as a change here"
-              >
-                {segment.metrics.pedal_changes} pedal
-              </span>
-              {#if segment.metrics.pedal_partial_ratio}
-                <!-- The third state a continuous pedal has. Disjoint from the down
-                     ratio, so this plus a fully-down share describes the span once,
-                     not twice — and playback uses the position to ring on in
-                     proportion, which is what makes it worth showing. -->
-                <span
-                  class="pill mono"
-                  data-pedal-partial={segment.metrics.pedal_partial_ratio}
-                  title="Share of this segment spent with the damper part-way down — a position an on/off pedal cannot report. Playback rings a note on in proportion to it; the sampler's version of that is an approximation, the piano's own damper is not"
-                >
-                  {percent(segment.metrics.pedal_partial_ratio)} half-pedalled
-                </span>
-              {/if}
-              {#if segment.metrics.pedal_blur}
-                <span
-                  class="pill warn"
-                  data-pedal-blur={segment.metrics.pedal_blur}
-                  title="Attacks that brought new harmony over notes the pedal was already holding. Observed from the pitches, not from a score — it reports, it does not judge. At {segment.metrics.pedal_blur_ms
-                    .map((ms) => formatClock(ms / 1000))
-                    .join(', ')}"
-                >
-                  {segment.metrics.pedal_blur} pedal blur
-                </span>
-                <!-- The strip says where to look; this says what you are looking at. Capped at
-                     four times because a segment can hold nine, and nine clock times in a row is
-                     a wall of digits rather than a hint. The positions are sitting-relative, the
-                     same as the strip's axis — see the marker above for why that matters. -->
-                <span class="muted small" data-blur-where={segment.id}>
-                  at {segment.metrics.pedal_blur_ms
-                    .slice(0, 4)
-                    .map((ms) => formatClock(ms / 1000))
-                    .join(', ')}{segment.metrics.pedal_blur_ms.length > 4 ? ' …' : ''}
-                </span>
-              {/if}
-            {:else if segment.metrics}
-              <span
-                class="muted small"
-                data-pedal-unrecorded
-                title="This sitting has no pedal events at all — imported history. Not the same as a pedal that was never pressed"
-              >
-                pedal not recorded
-              </span>
-            {/if}
-            {#if segment.metrics?.median_velocity != null}
-              <span
-                class="pill mono"
-                title="Middle velocity, at MIDI controller resolution — comparable with itself over weeks, not a measure of loudness"
-              >
-                {Math.round(segment.metrics.median_velocity)} vel
-              </span>
-            {/if}
-            {#if segment.metrics && balanceLabel(segment.metrics)}
-              <span
-                class="pill"
-                title="Mean velocity below and above middle C. A proxy for the hands, not a measurement of them — the piano sends both hands on one channel"
-              >
-                {balanceLabel(segment.metrics)}
-              </span>
-            {/if}
-            {#if segment.source === 'sight_reading'}
-              <span class="pill accent">
-                {segment.workout_id ? `workout ${segment.workout_id}` : 'sight-reading'}
-              </span>
-            {/if}
-            {#if segment.practice_kind && kindCounts(segment.practice_kind_basis)}
-              <span
-                class="pill"
-                data-kind={segment.practice_kind}
-                title="How this segment was practised — said by you, not inferred"
-              >
-                {practiceKindLabel(segment.practice_kind)}
-              </span>
-            {/if}
-            {#if segment.piece_id}
-              <button
-                class="ghost tiny"
-                data-write-about={segment.id}
-                title="Write a journal entry about this piece and this session"
-                onclick={() =>
-                  app.writeAboutSitting(
-                    segment.piece_id as number,
-                    detail.id,
-                    measuredSummary(segment),
-                  )}
-              >
-                Write about this
-              </button>
-            {/if}
-          </div>
-
-          {#if inferred(segment)}
-            <div class="row wrap inferred" data-inferred={segment.id}>
-              <span
-                class="pill accent"
-                title="Written by the matcher from your own tagged practice — not by you"
-              >
-                guessed{segment.confidence !== null ? ` · ${percent(segment.confidence)}` : ''}
-              </span>
-              <button class="ghost tiny" disabled={busy} onclick={() => onidentify(segment.id, 'accept')}>
-                It's right
-              </button>
-              <button class="ghost tiny" disabled={busy} onclick={() => onidentify(segment.id, 'reject')}>
-                Not this
-              </button>
-              <span class="muted small">
-                or correct it below — either way the answer improves the next guess
-              </span>
-            </div>
-          {:else if suggested(segment)}
-            <!-- Two candidates can share a title — "Sonata" twice — so the guesses are named by
-                 the same rule as the picker below, and the confidence does not have to carry the
-                 whole burden of telling them apart. -->
-            {@const candidateNames = uniquePieceLabels(
-              segment.candidates,
-              (candidate) => candidate.piece_id,
-            )}
-            <div class="row wrap suggest" data-suggest={segment.id}>
-              <span class="muted small">Maybe</span>
-              {#each segment.candidates as candidate (candidate.piece_id)}
-                <button
-                  class="ghost tiny"
-                  disabled={busy}
-                  data-candidate={candidate.piece_id}
-                  title="notes {percent(candidate.pitch_class)} · tempo {percent(
-                    candidate.tempo,
-                  )} · register {percent(candidate.register_overlap)} · hands {percent(
-                    candidate.hand,
-                  )} · intervals {percent(candidate.interval)}"
-                  onclick={() => onassign(segment.id, candidate.piece_id)}
-                >
-                  {candidateNames.get(candidate.piece_id) ?? pieceLabel(candidate)}{candidate.from_context
-                    ? ' · this sitting'
-                    : ''} · {percent(candidate.score)}
-                </button>
-              {/each}
-              <button class="ghost tiny" disabled={busy} onclick={() => onidentify(segment.id, 'dismiss')}>
-                Neither
-              </button>
-              {#if segment.candidates[0].reason}
-                <span class="muted small">{segment.candidates[0].reason}</span>
-              {/if}
-            </div>
-          {/if}
-
-          {#if segment.practice_kind_basis === 'offered' && segment.practice_kind}
-            <div class="row wrap suggest" data-kind-offer={segment.id}>
-              <span class="muted small">{practiceKindLabel(segment.practice_kind)} practice?</span>
-              <button
-                class="ghost tiny"
-                disabled={busy}
-                onclick={() => onkinds(segment.id, { action: 'accept' })}
-              >
-                Yes
-              </button>
-              <button
-                class="ghost tiny"
-                disabled={busy}
-                onclick={() => onkinds(segment.id, { action: 'decline' })}
-              >
-                No
-              </button>
-              <span class="muted small">
-                from the tempo and the restarts — not from a score, and it counts for nothing
-                until you say so
-              </span>
-            </div>
-          {/if}
-
-          <div class="row wrap controls">
-            {#if tint}
-              <!-- The key to the strip: the colour this segment's block is drawn in. Beside the
-                   control that names the piece, because a colour on its own is not a label. -->
-              <span class="swatch" style="background: {tint}" aria-hidden="true"></span>
-            {/if}
-            <select
-              aria-label="Piece for this segment"
-              disabled={busy}
-              value={segment.piece_id ?? ''}
-              onchange={(event) => {
-                const value = (event.currentTarget as HTMLSelectElement).value;
-                onassign(segment.id, value === '' ? null : Number(value));
-              }}
-            >
-              <option value="">— unidentified —</option>
-              {#each pieces as piece (piece.id)}
-                <option value={piece.id}>{pieceNames.get(piece.id) ?? pieceLabel(piece)}</option>
-              {/each}
-            </select>
-
-            <select
-              aria-label="How this segment was practised"
-              disabled={busy}
-              value={segment.practice_kind && kindCounts(segment.practice_kind_basis)
-                ? segment.practice_kind
-                : ''}
-              onchange={(event) => {
-                const value = (event.currentTarget as HTMLSelectElement).value;
-                onkinds(segment.id, {
-                  action: 'set',
-                  kind: value === '' ? null : (value as PracticeKind),
-                });
-              }}
-            >
-              <option value="">— how practised? —</option>
-              {#each PRACTICE_KINDS as entry (entry.id)}
-                <option value={entry.id}>{entry.label}</option>
-              {/each}
-            </select>
-
-            <span class="row split">
-              <label class="muted small" for="split-{segment.id}">Split at</label>
-              <input
-                id="split-{segment.id}"
-                type="text"
-                inputmode="numeric"
-                class="mono at"
-                aria-label="Split point as seconds or m:ss"
-                title="Where to cut this segment in two — seconds from the start of the sitting, or m:ss"
-                value={midpoint(segment.id, segment.start_ms, segment.end_ms)}
-                oninput={(event) => {
-                  splitAt[segment.id] = (event.currentTarget as HTMLInputElement).value;
-                }}
-              />
-              <button
-                class="ghost tiny"
-                disabled={busy}
-                onclick={() => submitSplit(segment.id, segment.start_ms, segment.end_ms)}
-              >
-                Split here
-              </button>
-            </span>
-
-            {#if index > 0}
-              <button
-                class="ghost tiny"
-                disabled={busy}
-                onclick={() => onmerge(segment.id, detail.segments[index - 1].id)}
-              >
-                Merge with previous
-              </button>
-            {/if}
-
-            <button
-              class="ghost tiny"
-              disabled={busy || segment.note_count === 0}
-              title="Hear this segment"
-              onclick={() =>
-                void play(
-                  segment.start_ms,
-                  segment.end_ms,
-                  segment.id,
-                )}
-            >
-              ▶ {segment.note_count} notes
-            </button>
-          </div>
-        </li>
+          <SegmentRow
+            {segment}
+            {index}
+            {chosenSegment}
+            tint={pieceColor(segment.piece_id)}
+            {busy}
+            {pieces}
+            {pieceNames}
+            splitValue={midpoint(segment.id, segment.start_ms, segment.end_ms)}
+            previousSegmentId={index > 0 ? detail.segments[index - 1].id : null}
+            detailId={detail.id}
+            {onassign}
+            {onkinds}
+            {onidentify}
+            onSplitInput={(val) => {
+              splitAt[segment.id] = val;
+            }}
+            onSubmitSplit={() => submitSplit(segment.id, segment.start_ms, segment.end_ms)}
+            onMergePrevious={() => onmerge(segment.id, detail.segments[index - 1].id)}
+            onPlaySegment={() => void play(segment.start_ms, segment.end_ms, segment.id)}
+          />
         {/if}
       {/each}
     </ul>
@@ -1274,10 +901,6 @@
     box-shadow: 0 0 0 1px var(--surface);
   }
 
-  .transport {
-    gap: 0.45rem;
-  }
-
   .block.sight {
     background: var(--accent);
     opacity: 0.85;
@@ -1292,23 +915,6 @@
     gap: 0.4rem;
     max-height: 26rem;
     overflow-y: auto;
-  }
-
-  .segment {
-    display: flex;
-    flex-direction: column;
-    gap: 0.35rem;
-    padding: 0.45rem 0.55rem;
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    background: var(--surface-2);
-  }
-
-  /* Where the strip last sent you. Without it, a click whose card was already on screen would
-     look like it had done nothing at all. */
-  .segment.selected {
-    outline: 2px solid var(--accent);
-    outline-offset: -1px;
   }
 
   /* The key to the strip: the same colour the block is drawn in, beside the name it belongs to.
@@ -1352,14 +958,6 @@
 
   select {
     max-width: 16rem;
-  }
-
-  .split {
-    gap: 0.3rem;
-  }
-
-  .at {
-    width: 5.2rem;
   }
 
   .small {
