@@ -86,6 +86,7 @@ and their licenses:
 | python-multipart | Apache-2.0 |
 | certifi | MPL-2.0 |
 | Pillow | MIT-CMU |
+| python-rtmidi | MIT |
 
 **Note on certifi.** It is licensed MPL-2.0, which is *file-level* copyleft: it requires that
 modifications to MPL-covered files remain under the MPL. It is used here unmodified as a dependency,

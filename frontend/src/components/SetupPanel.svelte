@@ -353,6 +353,13 @@
 
   <div class="group" data-setup-capture>
     <h3>Capture</h3>
+    {#if app.headlessCaptureActive && !app.captureStatus.enabled}
+      <p class="muted small" data-headless-capture-note>
+        Passive logging is handled by the headless ALSA service
+        (<code>piano-midi-capture.service</code>), so browser passive capture is deferred to
+        avoid duplicate notes. Sight-reading and playback still use Web MIDI normally.
+      </p>
+    {/if}
     <p class="muted small">
       Takes are mono Opus at about 14 MB an hour — a convenience rather than an archive; the
       piano's own recording to a USB stick is still the one to keep. A take opens on the first

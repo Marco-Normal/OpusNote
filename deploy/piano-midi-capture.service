@@ -1,0 +1,22 @@
+[Unit]
+Description=Piano ecosystem headless MIDI capture
+Documentation=file:///opt/piano-ecosystem/docs/DEPLOYMENT.md
+After=piano-ecosystem.service sound.target
+Wants=piano-ecosystem.service
+
+[Service]
+Type=simple
+# The installer rewrites User, Group and every /opt/piano-ecosystem path.
+User=piano
+Group=piano
+SupplementaryGroups=audio
+WorkingDirectory=/opt/piano-ecosystem/backend
+EnvironmentFile=-/etc/piano-ecosystem.env
+ExecStart=/opt/piano-ecosystem/backend/.venv/bin/python -m app.practice.midi_capture
+Restart=always
+RestartSec=3
+KillSignal=SIGINT
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -64,6 +64,7 @@ if [ "$CHECK_ONLY" = 1 ]; then
   echo "service user   : $SERVICE_USER ($SERVICE_GROUP)"
   echo "port           : $PORT"
   echo "data directory : $DATA_DIR"
+  echo "capture unit   : /etc/systemd/system/piano-midi-capture.service (headless ALSA)"
   echo "browser        : $(browser_label "$BROWSER")"
   echo "  command      : ${BROWSER:-<none>}"
   echo "  policy dir   : ${POLICY_DIR:-<not applicable>}"
@@ -120,6 +121,7 @@ SRT_PIANO_DIR=$DATA_DIR/piano
 SRT_LEGACY_DB=/home/$SERVICE_USER/.local/share/piano-progress/piano.db
 SRT_BACKUP_DIR=$DATA_DIR/backups
 SRT_BACKUP_KEEP=14
+SRT_API_URL=http://127.0.0.1:$PORT
 ENV
 
 echo "==> Backups"
@@ -138,21 +140,30 @@ sudo -u "$SERVICE_USER" "$APP_DIR/backend/.venv/bin/python" -m app.backup >/dev/
   && echo "    first backup written" \
   || echo "    warning: could not write a first backup; check the service log" 
 
-echo "==> systemd unit"
+echo "==> systemd units"
 sed -e "s|^User=.*|User=$SERVICE_USER|" \
     -e "s|^Group=.*|Group=$SERVICE_GROUP|" \
     -e "s|/opt/piano-ecosystem|$APP_DIR|g" \
     -e "s|--port 8000|--port $PORT|" \
     "$APP_DIR/deploy/piano-ecosystem.service" > /etc/systemd/system/piano-ecosystem.service
+sed -e "s|^User=.*|User=$SERVICE_USER|" \
+    -e "s|^Group=.*|Group=$SERVICE_GROUP|" \
+    -e "s|/opt/piano-ecosystem|$APP_DIR|g" \
+    "$APP_DIR/deploy/piano-midi-capture.service" > /etc/systemd/system/piano-midi-capture.service
 systemctl daemon-reload
 systemctl enable --now piano-ecosystem.service
+systemctl enable --now piano-midi-capture.service
 # `enable --now` starts a stopped service and does nothing to a running one, so an
 # upgrade would leave the *old* process serving the old code — silently, until the
 # next reboot. This is the line that makes "git pull && sudo ./deploy/install.sh"
 # actually deploy anything.
 if systemctl is-active --quiet piano-ecosystem.service; then
   systemctl restart piano-ecosystem.service
-  echo "    restarted, so the running process is the code just installed"
+  echo "    restarted piano-ecosystem.service, so the running process is the code just installed"
+fi
+if systemctl is-active --quiet piano-midi-capture.service; then
+  systemctl restart piano-midi-capture.service
+  echo "    restarted piano-midi-capture.service"
 fi
 
 echo "==> ALSA sequencer at boot"
@@ -220,11 +231,13 @@ else
   echo "    no .local name: install and start avahi-daemon to avoid typing an IP"
 fi
 echo
-echo "Two things this script cannot do for you:"
-echo "  1. Enable automatic login (Login Window / Users settings). The kiosk needs a"
-echo "     graphical session, and capture stops after a reboot without one."
+echo "Headless ALSA MIDI capture is active via piano-midi-capture.service (no GUI required)."
+echo "If you also want the Chromium kiosk on a graphical desktop (optional, for"
+echo "interactive sight-reading or legacy browser capture):"
+echo "  1. Enable automatic login (Login Window / Users settings)."
 echo "  2. Log out and back in for the kiosk autostart to take effect."
 echo
-echo "Check it with:  curl -s localhost:8000/api/host"
+echo "Check it with:  curl -s localhost:$PORT/api/host"
 echo "  \"sequencer\": true and CASIO in \"clients\" means the piano is visible."
+echo "Capture log:    journalctl -u piano-midi-capture -f"
 echo "Kiosk log:      ~/.local/state/piano-kiosk.log"

@@ -30,11 +30,21 @@ def record(
     *, origin: str, enabled: bool, pending: int, now_ms: int | None = None
 ) -> CaptureReport:
     global _report
+    now = int(now_ms if now_ms is not None else time.time() * 1000)
+    clean_origin = origin[:120]
+    if (
+        _report is not None
+        and _report.enabled
+        and now - _report.at_ms <= STALE_AFTER_MS
+        and not enabled
+        and clean_origin != _report.origin
+    ):
+        return _report
     _report = CaptureReport(
-        origin=origin[:120],
+        origin=clean_origin,
         enabled=bool(enabled),
         pending=max(0, int(pending)),
-        at_ms=int(now_ms if now_ms is not None else time.time() * 1000),
+        at_ms=now,
     )
     return _report
 

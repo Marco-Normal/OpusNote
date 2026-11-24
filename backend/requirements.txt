@@ -7,3 +7,4 @@ uvicorn[standard]>=0.30
 pydantic>=2.7
 music21>=9.1
 python-multipart>=0.0.9
+python-rtmidi>=1.5

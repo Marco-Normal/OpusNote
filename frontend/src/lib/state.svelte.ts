@@ -293,6 +293,7 @@ class AppState {
   }
 
   captureEnabled = $state(readCapture());
+  headlessCaptureActive = $state(false);
   captureStatus = $state<CaptureStatus>({
     enabled: false,
     buffered: 0,
@@ -697,10 +698,24 @@ class AppState {
     await this.refreshWorkout();
   }
 
+  private async checkHeadlessCapture(): Promise<boolean> {
+    try {
+      const status = await api.practice.status();
+      this.headlessCaptureActive =
+        status.capture?.origin === 'alsa' && status.capture?.enabled === true;
+    } catch {
+      this.headlessCaptureActive = false;
+    }
+    return this.headlessCaptureActive;
+  }
+
   /** Called once by the app shell, after `bootstrap()`. */
   async startMidi(): Promise<void> {
+    await this.checkHeadlessCapture();
     await this.autoConnectMidi();
-    if (this.captureEnabled) this.startCaptureHeartbeat();
+    if (this.captureEnabled && !this.headlessCaptureActive) {
+      this.startCaptureHeartbeat();
+    }
   }
 
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -808,10 +823,14 @@ class AppState {
           'No MIDI input found. Connect the PX-870 over USB, make sure it is powered on, then rescan.';
       }
       // Capture is app-level and follows the device: reconnecting after a replug
-      // must not silently stop the log.
+      // must not silently stop the log. Defer to the headless ALSA service when active
+      // so opening the UI does not double-log notes.
       if (this.captureEnabled && devices.length > 0) {
-        this.capture.start();
-        this.startCaptureHeartbeat();
+        const headless = await this.checkHeadlessCapture();
+        if (!headless) {
+          this.capture.start();
+          this.startCaptureHeartbeat();
+        }
       }
     } catch (error) {
       this.midiConnected = false;

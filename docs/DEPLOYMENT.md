@@ -41,18 +41,20 @@ Two operational notes:
 ## The planted notebook, as a LAN server
 
 The single-machine setup above is the short version. This one is for the actual
-target: a notebook that lives with the piano, runs as a service, and is read from
-somewhere else.
+target: a machine that lives with the piano, runs the API and headless MIDI capture
+as services, and is read from somewhere else (with an optional local Chromium kiosk
+for interactive sight-reading or legacy browser capture).
 
 ```
-notebook at the piano (authoritative)        main computer / phone
+machine at the piano (authoritative)         main computer / phone
 ┌───────────────────────────────────┐
 │ piano-ecosystem.service           │◀── http://piano.local:8000
 │   uvicorn 0.0.0.0:8000 + SPA      │    viewing, uploads, playback,
 │   ~/.local/share/piano-ecosystem/ │    tagging — no MIDI, so plain HTTP
 │     piano.db (+ -wal/-shm), media/│
-│ kiosk (autostart)                 │
-│   chromium --kiosk localhost:8000 │  ← the only thing that touches MIDI
+│ piano-midi-capture.service        │  ← headless ALSA MIDI capture (no GUI needed)
+│ kiosk (optional autostart)        │
+│   chromium --kiosk localhost:8000 │  ← interactive sight-reading / legacy Web MIDI
 └───────────────────────────────────┘
 ```
 
@@ -61,7 +63,8 @@ is the checklist. The parts worth understanding rather than copying:
 
 | Piece | Why it is there |
 | --- | --- |
-| Kiosk at `http://localhost:8000` | Web MIDI needs a secure context. `piano.local` is not one, so the notebook plays through localhost and the main computer reads through the LAN name |
+| `piano-midi-capture.service` | headless ALSA sequencer capture (`python -m app.practice.midi_capture`) — logs notes and CC64 sustain directly to `/api/practice/events` with no GUI or browser required, and reports `origin: "alsa"`. When active, any open browser tab automatically defers passive logging to avoid duplicate notes while keeping Web MIDI available for sight-reading and playback |
+| Kiosk at `http://localhost:8000` | optional on headless servers: Web MIDI needs a secure context. `piano.local` is not one, so local browser sight-reading or legacy browser capture uses localhost and the main computer reads through the LAN name |
 | Kiosk started by **XDG autostart** | not a systemd user unit. `sudo -u user systemctl --user` fails with `Failed to connect to bus: No medium found`, because sudo drops `XDG_RUNTIME_DIR`/`DBUS_SESSION_BUS_ADDRESS` and a machine may have no user session at all. Autostart needs no bus and works on Cinnamon, MATE and XFCE |
 | A Chromium-family browser, which Mint does not ship | Firefox has no Web MIDI. On Mint, Chromium is a flatpak (`org.chromium.Chromium`); Chrome, Brave, Vivaldi and Edge also work. `/etc/chromium/policies` is Chromium's own path — **Ubuntu and Mint packages read `/etc/chromium-browser/policies`** — so the installer picks by detected browser |
 | `MidiAllowedForUrls` policy | grants the MIDI permission with no prompt on builds that gate Web MIDI behind one — nobody is sitting there to click Allow. Current Chromium defines no MIDI policy at all, so there the line is inert rather than harmful |
@@ -129,10 +132,12 @@ address becomes the proxy's and the check must move to a trusted header.
 
 Two independent signals, both visible from any machine under Progress › Log:
 
-- **Capture** — the origin that last checked in and how long ago the last note
-  arrived. The heartbeat is ephemeral (in memory, 15 s cadence, treated as gone after
-  60 s) and carries only liveness; the note timestamp comes from the database, so it
-  is a fact rather than a client's claim.
+- **Capture** — the origin that last checked in (`"alsa"` for the headless service,
+  or `"localhost:8000"` for the browser) and how long ago the last note arrived. The
+  heartbeat is ephemeral (in memory, 15 s cadence, treated as gone after 60 s) and
+  carries only liveness; the note timestamp comes from the database, so it is a fact
+  rather than a client's claim. Remote LAN browsers viewing the log do not overwrite
+  an active capture heartbeat.
 - `curl -s localhost:8000/api/host` — `sequencer: true` plus `CASIO` in `clients`
   means the server can see the piano through ALSA. Only `System` and `Midi Through`
   means it cannot: either the piano is off, or `snd_seq` is missing.

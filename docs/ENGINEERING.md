@@ -376,6 +376,8 @@ Every environment variable is optional.
 | `SRT_CALIBRATION_LENGTH` | `8` | Exercises in a calibration run |
 | `SRT_AUTOTAG_QUALITY_LIMIT` | `400` | Segments read when the matcher reports its own accuracy |
 | `SRT_API_TARGET` | `http://127.0.0.1:8000` | Dev-server proxy target — read by `frontend/vite.config.ts`, not by `config.py` |
+| `SRT_API_URL` | `http://127.0.0.1:8000` | API base URL used by the headless ALSA MIDI capture daemon (`app.practice.midi_capture`) |
+| `SRT_MIDI_PORT` | `""` | Optional ALSA port substring filter for `app.practice.midi_capture`; empty listens on all hardware ports |
 
 ## 9. Known limitations
 

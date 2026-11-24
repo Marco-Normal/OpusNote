@@ -1,7 +1,8 @@
 # Deploying on the piano notebook
 
-Target: a notebook that stays with the piano, running this app as a service, with a
-browser as the only thing that touches MIDI.
+Target: a machine that stays with the piano, running the API and headless ALSA MIDI
+capture as systemd services (no GUI required for passive logging), with an optional
+browser kiosk for interactive sight-reading or backwards-compatible Web MIDI capture.
 
 The reasoning behind each choice is in
 [`../docs/ECOSYSTEM.md`](../docs/ECOSYSTEM.md) §10 and the operational detail in
@@ -35,17 +36,20 @@ working once a browser exists.
 
 Then:
 
-1. Set the notebook to **log in automatically** — the kiosk runs inside a graphical
-   session. Leave the screen-blanking setting alone: a blanked screen does not stop
-   capture.
-2. Check it:
+1. Check both services and ALSA visibility:
    ```bash
-   systemctl status piano-ecosystem
+   systemctl status piano-ecosystem piano-midi-capture
    curl -s localhost:8000/api/host
+   curl -s localhost:8000/api/practice/status
    ```
    `"sequencer": true` and `CASIO` in `"clients"` means the piano is visible to the
-   server. If `clients` only lists `System` and `Midi Through`, the piano is not
+   server, and `capture.origin: "alsa"` with `enabled: true` means headless capture is
+   active. If `clients` only lists `System` and `Midi Through`, the piano is not
    attached (or is switched off).
+2. *(Optional, for interactive sight-reading or legacy browser capture)* Set the
+   machine to **log in automatically** so the kiosk starts inside a graphical session.
+   When `piano-midi-capture.service` is active, the browser automatically defers passive
+   logging to it so notes are never double-counted.
 3. From the main computer, open one of the addresses `sudo ./deploy/install.sh
    --check` printed: `http://<notebook-ip>:8000` always works,
    `http://<hostname>.local:8000` if avahi is running. Give the notebook a DHCP
@@ -57,9 +61,9 @@ Then:
 
 | Piece | Where | Why |
 | --- | --- | --- |
-| uvicorn | system service | survives reboots and crashes |
-| Chromium kiosk | user session | Web MIDI needs a browser, and MIDI needs `localhost` |
-| capture | that browser tab | one capture path; the page reports a heartbeat |
+| uvicorn | system service (`piano-ecosystem`) | survives reboots and crashes |
+| headless capture | system service (`piano-midi-capture`) | reads ALSA sequencer ports directly via `python-rtmidi`, logs without a GUI or browser, and defers browser passive capture |
+| Chromium kiosk | optional user session | Web MIDI needs a browser, and MIDI needs `localhost`; used for interactive sight-reading or fallback browser capture |
 | MIDI permission | managed Chromium policy | no prompt on a machine nobody is sitting at. `MidiAllowedForUrls` is a real name on builds that gate Web MIDI behind a permission prompt; current Chromium defines no MIDI policy at all, so on the notebook it is inert — harmless, and kept for the builds where it is not |
 | audio-capture permission | the same managed policy | `AudioCaptureAllowedUrls` auto-grants the microphone to `localhost`/`127.0.0.1`, and `AudioCaptureAllowed: false` turns every other origin into a silent refusal instead of a prompt — which is what makes it an allow-list rather than a question asked on a machine nobody is sitting at. The name is `AudioCaptureAllowedUrls` and **not** `AudioCaptureAllowedForUrls`: capture policies have no `...ForUrls` form, and a key Chromium does not define is not ignored with a warning — it is not read at all. That misspelling beside `AudioCaptureAllowed: false` is a policy that refuses the microphone to *every* origin, the notebook's own included, without saying so. `deploy/browser.test.sh` pins the name |
 | `snd_seq` | `modules-load.d` | without it Web MIDI finds *no* devices at all |
