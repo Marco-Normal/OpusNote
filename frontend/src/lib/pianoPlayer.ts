@@ -32,6 +32,7 @@
 
 import * as Tone from 'tone';
 
+import { api } from './api';
 import { fromTime, pedalValueAt, resolveOverlaps, sustained, type PedalPoint, type SynthNote } from './playback';
 import { sampleUrls } from './pianoSamples';
 
@@ -130,10 +131,6 @@ export class PianoPlayer {
    */
   private readonly sounding = new Map<number, number>();
 
-  get isPlaying(): boolean {
-    return this.playing;
-  }
-
   /** Where playback has reached, in source seconds. */
   get position(): number {
     if (!this.playing) return this.offset;
@@ -222,9 +219,7 @@ export class PianoPlayer {
     }
     this.onSample?.('loading', null);
     try {
-      const response = await fetch('/api/audio/piano');
-      if (!response.ok) throw new Error(`status ${response.status}`);
-      const status = (await response.json()) as { available: boolean; notes?: string[] };
+      const status = await api.audio.pianoStatus();
       if (!status.available) throw new Error('the samples are not installed');
       const urls = sampleUrls(status.notes ?? []);
       if (Object.keys(urls).length === 0) throw new Error('no samples listed');
@@ -354,10 +349,6 @@ export class PianoPlayer {
     this.piano = null;
     this.pianoReady = false;
   }
-
-  // ------------------------------------------------------------------
-  // Scheduling
-  // ------------------------------------------------------------------
 
   private playThrough(
     instrument: Tone.Sampler | Tone.PolySynth<Tone.FMSynth>,

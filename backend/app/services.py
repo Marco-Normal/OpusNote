@@ -14,17 +14,12 @@ from typing import Any, Mapping, Sequence
 from .adaptive import elo as elo_mod
 from .adaptive.selector import CALIBRATION_LADDER, ExercisePlan, calibration_plan, plan_exercise
 from .config import Settings, settings as default_settings
-from .db import ensure_user_skill_rows, get_or_create_user, transaction
+from .db import ensure_user_skill_rows, get_or_create_user, json_load, transaction
 from .music.expected import ExpectedNote, extract_expected, measure_meta
 from .music.generator import GeneratedExercise, generate_exercise
 from .scoring.engine import PlayedNote, accuracy_by_hand, score_performance
 from .skills_data import DEFAULT_USER_LEVELS, HANDS_FOR_CHOICE, SKILLS, SKILLS_BY_SLUG
 from . import store
-
-
-# --------------------------------------------------------------------------
-# Bootstrap
-# --------------------------------------------------------------------------
 
 
 def init_workspace(config: Settings | None = None) -> int:
@@ -35,11 +30,6 @@ def init_workspace(config: Settings | None = None) -> int:
         user_id = get_or_create_user(conn, cfg.default_username)
         ensure_user_skill_rows(conn, user_id, store.get_skills(conn))
     return user_id
-
-
-# --------------------------------------------------------------------------
-# Exercise payloads
-# --------------------------------------------------------------------------
 
 
 def _plan_to_levels(plan: ExercisePlan) -> dict[str, int]:
@@ -86,8 +76,6 @@ def _exercise_payload(exercise: dict[str, Any], *, rationale: str | None = None)
 
 
 def _rationale_for(skill: str, level: int, *, config: Settings) -> str:
-    if level is None:
-        return f"Targeting {skill}"
     return (
         f"Targeting {skill} at level {level} "
         f"(aiming for {config.target_success_rate * 100:.0f}% success)"
@@ -202,11 +190,6 @@ def calibration_exercise(conn, user_id: int, *, config: Settings | None = None) 
     )
     payload.update({"complete": False, "step": step + 1, "total": cfg.calibration_length})
     return payload
-
-
-# --------------------------------------------------------------------------
-# Scoring
-# --------------------------------------------------------------------------
 
 
 def record_performance(
@@ -364,11 +347,6 @@ def _next_hint(conn, user_id: int, target_skill: str | None, passed: bool, *, co
     return f"Next up: a similar exercise targeting {label.lower()}."
 
 
-# --------------------------------------------------------------------------
-# Stats
-# --------------------------------------------------------------------------
-
-
 def _local_day(timestamp: str) -> str:
     """The calendar day a stored timestamp belongs to, in this machine's timezone.
 
@@ -408,16 +386,13 @@ def _streak_days(timestamps: Sequence[str]) -> int:
 
 
 def _common_mistakes(rows: Sequence[Mapping[str, Any]], limit: int = 5) -> list[dict[str, Any]]:
-    from .db import json_load
-    from .store import midi_to_name
-
     missed: dict[str, int] = {}
     substitutions: dict[tuple[int, int], int] = {}
     for row in rows:
         analysis = json_load(row.get("analysis_json"), {})
         for item in analysis.get("feedback", []):
             if item.get("status") == "missed":
-                name = midi_to_name(int(item["pitch"]))
+                name = store.midi_to_name(int(item["pitch"]))
                 missed[name] = missed.get(name, 0) + 1
             elif item.get("status") == "wrong_pitch" and item.get("played_pitch") is not None:
                 key = (int(item["pitch"]), int(item["played_pitch"]))
@@ -430,7 +405,7 @@ def _common_mistakes(rows: Sequence[Mapping[str, Any]], limit: int = 5) -> list[
         mistakes.append(
             {
                 "kind": "wrong_note",
-                "label": f"{midi_to_name(expected_pitch)} played as {midi_to_name(played_pitch)}",
+                "label": f"{store.midi_to_name(expected_pitch)} played as {store.midi_to_name(played_pitch)}",
                 "count": count,
             }
         )
@@ -492,6 +467,7 @@ def build_stats(conn, user_id: int, *, config: Settings | None = None) -> dict[s
         tempo_progress.append({"date": day, "tempo_bpm": best_by_day[day]})
 
     scores = [float(row["score"] or 0) for row in history_rows]
+    calibration_step = store.calibration_progress(conn, user_id)
     summary = {
         "performances": len(history_rows),
         "average_score": round(statistics.fmean(scores), 1) if scores else 0.0,
@@ -502,8 +478,8 @@ def build_stats(conn, user_id: int, *, config: Settings | None = None) -> dict[s
         if scores
         else 0.0,
         "streak_days": _streak_days([str(row["performed_at"]) for row in history_rows]),
-        "calibration_complete": store.calibration_progress(conn, user_id) >= cfg.calibration_length,
-        "calibration_step": min(store.calibration_progress(conn, user_id), cfg.calibration_length),
+        "calibration_complete": calibration_step >= cfg.calibration_length,
+        "calibration_step": min(calibration_step, cfg.calibration_length),
         "calibration_total": cfg.calibration_length,
     }
 
@@ -522,7 +498,7 @@ def build_stats(conn, user_id: int, *, config: Settings | None = None) -> dict[s
             }
             for spec in SKILLS
         ],
-        "generated_at": datetime.utcnow().isoformat(timespec="seconds"),
+        "generated_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds"),
     }
 
 

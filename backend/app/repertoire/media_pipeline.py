@@ -209,7 +209,7 @@ def store_recording(
     source: Path,
     *,
     media_dir: Path,
-    original_name: str | None = None,
+    info: ProbeResult | None = None,
 ) -> StoredRecording:
     """Probe, convert, hash and place one uploaded file.
 
@@ -222,7 +222,8 @@ def store_recording(
             "or video format"
         )
 
-    info = probe(source)
+    if info is None:
+        info = probe(source)
     media_dir.mkdir(parents=True, exist_ok=True)
 
     # Hash the *original*, not the converted output. That makes the name identify
@@ -258,14 +259,12 @@ def store_recording(
     )
 
 
-# --------------------------------------------------------------------------
 # Scores
 #
 # A score is a *document*, not a recording, and the differences matter: there is
 # no duration and no codec to probe, no conversion worth doing, and the file's
 # own bytes are the only thing that can tell us whether it is really a PDF or
 # really MusicXML. So this path validates content and stores the file untouched.
-# --------------------------------------------------------------------------
 
 
 def _local_name(tag: str) -> str:

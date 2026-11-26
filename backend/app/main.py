@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import time
 from contextlib import asynccontextmanager
+from dataclasses import asdict
 from pathlib import Path
 from typing import Iterator
 
@@ -19,8 +20,10 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlite3 import Connection
 
-from . import backup, piano, services, store
+from . import backup, hostinfo, piano, services, store
+from .adaptive.elo import MAX_LEVEL, MIN_LEVEL, selection_level
 from .backup import router as backup_router
+from .bridge import suggest_for_piece
 from .config import settings
 from .db import CorruptJSON, init_db
 from .hostinfo import require_loopback, router as hostinfo_router
@@ -36,9 +39,9 @@ from .models import (
     SkillRatingSeries,
     SystemStatus,
 )
-from .adaptive.elo import MAX_LEVEL, MIN_LEVEL
-from .practice import jobs
+from .practice import capture_status, jobs
 from .practice.api import router as practice_router
+from .repertoire import store as repertoire_store
 from .repertoire.api import router as repertoire_router
 from .skills_data import HAND_CHOICES, SKILLS, SKILLS_BY_SLUG, SKILL_SLUGS, level_for_key
 from .workout import store as workout_store
@@ -190,8 +193,6 @@ def _level_for(rating: float) -> int:
     Not the level the rating "is": the selector aims below the rating on purpose, so
     that is the level the player actually sees in an exercise.
     """
-    from .adaptive.elo import selection_level
-
     return selection_level(rating)
 
 
@@ -260,23 +261,13 @@ def calibration_next(conn: Connection = Depends(get_conn)) -> ExerciseOut:
     payload = services.calibration_exercise(conn, current_user_id())
     if payload.get("complete"):
         return ExerciseOut(
-            exercise_id=payload["next"]["exercise_id"],
-            musicxml=payload["next"]["musicxml"],
-            tempo_bpm=payload["next"]["tempo_bpm"],
-            bars=payload["next"]["bars"],
-            key_name=payload["next"]["key_name"],
-            meter=payload["next"]["meter"],
-            levels=payload["next"]["levels"],
-            difficulty_elo=payload["next"]["difficulty_elo"],
-            target_skill=payload["next"]["target_skill"],
-            source=payload["next"]["source"],
-            expected_notes=payload["next"]["expected_notes"],
-            measures=payload["next"].get("measures", []),
-            bass_pattern=payload["next"].get("bass_pattern"),
-            rationale="Calibration complete — this is a normal adaptive exercise.",
-            complete=True,
-            step=payload["step"],
-            total=payload["total"],
+            **{
+                **payload["next"],
+                "rationale": "Calibration complete — this is a normal adaptive exercise.",
+                "complete": True,
+                "step": payload["step"],
+                "total": payload["total"],
+            }
         )
     return ExerciseOut(**payload)
 
@@ -312,9 +303,6 @@ def practice_suggestions(conn: Connection = Depends(get_conn)) -> JSONResponse:
     router has no business knowing about skill levels, and the adaptive engine has
     no business reading the library.
     """
-    from .bridge import suggest_for_piece
-    from .repertoire import store as repertoire_store
-
     active_only = [
         row
         for row in repertoire_store.list_pieces(conn)
@@ -331,21 +319,7 @@ def practice_suggestions(conn: Connection = Depends(get_conn)) -> JSONResponse:
         )
         for row in active_only
     ]
-    return JSONResponse(
-        [
-            {
-                "piece_id": item.piece_id,
-                "title": item.title,
-                "composer_name": item.composer_name,
-                "piece_key": item.piece_key,
-                "suggested_key": item.suggested_key,
-                "difficulty": item.difficulty,
-                "suggested_level": item.suggested_level,
-                "notes": item.notes,
-            }
-            for item in suggestions
-        ]
-    )
+    return JSONResponse([asdict(item) for item in suggestions])
 
 
 @app.get("/api/status/system", response_model=SystemStatus)
@@ -357,10 +331,6 @@ def system_status(conn: Connection = Depends(get_conn)) -> SystemStatus:
     belonging to one, and putting it in any of them would make that domain import the
     others.
     """
-    from . import hostinfo
-    from .practice import capture_status
-    from .repertoire import store as repertoire_store
-
     db_path = settings.db_path
     wal = Path(str(db_path) + "-wal")
     # The directory comes from here rather than from the helper's own default, so the

@@ -433,11 +433,6 @@ if __name__ == "__main__":  # pragma: no cover - exercised through main()
     raise SystemExit(main())
 
 
-# --------------------------------------------------------------------------
-# HTTP surface
-# --------------------------------------------------------------------------
-
-
 class BackupImportRequest(BaseModel):
     document: dict[str, Any] = Field(description="A document produced by /api/backup/export")
     mode: Literal["merge", "replace"] = Field(

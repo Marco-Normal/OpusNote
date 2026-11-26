@@ -181,7 +181,7 @@ export function seekPlan(
  * same instant for ever, so a segment you have barely entered is treated as one you have
  * not started — the rule a media player uses for its previous-track button.
  */
-export const SEGMENT_RESTART_MS = 3_000;
+const SEGMENT_RESTART_MS = 3_000;
 
 /**
  * Where a segment-by-segment step lands.

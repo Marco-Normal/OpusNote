@@ -100,7 +100,7 @@ function practiceBatchBody(body: PracticeBatch) {
   return {
     // Minutes east of UTC, which is what the server needs to file the
     // sitting under the player's calendar day.
-    tz_offset_minutes: -new Date().getTimezoneOffset(),
+    tz_offset_minutes: localOffsetMinutes(),
     ...body,
   };
 }
@@ -118,10 +118,14 @@ export class ApiError extends Error {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
+  const headers =
+    init?.body instanceof FormData
+      ? init.headers
+      : { 'Content-Type': 'application/json', ...init?.headers };
   try {
     response = await fetch(`${BASE}${path}`, {
-      headers: { 'Content-Type': 'application/json' },
       ...init,
+      headers,
     });
   } catch (cause) {
     throw new ApiError(
@@ -168,18 +172,7 @@ async function throwIfFailed(response: Response, path: string): Promise<void> {
  * produces a body the server cannot parse.
  */
 async function requestForm<T>(path: string, form: FormData): Promise<T> {
-  let response: Response;
-  try {
-    response = await fetch(`${BASE}${path}`, { method: 'POST', body: form });
-  } catch (cause) {
-    throw new ApiError(
-      'Cannot reach the trainer API. Is the backend running on port 8000?',
-      0,
-      cause,
-    );
-  }
-  await throwIfFailed(response, path);
-  return (await response.json()) as T;
+  return request<T>(path, { method: 'POST', body: form });
 }
 
 export const api = {
@@ -555,7 +548,7 @@ export const api = {
       request<Workout>('/workout/start', {
         method: 'POST',
         body: JSON.stringify({
-          tz_offset_minutes: -new Date().getTimezoneOffset(),
+          tz_offset_minutes: localOffsetMinutes(),
           ...body,
         }),
       }),

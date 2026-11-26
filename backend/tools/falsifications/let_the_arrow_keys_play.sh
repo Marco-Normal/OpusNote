@@ -25,12 +25,12 @@ import pathlib, sys
 
 path = pathlib.Path(sys.argv[1])
 text = path.read_text()
-needle = """        if (event.key === 'ArrowRight') seekBy(5);
-        if (event.key === 'ArrowLeft') seekBy(-5);
-"""
+needle = """  function seekBy(seconds: number): void {
+    applySeek(position + seconds * 1000, null);
+  }"""
 assert text.count(needle) == 1, "the strip's key handling is not where this script expects it"
-replacement = """        if (event.key === 'ArrowRight') jump(5);
-        if (event.key === 'ArrowLeft') jump(-5);
-"""
+replacement = """  function seekBy(seconds: number): void {
+    jump(seconds);
+  }"""
 path.write_text(text.replace(needle, replacement, 1))
 PY

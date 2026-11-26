@@ -5,6 +5,7 @@
    * 2. When no piece is selected, shows the cross-library journal feed with tag filtering and search.
    */
   import { app } from '../lib/state.svelte';
+  import { localDate } from '../lib/clock';
   import { pieceLabel } from '../lib/pieceLabel';
   import type { JournalEntry, PieceDetail } from '../lib/types';
 
@@ -61,12 +62,6 @@
     onClearTakeDraft,
   }: Props = $props();
 
-  function localDate(): string {
-    const now = new Date();
-    const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
-    return local.toISOString().slice(0, 10);
-  }
-
   function parseTags(value: string): string[] {
     return value
       .split(',')
@@ -74,7 +69,6 @@
       .filter((tag) => tag.length > 0);
   }
 
-  // Add form fields
   let journalDate = $state(localDate());
   let journalContent = $state('');
   let journalMinutes = $state<number | null>(null);
@@ -83,7 +77,6 @@
   let journalFluency = $state<number | null>(null);
   let journalForm = $state<HTMLElement | null>(null);
 
-  // Edit fields
   let editingEntry = $state<number | null>(null);
   let editDate = $state('');
   let editMinutes = $state<number | null>(null);

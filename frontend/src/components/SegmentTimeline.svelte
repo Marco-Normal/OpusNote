@@ -9,6 +9,8 @@
   import { api } from '../lib/api';
   import { app } from '../lib/state.svelte';
   import PianoRoll from './PianoRoll.svelte';
+  import PassageRow from './PassageRow.svelte';
+  import TimelineStrip from './TimelineStrip.svelte';
   import TimelineTransport from './TimelineTransport.svelte';
   import SegmentRow from './SegmentRow.svelte';
   import {
@@ -19,13 +21,13 @@
     type SynthNote,
   } from '../lib/playback';
   import { formatClock, parseClock } from '../lib/clock';
+  import { buildTimelineRows } from '../lib/timelineRows';
   import { pieceColorSlots, segmentAtMs, segmentStep, seekPlan, stripTicks } from '../lib/timelineStrip';
   import type { StripRange } from '../lib/timelineStrip';
   import { pieceLabel, uniquePieceLabels } from '../lib/pieceLabel';
   import {
     type PieceSummary,
     type PracticeKind,
-    type PracticePassage,
     type SegmentSummary,
     type SittingDetail,
   } from '../lib/types';
@@ -301,52 +303,6 @@
     void play(plan.resume.fromMs, plan.resume.toMs, plan.resume.segmentId, plan.atMs);
   }
 
-  /** Where the press landed, as a fraction of the strip. */
-  function ratioAt(event: { clientX: number; currentTarget: EventTarget | null }): number {
-    const strip = event.currentTarget as HTMLElement | null;
-    if (strip === null) return 0;
-    const bounds = strip.getBoundingClientRect();
-    if (bounds.width <= 0) return 0;
-    return Math.min(1, Math.max(0, (event.clientX - bounds.left) / bounds.width));
-  }
-
-  /**
-   * A press begins a scrub: the playhead follows the pointer, and the sound waits.
-   *
-   * Dragging is the gesture a two-hour sitting needs, because at that length a click is only
-   * good to about nine seconds. Scrubbing silently and resuming on release keeps it one
-   * gesture instead of one restart per pixel — the player would otherwise be torn down and
-   * rebuilt sixty times a second.
-   */
-  function onStripPointerDown(event: PointerEvent): void {
-    if (event.button !== 0) return;
-    const strip = event.currentTarget as HTMLElement;
-    strip.setPointerCapture(event.pointerId);
-    scrubbing = true;
-    moveTo(ratioAt(event) * total);
-  }
-
-  function onStripPointerMove(event: PointerEvent): void {
-    if (!scrubbing) return;
-    moveTo(ratioAt(event) * total);
-  }
-
-  /**
-   * The release ends the scrub, and the `click` that follows it commits the seek.
-   *
-   * Committing here rather than in the click handler would fire twice for a plain press, since
-   * a browser always follows a press and release with a click; committing *only* in `click`
-   * keeps one owner for the gesture. Pointer capture is what makes that safe for a drag: the
-   * pointer events stay on the strip wherever the pointer goes, so the click lands on the strip
-   * too, and a drag off the bottom of the strip still commits where it was released.
-   */
-  function onStripPointerUp(event: PointerEvent): void {
-    if (!scrubbing) return;
-    scrubbing = false;
-    const strip = event.currentTarget as HTMLElement;
-    if (strip.hasPointerCapture(event.pointerId)) strip.releasePointerCapture(event.pointerId);
-  }
-
   /** Put the playhead at `atMs`, and bring the segment it belongs to into view. */
   function moveTo(atMs: number): void {
     position = Math.min(total, Math.max(0, atMs));
@@ -428,10 +384,6 @@
   // the sound it is making is stopped, or a tab change would leave notes ringing.
   $effect(() => () => player.stop());
 
-  function offset(ms: number): string {
-    return formatClock(ms / 1000);
-  }
-
   /**
    * The split point, shown as a clock rather than as a number of seconds.
    *
@@ -465,65 +417,7 @@
     new Map(detail.segments.map((segment, index) => [segment.id, index])),
   );
 
-  /**
-   * The rows the timeline draws: a piece-session heading, then a passage, then its attempts.
-   *
-   * The passage is the row the player thinks in — "six goes at this bit" — and the attempts stay
-   * the `.segment` elements, because they are what every edit and every test hook acts on. A
-   * segment the server did not place in any passage is still drawn: an attempt must never vanish
-   * from the log because a derivation did not place it.
-   */
-  const rows = $derived.by(() => {
-    const found = detail.passages ?? [];
-    if (found.length === 0) {
-      return detail.segments.map((segment) => ({
-        kind: 'segment' as const,
-        key: `segment-${segment.id}`,
-        segment,
-      }));
-    }
-
-    const byId = new Map(detail.segments.map((segment) => [segment.id, segment]));
-    const drawn: Array<
-      | { kind: 'session'; key: string; session: number; piece: string | null; pieceId: number | null }
-      | { kind: 'passage'; key: string; passage: PracticePassage }
-      | { kind: 'segment'; key: string; segment: SegmentSummary }
-    > = [];
-    let session = -1;
-    for (const passage of found) {
-      if (passage.session !== session) {
-        session = passage.session;
-        drawn.push({
-          kind: 'session',
-          key: `session-${passage.session}`,
-          session: passage.session,
-          piece: nameOf(passage.piece_id, {
-            title: passage.piece_title,
-            composer_name: passage.composer_name,
-            opus: passage.piece_opus,
-          }),
-          pieceId: passage.piece_id,
-        });
-      }
-      drawn.push({
-        kind: 'passage',
-        key: `passage-${passage.attempt_ids[0] ?? passage.start_ms}`,
-        passage,
-      });
-      for (const id of passage.attempt_ids) {
-        const segment = byId.get(id);
-        if (segment) drawn.push({ kind: 'segment', key: `segment-${id}`, segment });
-      }
-    }
-
-    const placed = new Set(found.flatMap((passage) => passage.attempt_ids));
-    for (const segment of detail.segments) {
-      if (!placed.has(segment.id)) {
-        drawn.push({ kind: 'segment', key: `segment-${segment.id}`, segment });
-      }
-    }
-    return drawn;
-  });
+  const rows = $derived(buildTimelineRows(detail, nameOf));
 </script>
 
 <section class="card timeline" data-segments={detail.segments.length}>
@@ -582,114 +476,26 @@
         : 'Boundaries appear once this sitting has been quiet for five minutes.'}
     </p>
   {:else}
-    <!-- A slider, not a picture: the strip sets the position, so it takes focus and the arrow
-         keys move the playhead the way the pointer does. What the position costs is decided by
-         whether anything is playing: silent when nothing is, a seek when something is. -->
-    <div
-      class="strip"
-      role="slider"
-      tabindex="0"
-      aria-label="Sitting timeline — press or drag, or use the arrow keys, Page Up/Down and Home/End, to move to a point; the segment list below follows"
-      aria-valuemin="0"
-      aria-valuemax={Math.round(detail.duration_s)}
-      aria-valuenow={Math.round(position / 1000)}
-      data-strip
-      onpointerdown={onStripPointerDown}
-      onpointermove={onStripPointerMove}
-      onpointerup={onStripPointerUp}
-      onpointercancel={onStripPointerUp}
-      onclick={(event) => applySeek(ratioAt(event) * total, null)}
-      onkeydown={(event) => {
-        if (event.key === 'ArrowRight') seekBy(5);
-        else if (event.key === 'ArrowLeft') seekBy(-5);
-        // Five minutes a press, because the arrows are for the passage and this is for the
-        // sitting: crossing two hours at five seconds a press is not navigation.
-        else if (event.key === 'PageUp') seekBy(300);
-        else if (event.key === 'PageDown') seekBy(-300);
-        else if (event.key === 'Home') applySeek(0, null);
-        else if (event.key === 'End') applySeek(total, null);
-        else return;
-        // The slider consumes the key it handles. Without this, Home and End would also scroll
-        // the document out from under the strip the player is aiming at.
-        event.preventDefault();
+    <TimelineStrip
+      segments={detail.segments}
+      reviewMarksMs={detail.review_marks_ms ?? []}
+      durationS={detail.duration_s}
+      {total}
+      {position}
+      {playing}
+      {scrubbing}
+      {soundingRange}
+      playheadAt={playhead.at}
+      {ticks}
+      {pieceColor}
+      {segmentName}
+      onScrubChange={(active) => {
+        scrubbing = active;
       }}
-    >
-      {#each detail.segments as segment (segment.id)}
-        <span
-          class="block"
-          class:labelled={segment.piece_id !== null}
-          class:sight={segment.source === 'sight_reading'}
-          data-segment-block={segment.id}
-          style="left: {(segment.start_ms / total) * 100}%; width: {Math.max(
-            0.6,
-            ((segment.end_ms - segment.start_ms) / total) * 100,
-          )}%; --piece: {pieceColor(segment.piece_id) ?? 'var(--good)'}"
-          title="{segmentName(segment)} · {formatClock(
-            (segment.end_ms - segment.start_ms) / 1000,
-          )} · click to jump to this segment"
-        ></span>
-        {#each segment.metrics?.pedal_blur_ms ?? [] as blurMs (blurMs)}
-          <!-- A hairline per blur, so a long sitting can be searched by eye. The count
-               says whether to look; these say where.
-
-               The stored position is already **sitting-relative** — the same axis `.block`
-               and `.review` are laid out on, measured from the sitting's start — so it is
-               divided by the sitting's length directly. Adding `segment.start_ms` here
-               counted the segment's own offset a second time: a blur in the second segment
-               was drawn one segment-length too late, and could land outside its segment or
-               past the end of the strip altogether. -->
-          <span
-            class="blur"
-            data-blur={blurMs}
-            style="left: {(blurMs / total) * 100}%"
-            title="Pedal blur at {formatClock(
-              blurMs / 1000,
-            )} — new harmony arrived while the pedal was holding notes from before"
-          ></span>
-        {/each}
-      {/each}
-      {#each detail.review_marks_ms ?? [] as markMs (markMs)}
-        <!-- A flag you put there yourself, as against the blur hairline the app measured: the
-             same layer, a different fact, so it must not look like one. -->
-        <span
-          class="review"
-          data-review-mark={markMs}
-          style="left: {(markMs / total) * 100}%"
-          title="You flagged this for review at {formatClock(markMs / 1000)}"
-        ></span>
-      {/each}
-      {#if soundingRange}
-        <span
-          class="sounding"
-          style="left: {soundingRange.left}%; width: {soundingRange.width}%"
-        ></span>
-      {/if}
-      {#if playing || position > 0}
-        <!-- Positioned from the reported position rather than from the range being
-             played, so seeking into a two-hour sitting draws the line where you are.
-             Shown while playing even at zero, because that is where a sitting whose
-             first note is at the start actually begins. -->
-        <span class="playhead" data-playhead style="left: {playhead.at}%"></span>
-      {/if}
-    </div>
-
-    <!-- The scale, which the strip itself cannot show: a two-hour sitting is about nine
-         seconds per pixel, so without labels a press is guessed rather than aimed. Purely a
-         reading of the strip, so it is hidden from the accessibility tree — the slider above
-         already reports its value. -->
-    <div class="ruler" data-ruler aria-hidden="true">
-      {#each ticks as tick, index (index)}
-        <span
-          class="tick"
-          class:first={index === 0}
-          class:last={index === ticks.length - 1}
-          style="left: {(tick / total) * 100}%"
-          data-tick={tick}
-        >
-          {formatClock(tick / 1000)}
-        </span>
-      {/each}
-    </div>
+      onMoveTo={moveTo}
+      onApplySeek={applySeek}
+      onSeekBy={seekBy}
+    />
 
     <ul class="segments" bind:this={listElement}>
       {#each rows as row (row.key)}
@@ -703,53 +509,19 @@
             <strong>{row.piece ?? 'unidentified'}</strong>
           </li>
         {:else if row.kind === 'passage'}
-          {@const tint = pieceColor(row.passage.piece_id)}
-          <li class="passage" data-passage={row.passage.attempt_ids[0] ?? row.passage.start_ms}>
-            <div class="head row wrap">
-              <span class="pill mono">
-                {row.passage.attempts}
-                {row.passage.attempts === 1 ? 'attempt' : 'attempts'}
-              </span>
-              <span class="mono range">
-                {offset(row.passage.start_ms)}–{offset(row.passage.end_ms)}
-              </span>
-              {#if tint}
-                <span class="swatch" style="background: {tint}" aria-hidden="true"></span>
-              {/if}
-              <strong>{row.passage.piece_id === null
-                ? 'unidentified'
-                : nameOf(row.passage.piece_id, {
-                    title: row.passage.piece_title,
-                    composer_name: row.passage.composer_name,
-                    opus: row.passage.piece_opus,
-                  })}</strong>
-            </div>
-            <!-- Labelling the passage labels every member attempt: the label lives on the
-                 segments, so this is the route that already exists sent once per member, and
-                 there is no group to keep in step with them. -->
-            <div class="row wrap controls">
-              <select
-                aria-label="Piece for this passage"
-                disabled={busy}
-                value={row.passage.piece_id ?? ''}
-                onchange={(event) => {
-                  const value = (event.currentTarget as HTMLSelectElement).value;
-                  onlabelpassage(
-                    row.passage.attempt_ids,
-                    value === '' ? null : Number(value),
-                  );
-                }}
-              >
-                <option value="">— label all {row.passage.attempts} —</option>
-                {#each pieces as piece (piece.id)}
-                  <option value={piece.id}>{pieceNames.get(piece.id) ?? pieceLabel(piece)}</option>
-                {/each}
-              </select>
-              <span class="muted small">
-                one decision for the whole passage — it writes to each attempt below
-              </span>
-            </div>
-          </li>
+          <PassageRow
+            passage={row.passage}
+            tint={pieceColor(row.passage.piece_id)}
+            displayName={nameOf(row.passage.piece_id, {
+              title: row.passage.piece_title,
+              composer_name: row.passage.composer_name,
+              opus: row.passage.piece_opus,
+            })}
+            {pieces}
+            {pieceNames}
+            {busy}
+            onLabelPassage={onlabelpassage}
+          />
         {:else}
           {@const segment = row.segment}
           {@const index = segmentIndex.get(segment.id) ?? 0}
@@ -792,120 +564,6 @@
     font-size: 0.95rem;
   }
 
-  .strip {
-    position: relative;
-    height: 18px;
-    border-radius: 6px;
-    background: var(--track);
-    overflow: hidden;
-    /* A press is a seek, so the pointer says so; and a drag must scrub rather than scroll the
-       page out from under the strip on a touch screen. */
-    cursor: pointer;
-    touch-action: none;
-  }
-
-  .strip:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-  }
-
-  /* The clock under the strip. Kept out of the strip's own box so the blocks, the hairlines and
-     the playhead still fill it edge to edge. */
-  .ruler {
-    position: relative;
-    height: 1rem;
-    margin-top: 0.15rem;
-  }
-
-  .ruler .tick {
-    position: absolute;
-    top: 0;
-    transform: translateX(-50%);
-    font-size: 0.7rem;
-    color: var(--muted);
-    font-variant-numeric: tabular-nums;
-    white-space: nowrap;
-  }
-
-  /* The ends are pulled inside the strip rather than centred on it, so neither label is cut
-     off by the panel's edge. */
-  .ruler .tick.first {
-    transform: none;
-  }
-
-  .ruler .tick.last {
-    transform: translateX(-100%);
-  }
-
-  .block {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    background: var(--muted);
-    opacity: 0.55;
-    border-right: 1px solid var(--surface);
-  }
-
-  /* The piece's own colour, handed to the block as `--piece` by the script. Every piece in the
-     sitting owns a different slot, so the strip answers "which piece, and when" at a glance
-     rather than "labelled, somewhere". `--good` is the fallback for the impossible case of a
-     labelled block whose piece has no slot, which is what this drew before the palette. */
-  .block.labelled {
-    background: var(--piece, var(--good));
-    opacity: 0.8;
-  }
-
-  /* A blur marker is a hairline: findable on a long sitting without becoming the loudest
-     thing on the strip. It takes no pointer events, so clicking it still seeks. */
-  .strip .blur {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    width: 2px;
-    margin-left: -1px;
-    background: var(--warn);
-    opacity: 0.85;
-    pointer-events: none;
-  }
-
-  /* A review flag is a hairline with a pennant: findable on a long sitting, and unmistakably not
-     the warn-coloured blur hairline beside it. It takes no pointer events either, so clicking it
-     still seeks. */
-  .strip .review {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    width: 2px;
-    margin-left: -1px;
-    background: var(--good);
-    pointer-events: none;
-  }
-
-  .strip .review::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 2px;
-    width: 7px;
-    height: 7px;
-    background: var(--good);
-    clip-path: polygon(0 0, 100% 50%, 0 100%);
-  }
-
-  .playhead {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    width: 2px;
-    background: var(--ink);
-    box-shadow: 0 0 0 1px var(--surface);
-  }
-
-  .block.sight {
-    background: var(--accent);
-    opacity: 0.85;
-  }
-
   .segments {
     list-style: none;
     margin: 0;
@@ -935,29 +593,6 @@
     margin-top: 0.5rem;
     padding-bottom: 0.2rem;
     border-bottom: 1px solid var(--line);
-  }
-
-  /* The row the player thinks in. The attempts it groups are the .segment cards beneath. */
-  .passage {
-    display: flex;
-    flex-direction: column;
-    gap: 0.35rem;
-    padding: 0.45rem 0.55rem;
-    border: 1px solid var(--accent);
-    border-radius: 8px;
-    background: var(--surface);
-  }
-
-  .range {
-    font-size: 0.84rem;
-  }
-
-  .controls {
-    gap: 0.45rem;
-  }
-
-  select {
-    max-width: 16rem;
   }
 
   .small {

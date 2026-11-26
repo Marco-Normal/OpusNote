@@ -30,9 +30,9 @@
   }
 
   const subScores = $derived([
-    { label: 'Pitch', value: result.pitch_accuracy, weight: result.counts.expected ? 0.5 : 0 },
-    { label: 'Rhythm', value: result.rhythm_accuracy, weight: 0.3 },
-    { label: 'Continuity', value: result.continuity_accuracy, weight: 0.2 },
+    { label: 'Pitch', value: result.pitch_accuracy },
+    { label: 'Rhythm', value: result.rhythm_accuracy },
+    { label: 'Continuity', value: result.continuity_accuracy },
   ]);
 </script>
 

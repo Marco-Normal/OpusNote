@@ -9,6 +9,7 @@
    * scores should not download a dozen documents to draw a list.
    */
   import { onDestroy } from 'svelte';
+  import { api } from '../lib/api';
   import { ScoreRenderer } from '../lib/score';
   import { theme } from '../lib/theme.svelte';
   import type { Recording } from '../lib/types';
@@ -20,7 +21,7 @@
   let { score }: Props = $props();
 
   const isPdf = $derived(score.codec === 'pdf');
-  const url = $derived(`/api/repertoire/media/${score.id}/file`);
+  const url = $derived(api.repertoire.mediaUrl(score.id));
   const label = $derived(score.title ?? score.original_name ?? score.file_name);
 
   let container = $state<HTMLDivElement | undefined>(undefined);

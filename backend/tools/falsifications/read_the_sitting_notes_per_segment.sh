@@ -15,14 +15,14 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-TARGET="$ROOT/backend/app/practice/store.py"
+TARGET="$ROOT/backend/app/practice/autotag.py"
 
 python3 - "$TARGET" <<'PY'
 import pathlib, sys
 
 path = pathlib.Path(sys.argv[1])
 text = path.read_text()
-needle = "            notes=notes_by_segment.get(segment_id, []),\n"
-assert needle in text, "the handed-down notes are not where this script expects them"
+needle = "            notes=seg_notes,\n"
+assert text.count(needle) == 1, "the handed-down notes are not where this script expects them"
 path.write_text(text.replace(needle, "", 1))
 PY

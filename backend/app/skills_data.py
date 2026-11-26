@@ -16,6 +16,32 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from fractions import Fraction
+from typing import Any, Mapping, TypedDict
+
+
+class HandPositionParams(TypedDict, total=False):
+    span: int
+    shifts: int
+    arpeggio: bool
+    broken_octaves: bool
+    scale_runs: bool
+
+
+class TextureParams(TypedDict, total=False):
+    hands: tuple[str, ...]
+    prefer: tuple[str, ...]
+    rh_chord_every: int
+    inner_voice: bool
+    three_voices: bool
+
+
+class ArticulationParams(TypedDict, total=False):
+    staccato_prob: float
+    tenuto_prob: float
+    accent_strong_beats: bool
+    slur_len: int
+    dynamic: tuple[str, ...]
+    hairpins: bool
 
 LEVELS: tuple[int, ...] = tuple(range(1, 11))
 
@@ -192,10 +218,6 @@ SKILLS_BY_SLUG: dict[str, SkillSpec] = {spec.slug: spec for spec in SKILLS}
 SKILL_SLUGS: tuple[str, ...] = tuple(spec.slug for spec in SKILLS)
 
 
-# --------------------------------------------------------------------------
-# Generator parameter tables
-# --------------------------------------------------------------------------
-
 #: Keys available at each key-signature level. Minor keys are spelled with a
 #: lowercase tonic so music21 picks the minor mode.
 KEY_SIGNATURE_LEVELS: dict[int, tuple[str, ...]] = {
@@ -258,7 +280,7 @@ TEMPO_LEVELS: dict[int, tuple[int, int]] = {
 #: Melodic range (in scale degrees away from the tonic) per hand-position level.
 #: ``(low_degree, high_degree, shifts)`` where shifts is the number of distinct
 #: positions the hand visits.
-HAND_POSITION_LEVELS: dict[int, dict[str, object]] = {
+HAND_POSITION_LEVELS: dict[int, HandPositionParams] = {
     1: {"span": 5, "shifts": 1},  # five-finger, no movement
     2: {"span": 6, "shifts": 1},  # a sixth under the hand
     3: {"span": 7, "shifts": 1},  # a full octave
@@ -304,7 +326,7 @@ HAND_LABELS: dict[str, str] = {
 #:                       identical
 #: ``rh_chord_every``  - add a chord tone in the RH every N melody notes (0 = never)
 #: ``inner_voice`` / ``three_voices`` - polyphonic modes inside the melody hand
-TEXTURE_LEVELS: dict[int, dict[str, object]] = {
+TEXTURE_LEVELS: dict[int, TextureParams] = {
     1: {"hands": ("RH",)},
     2: {"hands": ("LH",)},
     3: {
@@ -448,7 +470,7 @@ ACCIDENTAL_LEVELS: dict[int, dict[str, float]] = {
 }
 
 #: Articulation behaviour per level.
-ARTICULATION_LEVELS: dict[int, dict[str, object]] = {
+ARTICULATION_LEVELS: dict[int, ArticulationParams] = {
     1: {},
     2: {"staccato_prob": 0.5},
     3: {"accent_strong_beats": True},
@@ -479,7 +501,7 @@ DEFAULT_USER_LEVELS: dict[str, int] = {
 
 def validate_taxonomy() -> None:
     """Fail loudly at import time if a parameter table is incomplete."""
-    tables: dict[str, dict[int, object]] = {
+    tables: dict[str, Mapping[int, Any]] = {
         "KEY_SIGNATURE_LEVELS": KEY_SIGNATURE_LEVELS,
         "METER_LEVELS": METER_LEVELS,
         "TEMPO_LEVELS": TEMPO_LEVELS,

@@ -180,12 +180,13 @@
     app.midi.stopRecording();
     beatInfo = null;
     phase = 'submitting';
-    attempt = played.map((note) => ({ ...note }));
+    const notes = played.map((note) => ({ ...note }));
+    attempt = notes;
 
     try {
       const scored = await api.score({
         exercise_id: exercise.exercise_id,
-        notes: played.map((note) => ({ ...note })),
+        notes,
         mode: 'performance',
         latency_ms: app.latencyMs,
         calibration: true,

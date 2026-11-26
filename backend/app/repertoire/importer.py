@@ -15,6 +15,7 @@ import shutil
 import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, Mapping
 
 from .opus import normalise_opus
 
@@ -75,7 +76,7 @@ def _upsert(
     *,
     table: str,
     legacy_id: int,
-    columns: dict[str, object],
+    columns: Mapping[str, Any],
 ) -> int:
     """Insert or update one legacy row, matched on `legacy_id`.
 
@@ -192,6 +193,23 @@ def _upsert_journal(
         report.journal_entries += 1
 
 
+def _copy_media_file(
+    source_media_dir: Path,
+    target_media_dir: Path,
+    name: str,
+    report: ImportReport,
+) -> None:
+    origin = source_media_dir / name
+    if not origin.exists():
+        report.media_missing += 1
+        report.notes.append(f"recording file missing: {name}")
+        return
+    destination = target_media_dir / name
+    if not destination.exists():
+        shutil.copy2(origin, destination)
+    report.media_copied += 1
+
+
 def _upsert_media(
     target: sqlite3.Connection,
     source: sqlite3.Connection,
@@ -218,16 +236,8 @@ def _upsert_media(
         name = str(record["file_name"])
         if name not in seen_files:
             seen_files.add(name)
-            origin = source_media_dir / name
             if copy_media:
-                if origin.exists():
-                    destination = target_media_dir / name
-                    if not destination.exists():
-                        shutil.copy2(origin, destination)
-                    report.media_copied += 1
-                else:
-                    report.media_missing += 1
-                    report.notes.append(f"recording file missing: {name}")
+                _copy_media_file(source_media_dir, target_media_dir, name, report)
 
         _upsert(
             target,

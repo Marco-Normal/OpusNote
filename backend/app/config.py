@@ -57,7 +57,6 @@ def _env_bool(name: str, default: bool) -> bool:
 
 @dataclass(frozen=True)
 class Settings:
-    # --- persistence -----------------------------------------------------
     db_path: Path = _env_path("SRT_DB_PATH", _default_data_dir() / "piano.db")
     #: Where recordings live. Content-hashed file names, matching the Rust app,
     #: so an imported recording keeps working without renaming anything.
@@ -71,14 +70,12 @@ class Settings:
         "SRT_LEGACY_DB", Path.home() / ".local" / "share" / "piano-progress" / "piano.db"
     )
 
-    # --- app -------------------------------------------------------------
     cors_origins: tuple[str, ...] = ("http://localhost:5173", "http://127.0.0.1:5173")
     frontend_dist: Path = _env_path("SRT_FRONTEND_DIST", REPO_DIR / "frontend" / "dist")
 
     # --- MVP single-user profile ----------------------------------------
     default_username: str = os.environ.get("SRT_USER", "local")
 
-    # --- adaptive engine --------------------------------------------------
     # Exercise Elo = elo_base + elo_per_level * (mean_level - 1)
     #
     # `elo_base` is the Elo of the *easiest* material, and the ladder has to start
@@ -104,7 +101,6 @@ class Settings:
     # Exercises are aimed *below* the rating so this stays in the 70-85% zone.
     target_success_rate: float = _env_float("SRT_TARGET_SUCCESS_RATE", 0.78)
 
-    # --- scoring ----------------------------------------------------------
     match_window_s: float = _env_float("SRT_MATCH_WINDOW_S", 0.200)
     # Continuity is about *timing drift*, which by definition can exceed the
     # tight pitch window, so hesitation detection uses a much wider tolerance.
@@ -117,14 +113,12 @@ class Settings:
     weight_continuity: float = _env_float("SRT_WEIGHT_CONTINUITY", 0.20)
     pass_threshold: float = _env_float("SRT_PASS_THRESHOLD", 80.0)
 
-    # --- exercise shape ---------------------------------------------------
     exercise_bars: int = _env_int("SRT_EXERCISE_BARS", 4)
     calibration_length: int = _env_int("SRT_CALIBRATION_LENGTH", 8)
     #: Exercises in a workout. Was `SRT_SESSION_LENGTH`, which was dead config
     #: while only single exercises existed; a workout is what it always meant.
     workout_length: int = _env_int("SRT_WORKOUT_LENGTH", 8)
 
-    # --- practice logging -------------------------------------------------
     #: Silence that closes a sitting. Long on purpose: walking to the piano,
     #: thinking, and playing again is one sitting.
     sitting_gap_s: int = _env_int("SRT_SITTING_GAP_S", 300)
@@ -173,7 +167,6 @@ class Settings:
     #: as an infinitely fast tempo.
     attack_window_ms: int = _env_int("SRT_ATTACK_WINDOW_MS", 50)
 
-    # --- recognising a segment from your own labelled practice --------------
     #: At or above this, a match is written as an inferred label. The default is
     #: measured, not inherited — see `backend/tools/measure_autotag.py` and the
     #: numbers in `docs/ECOSYSTEM.md` §10.
@@ -199,7 +192,6 @@ class Settings:
     #: the report rather than quietly sampling.
     autotag_quality_limit: int = _env_int("SRT_AUTOTAG_QUALITY_LIMIT", 400)
 
-    # --- reading a sitting as a sequence ------------------------------------
     #: How often a sitting changes piece between two adjacent segments. Measured on
     #: the owner's labelled library: 42 changes in 412 boundaries, 10.2%. It is the
     #: price the sequence charges for moving, so the value decides whether the model
@@ -221,7 +213,6 @@ class Settings:
         "SRT_AUTOTAG_PROMPT_PROBABILITY", 0.5
     )
 
-    # --- serving over the LAN ---------------------------------------------
     #: Largest recording accepted by the upload endpoint, in megabytes. A cap that
     #: only trusts the client's declared size is not a cap, so it is enforced while
     #: writing rather than only on the way in.

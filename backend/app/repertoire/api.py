@@ -192,13 +192,11 @@ def run_import(body: ImportRequest) -> ImportReport:
     )
 
 
-# --------------------------------------------------------------------------
 # Editing
 #
 # Every mutation runs inside `db.transaction`, so a request either lands whole or
 # not at all. None of these delete a recording *file*: deleting a piece removes
 # its catalogue rows and leaves the audio on disk.
-# --------------------------------------------------------------------------
 
 
 def _validate_composer(conn: sqlite3.Connection, composer_id: int | None) -> None:
@@ -263,9 +261,7 @@ def delete_piece(piece_id: int) -> DeleteResult:
 def create_composer(body: ComposerCreate) -> ComposerOut:
     with db.transaction(settings.db_path) as conn:
         composer_id = store.create_composer(conn, body.model_dump())
-        row = next(
-            (item for item in store.list_composers(conn) if item["id"] == composer_id), None
-        )
+        row = store.get_composer(conn, composer_id)
     assert row is not None
     return ComposerOut(**row)
 
@@ -278,9 +274,7 @@ def update_composer(composer_id: int, body: ComposerUpdate) -> ComposerOut:
     with db.transaction(settings.db_path) as conn:
         if store.update_composer(conn, composer_id, changes) == 0:
             raise HTTPException(status_code=404, detail=f"no composer {composer_id}")
-        row = next(
-            (item for item in store.list_composers(conn) if item["id"] == composer_id), None
-        )
+        row = store.get_composer(conn, composer_id)
     assert row is not None
     return ComposerOut(**row)
 
@@ -351,11 +345,6 @@ def delete_journal_entry(entry_id: int) -> DeleteResult:
     return DeleteResult(deleted=True)
 
 
-# --------------------------------------------------------------------------
-# Focus passages
-# --------------------------------------------------------------------------
-
-
 @router.post("/pieces/{piece_id}/passages", response_model=PassageOut, status_code=201)
 def create_passage(piece_id: int, body: PassageCreate) -> PassageOut:
     """Add a passage to a piece.
@@ -411,11 +400,6 @@ def delete_passage(passage_id: int) -> DeleteResult:
     if deleted == 0:
         raise HTTPException(status_code=404, detail=f"no passage {passage_id}")
     return DeleteResult(deleted=True)
-
-
-# --------------------------------------------------------------------------
-# Recording import
-# --------------------------------------------------------------------------
 
 
 def _stage_upload(file: UploadFile, *, scratch: Path, what: str) -> Path:
@@ -507,9 +491,7 @@ def upload_recording(
         # Transcode and store outside of any database transaction so ffmpeg
         # never holds SQLite locks during heavy CPU/disk transcoding.
         try:
-            stored = store_recording(
-                staged, media_dir=media_dir, original_name=file.filename
-            )
+            stored = store_recording(staged, media_dir=media_dir, info=staged_info)
         except MediaError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -540,11 +522,6 @@ def upload_recording(
 
     assert row is not None
     return MediaOut(**row)
-
-
-# --------------------------------------------------------------------------
-# Captured takes
-# --------------------------------------------------------------------------
 
 
 def _catch_up_takes() -> int:
@@ -606,7 +583,7 @@ def upload_take(
     with tempfile.TemporaryDirectory() as scratch:
         staged = _stage_upload(file, scratch=Path(scratch), what="take")
         try:
-            stored = store_recording(staged, media_dir=media_dir, original_name=file.filename)
+            stored = store_recording(staged, media_dir=media_dir)
         except MediaError as exc:
             # The same 422 the recording upload gives: an unnamed blob and a file that is not
             # audio are the caller's problem, not a server fault. `store_recording` probes as
@@ -653,11 +630,6 @@ def upload_take(
 
     assert row is not None
     return MediaOut(**row)
-
-
-# --------------------------------------------------------------------------
-# Scores
-# --------------------------------------------------------------------------
 
 
 @router.post("/pieces/{piece_id}/scores", response_model=MediaOut, status_code=201)

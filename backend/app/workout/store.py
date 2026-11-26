@@ -6,6 +6,7 @@ import sqlite3
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import TypedDict
 
 from .. import db
 from ..config import settings
@@ -17,8 +18,11 @@ class NotFound(Exception):
     """The requested workout does not exist."""
 
 
-class InvalidRequest(Exception):
-    """Well-formed, but not applicable to the current state."""
+class WorkoutStats(TypedDict):
+    workouts_completed: int
+    workouts_this_week: int
+    last_workout_date: str | None
+    window_days: int
 
 
 def _row_out(conn: sqlite3.Connection, row: sqlite3.Row, now_ms: int) -> WorkoutOut:
@@ -180,7 +184,7 @@ def attach_performance(conn: sqlite3.Connection, performance_id: int) -> int | N
     return int(row["id"])
 
 
-def stats(conn: sqlite3.Connection, days: int = 7) -> dict[str, object]:
+def stats(conn: sqlite3.Connection, days: int = 7) -> WorkoutStats:
     today = datetime.now().date()
     since = (today - timedelta(days=days - 1)).isoformat()
     row = conn.execute(

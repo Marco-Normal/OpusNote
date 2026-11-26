@@ -14,9 +14,6 @@ from .events import Event
 from .harmony import CHORD_STEPS, nearest_chord_tone
 from .tonality import Tonality
 
-#: Steps that make up the arpeggio figures.
-CHORD_STEPS_LOCAL = CHORD_STEPS
-
 
 def generate_degrees(
     events: Sequence[Event],
@@ -78,7 +75,7 @@ def generate_degrees(
             current += run_direction
             run_remaining -= 1
         elif arpeggio and rng.random() < 0.6:
-            current = rng.choice(tuple(offset + step for step in CHORD_STEPS_LOCAL))
+            current = rng.choice(tuple(offset + step for step in CHORD_STEPS))
         elif broken_octaves and degrees and rng.random() < 0.5:
             current = degrees[-1] + 7 * rng.choice((-1, 1))
         else:
@@ -94,8 +91,6 @@ def generate_degrees(
             if proposed < lo or proposed > hi:
                 direction = -direction
                 proposed = current + delta * direction
-                if proposed < lo or proposed > hi:
-                    proposed = max(lo, min(hi, proposed))
             last_direction = direction
             current = proposed
             if scale_runs and rng.random() < 0.12:

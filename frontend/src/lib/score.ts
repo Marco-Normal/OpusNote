@@ -404,10 +404,6 @@ export class ScoreRenderer {
     }
   }
 
-  get noteCount(): number {
-    return this.rendered.length;
-  }
-
   get matchedCount(): number {
     return this.rendered.filter((entry) => entry.expectedIndex !== null).length;
   }

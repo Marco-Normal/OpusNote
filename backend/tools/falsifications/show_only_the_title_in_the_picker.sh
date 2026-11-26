@@ -13,25 +13,25 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-TARGET="$ROOT/frontend/src/components/SegmentTimeline.svelte"
+TARGET="$ROOT/frontend/src/components/SegmentRow.svelte"
 
 python3 - "$TARGET" <<'PY'
 import pathlib, sys
 
 path = pathlib.Path(sys.argv[1])
 text = path.read_text()
-needle = """              <option value="">— unidentified —</option>
-              {#each pieces as piece (piece.id)}
-                <option value={piece.id}>{pieceNames.get(piece.id) ?? pieceLabel(piece)}</option>
-              {/each}
+needle = """      <option value="">— unidentified —</option>
+      {#each pieces as piece (piece.id)}
+        <option value={piece.id}>{pieceNames.get(piece.id) ?? pieceLabel(piece)}</option>
+      {/each}
 """
 assert text.count(needle) == 1, "the segment picker is not where this script expects it"
-replacement = """              <option value="">— unidentified —</option>
-              {#each pieces as piece (piece.id)}
-                <option value={piece.id}>{piece.title}{piece.composer_name
-                    ? ` · ${piece.composer_name}`
-                    : ''}</option>
-              {/each}
+replacement = """      <option value="">— unidentified —</option>
+      {#each pieces as piece (piece.id)}
+        <option value={piece.id}>{piece.title}{piece.composer_name
+            ? ` · ${piece.composer_name}`
+            : ''}</option>
+      {/each}
 """
 path.write_text(text.replace(needle, replacement, 1))
 PY

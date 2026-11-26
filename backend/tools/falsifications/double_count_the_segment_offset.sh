@@ -20,7 +20,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-TARGET="$ROOT/frontend/src/components/SegmentTimeline.svelte"
+TARGET="$ROOT/frontend/src/components/TimelineStrip.svelte"
 
 python3 - "$TARGET" <<'PY'
 import pathlib, sys

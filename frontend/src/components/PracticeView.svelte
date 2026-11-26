@@ -377,10 +377,6 @@
       finishing = false;
     }
   }
-
-  function stopEarly() {
-    void finish();
-  }
 </script>
 
 <section class="card panel practice-chrome" data-phase={phase}>
@@ -514,7 +510,7 @@
 
       <div class="row">
         {#if phase === 'playing' || phase === 'countin'}
-          <button onclick={stopEarly}>Stop &amp; score</button>
+          <button onclick={() => void finish()}>Stop &amp; score</button>
         {:else}
           <button class="primary" onclick={() => void start()} disabled={phase === 'loading' || phase === 'submitting'}>
             {phase === 'result' ? 'Play again' : 'Start'}

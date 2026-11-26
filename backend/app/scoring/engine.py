@@ -131,17 +131,18 @@ def score_performance(
     seconds_per_beat = 60.0 / float(tempo_bpm) if tempo_bpm > 0 else 0.5
 
     # Compensate for the measured round-trip latency of the player's setup.
+    latency_s = latency_ms / 1000.0
     adjusted = [
-        PlayedNote(
-            pitch=note.pitch,
-            onset=note.onset - latency_ms / 1000.0,
-            duration=note.duration,
-            velocity=note.velocity,
-            channel=note.channel,
-        )
-        for note in played
+        note
+        for raw in played
+        if (note := PlayedNote(
+            pitch=raw.pitch,
+            onset=raw.onset - latency_s,
+            duration=raw.duration,
+            velocity=raw.velocity,
+            channel=raw.channel,
+        )).onset > -window_s * 2
     ]
-    adjusted = [note for note in adjusted if note.onset > -window_s * 2]
 
     matched_expected, matched_played = _match(expected, adjusted, window_s)
     true_positives = len(matched_expected)
@@ -151,7 +152,6 @@ def score_performance(
     denominator = precision + recall
     pitch_accuracy = (2 * precision * recall / denominator) if denominator > 0 else 0.0
 
-    # ---- note-level feedback --------------------------------------------
     feedback: list[NoteFeedback] = []
     unmatched_played = [index for index in range(len(adjusted)) if index not in matched_played]
     for expected_index, expected_note in enumerate(expected):
@@ -211,7 +211,6 @@ def score_performance(
                 )
             )
 
-    # ---- rhythm ----------------------------------------------------------
     onset_errors = [delta for _, delta in matched_expected.values()]
     error_beats = [delta / seconds_per_beat for delta in onset_errors]
     mean_abs_beats = statistics.fmean(abs(value) for value in error_beats) if error_beats else 0.0
@@ -224,7 +223,6 @@ def score_performance(
     else:
         rhythm_accuracy = 0.0
 
-    # ---- continuity ------------------------------------------------------
     # Collapse notes into simultaneous events (one onset per hand+onset group)
     # so chords do not register as a burst of consecutive gaps. Matching here
     # uses the wide window: a hesitation is *late*, not *wrong*.

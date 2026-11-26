@@ -25,18 +25,10 @@ import pathlib, sys
 path = pathlib.Path(sys.argv[1])
 text = path.read_text()
 needle = """      await refreshTotals();
-    } catch (cause) {
-      error = cause instanceof Error ? cause.message : String(cause);
-    } finally {
-      busy = false;
-    }"""
+      // Derived by diffing the rows rather than by remembering which button was pressed, so the"""
 assert needle in text, "the edit body is not where this script expects it"
 replacement = """      await refreshTotals();
       await load();
-    } catch (cause) {
-      error = cause instanceof Error ? cause.message : String(cause);
-    } finally {
-      busy = false;
-    }"""
+      // Derived by diffing the rows rather than by remembering which button was pressed, so the"""
 path.write_text(text.replace(needle, replacement, 1))
 PY

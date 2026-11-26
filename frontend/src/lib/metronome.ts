@@ -57,10 +57,6 @@ export class Metronome {
   private downbeatSeconds = 0;
   private scheduledSeconds = 0;
 
-  get audioReady(): boolean {
-    return Tone.getContext().state === 'running';
-  }
-
   async unlock(): Promise<void> {
     await Tone.start();
     if (!this.synth) {

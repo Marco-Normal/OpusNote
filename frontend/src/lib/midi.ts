@@ -263,16 +263,6 @@ export class MidiInput {
     return all.find((output) => !looksSilent(output)) ?? all[0];
   }
 
-  /** Pin playback to one output, or `null` for the automatic choice. */
-  pinOutput(id: string | null): void {
-    this.chosenOutputId = id;
-    this.emitOutputs();
-  }
-
-  get outputId(): string | null {
-    return this.chooseOutput()?.id ?? null;
-  }
-
   get hasOutput(): boolean {
     return this.outputs.size > 0;
   }
@@ -324,15 +314,6 @@ export class MidiInput {
       pinnedFingerprint: this.pinnedFingerprint,
       activity: this.activity,
     });
-  }
-
-  /** Read-only alias, for callers that only need "which device is in use". */
-  get selectedId(): string | null {
-    return this.activeId;
-  }
-
-  get pinnedDeviceId(): string | null {
-    return this.pinnedId;
   }
 
   /**
@@ -467,10 +448,6 @@ export class MidiInput {
     this.activeNotes.clear();
   }
 
-  get isRecording(): boolean {
-    return this.recording;
-  }
-
   /**
    * MIDI timestamps and `performance.now()` share the same time origin in
    * Chromium, but some drivers report 0 or a wildly different clock. Fall back
@@ -508,7 +485,6 @@ export class MidiInput {
     const second = data.length > 2 ? data[2] : 0;
 
     if (status === 0x90 && second > 0) {
-      // Note on
       const nowMs = this.eventTimeMs(event);
       // The same key from a different port inside the window is one physical key
       // reported twice. Dropping it here protects both consumers: the exercise

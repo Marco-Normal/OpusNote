@@ -6,7 +6,7 @@ and the API layer stays about HTTP.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping, Sequence
 
 from .config import Settings, settings as default_settings
@@ -32,11 +32,6 @@ def midi_to_name(pitch: int) -> str:
     return f"{_NOTE_NAMES[pitch % 12]}{pitch // 12 - 1}"
 
 
-# --------------------------------------------------------------------------
-# Reference data
-# --------------------------------------------------------------------------
-
-
 def seed_skills(conn) -> None:
     for order, spec in enumerate(SKILLS):
         conn.execute(
@@ -55,11 +50,6 @@ def seed_skills(conn) -> None:
 def get_skills(conn) -> list[dict[str, Any]]:
     rows = conn.execute("SELECT id, slug, name, description, sort_order FROM skills ORDER BY sort_order").fetchall()
     return [dict(row) for row in rows]
-
-
-# --------------------------------------------------------------------------
-# Profile
-# --------------------------------------------------------------------------
 
 
 def get_ratings(conn, user_id: int) -> dict[str, float]:
@@ -228,11 +218,6 @@ def recent_target_skills(conn, user_id: int, limit: int = 3) -> list[str]:
         if slug and slug not in seen:
             seen.append(slug)
     return seen
-
-
-# --------------------------------------------------------------------------
-# Exercises
-# --------------------------------------------------------------------------
 
 
 def insert_exercise(
@@ -410,11 +395,6 @@ def get_exercise(conn, exercise_id: int) -> dict[str, Any] | None:
     return exercise
 
 
-# --------------------------------------------------------------------------
-# Performances
-# --------------------------------------------------------------------------
-
-
 def insert_performance(
     conn,
     *,
@@ -482,7 +462,7 @@ def performance_detail(conn, performance_id: int, user_id: int) -> dict[str, Any
         SELECT p.id, p.exercise_id, p.score, p.pitch_accuracy, p.rhythm_accuracy,
                p.continuity_accuracy, p.mode, p.tempo_bpm, p.latency_ms,
                p.performed_at, p.played_notes_json, p.analysis_json,
-               e.key_name, e.meter, e.difficulty_elo, e.musicxml_blob,
+               e.key_name, e.meter, e.difficulty_elo,
                e.params_json, e.expected_json,
                json_extract(e.params_json, '$.target_skill') AS target_skill
         FROM performances p
@@ -503,12 +483,11 @@ def performance_detail(conn, performance_id: int, user_id: int) -> dict[str, Any
     data["weights"] = analysis.get("weights", {})
     data["expected_notes"] = json_load(data.pop("expected_json"), [])
     data["measures"] = json_load(data.pop("params_json"), {})
-    data.pop("musicxml_blob", None)
     return data
 
 
 def performances_since(conn, user_id: int, days: int = 120) -> list[dict[str, Any]]:
-    cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat(sep=" ")
+    cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)).isoformat(sep=" ")
     rows = conn.execute(
         """
         SELECT p.id, p.score, p.pitch_accuracy, p.rhythm_accuracy,

@@ -54,19 +54,20 @@ def features(notes: Sequence[Note]) -> collections.Counter:
     """The multiset of local content features. Tempo-invariant by construction."""
     events = _events(notes)
     out: collections.Counter = collections.Counter()
-    for index, (_, pitches) in enumerate(events):
+    for _, pitches in events:
         for pitch in pitches:
             out[("n", _hand(pitch), pitch % PITCH_CLASSES)] += 1
         if len(pitches) > 1:
             out[("c", frozenset(pitch % PITCH_CLASSES for pitch in pitches))] += 1
-        if index + 1 < len(events):
-            for first in pitches:
-                for second in events[index + 1][1]:
-                    if _hand(first) != _hand(second):
-                        continue
-                    step = max(-12, min(12, second - first))
-                    out[("m", _hand(first), first % PITCH_CLASSES,
-                         second % PITCH_CLASSES, step)] += 1
+    for (_, first_pitches), (_, second_pitches) in zip(events, events[1:]):
+        for first in first_pitches:
+            hand = _hand(first)
+            first_pc = first % PITCH_CLASSES
+            for second in second_pitches:
+                if hand != _hand(second):
+                    continue
+                step = max(-12, min(12, second - first))
+                out[("m", hand, first_pc, second % PITCH_CLASSES, step)] += 1
     return out
 
 

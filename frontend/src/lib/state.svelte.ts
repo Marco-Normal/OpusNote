@@ -91,8 +91,6 @@ class AppState {
   midiActiveId = $state<string | null>(null);
   /** True when a choice is in force, however it was remembered. */
   midiPinned = $state(false);
-  /** True when access was granted without an explicit click. */
-  midiAutoConnected = $state(false);
   /** True when the browser refused MIDI until the user asks for it. */
   midiNeedsGesture = $state(false);
 
@@ -168,13 +166,6 @@ class AppState {
   }
 
   /**
-   * Passive capture of everything played, for the practice log.
-   *
-   * Deliberately app-level rather than owned by the Log section: MIDI only
-   * reaches one page, and the log is supposed to record practice without anyone
-   * remembering to open a tab. Capture is therefore on whenever the device is.
-   */
-  /**
    * Playing back, through whichever instrument is chosen.
    *
    * A single shared player, wired to the MIDI output here: the choice of instrument
@@ -219,6 +210,13 @@ class AppState {
     }
   }
 
+  /**
+   * Passive capture of everything played, for the practice log.
+   *
+   * Deliberately app-level rather than owned by the Log section: MIDI only
+   * reaches one page, and the log is supposed to record practice without anyone
+   * remembering to open a tab. Capture is therefore on whenever the device is.
+   */
   readonly capture = new CaptureClient(
     this.midi,
     () => (this.workout?.running ? 'sight_reading' : 'web_midi'),
@@ -855,7 +853,6 @@ class AppState {
     if (!this.midiSupported || this.midiConnected) return;
     this.midi.restorePin(readPinnedFingerprint());
     await this.connectMidi({ quiet: true });
-    this.midiAutoConnected = this.midiConnected;
     this.startReconnectLoop();
   }
 

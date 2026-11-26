@@ -239,7 +239,7 @@ class _AlsaCaptureRunner:
             self._close_all_ports()
             try:
                 self._probe.close_port()
-            except Exception:
+            except (self._rtmidi.RtMidiError, OSError):
                 pass
             self._session.close()
 
@@ -265,7 +265,7 @@ class _AlsaCaptureRunner:
             midi_in.set_callback(self._make_callback(name))
             try:
                 midi_in.open_port(idx)
-            except Exception as exc:
+            except (self._rtmidi.RtMidiError, OSError) as exc:
                 logger.warning("Failed to open ALSA port %r: %s", name, exc)
                 continue
             self._ports[name] = midi_in
@@ -290,7 +290,7 @@ class _AlsaCaptureRunner:
         try:
             midi_in.cancel_callback()
             midi_in.close_port()
-        except Exception:
+        except (self._rtmidi.RtMidiError, OSError):
             pass
         logger.info("Closed ALSA MIDI port: %s", name)
 
@@ -316,7 +316,7 @@ class _AlsaCaptureRunner:
                 timeout=5.0,
             )
             resp.raise_for_status()
-        except Exception as exc:
+        except requests.RequestException as exc:
             logger.warning(
                 "Failed to post %d notes / %d pedals to %s (keeping queued): %s",
                 len(notes),
@@ -339,7 +339,7 @@ class _AlsaCaptureRunner:
                 timeout=5.0,
             )
             resp.raise_for_status()
-        except Exception as exc:
+        except requests.RequestException as exc:
             logger.debug("Capture heartbeat failed: %s", exc)
 
     def _close_sitting(self) -> None:
@@ -349,7 +349,7 @@ class _AlsaCaptureRunner:
                 timeout=5.0,
             )
             resp.raise_for_status()
-        except Exception as exc:
+        except requests.RequestException as exc:
             logger.debug("Failed to close open sitting on disconnect: %s", exc)
 
 

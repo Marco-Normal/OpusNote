@@ -28,21 +28,19 @@ path = pathlib.Path(sys.argv[1])
 text = path.read_text()
 
 # The onset has to be kept to compute the inter-onset interval at all.
-loop = "    for index, (_, pitches) in enumerate(events):"
+loop = "    for (_, first_pitches), (_, second_pitches) in zip(events, events[1:]):"
 assert loop in text, "the event loop is not where this script expects it"
-text = text.replace(loop, "    for index, (onset, pitches) in enumerate(events):", 1)
+text = text.replace(loop, "    for (first_onset, first_pitches), (second_onset, second_pitches) in zip(events, events[1:]):", 1)
 
-key = """                    step = max(-12, min(12, second - first))
-                    out[("m", _hand(first), first % PITCH_CLASSES,
-                         second % PITCH_CLASSES, step)] += 1"""
+key = """                step = max(-12, min(12, second - first))
+                out[("m", hand, first_pc, second % PITCH_CLASSES, step)] += 1"""
 assert key in text, "the melodic key is not where this script expects it"
-text = text.replace(key, """                    step = max(-12, min(12, second - first))
-                    # The bin is coarse on purpose: even a coarse one breaks the claim,
-                    # which is why the measured variant was dropped rather than tuned.
-                    ioi = events[index + 1][0] - onset
-                    bucket = 0 if ioi < 150 else (1 if ioi < 300 else 2)
-                    out[("m", _hand(first), first % PITCH_CLASSES,
-                         second % PITCH_CLASSES, step, bucket)] += 1""", 1)
+text = text.replace(key, """                step = max(-12, min(12, second - first))
+                # The bin is coarse on purpose: even a coarse one breaks the claim,
+                # which is why the measured variant was dropped rather than tuned.
+                ioi = second_onset - first_onset
+                bucket = 0 if ioi < 150 else (1 if ioi < 300 else 2)
+                out[("m", hand, first_pc, second % PITCH_CLASSES, step, bucket)] += 1""", 1)
 
 path.write_text(text)
 PY

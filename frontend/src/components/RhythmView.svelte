@@ -168,7 +168,6 @@
   const pitchClassItems = $derived(
     (portrait?.keyboard.pitch_classes ?? [])
       .filter((row) => row.notes > 0)
-      .slice()
       .sort((a, b) => b.notes - a.notes)
       .map((row) => ({
         label: NOTE_NAMES[row.pitch_class],

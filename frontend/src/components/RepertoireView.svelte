@@ -14,7 +14,7 @@
     Recording,
     SegmentSummary,
   } from '../lib/types';
-  import { formatDuration } from '../lib/clock';
+  import { formatDuration, localDate } from '../lib/clock';
   import { formatMinutes, formatSize } from '../lib/types';
   import type { PiecePracticeDetail } from '../lib/types';
   import LineChart from './LineChart.svelte';
@@ -245,7 +245,6 @@
     }
   }
 
-  /** "coda, slow" → ["coda", "slow"]. The server trims and de-duplicates too. */
   /** The widest window the read allows, so "least time invested" means what it says. */
   async function loadPracticeByPiece(): Promise<void> {
     practiceByPiece = await api.practice.piecePractice(3650).catch(() => []);
@@ -270,12 +269,6 @@
     journalSitting = null;
     journalTake = recordingId;
     journalSectionRef?.scrollFormIntoView();
-  }
-
-  function localDate(): string {
-    const now = new Date();
-    const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
-    return local.toISOString().slice(0, 10);
   }
 
   async function addPassage(body: {

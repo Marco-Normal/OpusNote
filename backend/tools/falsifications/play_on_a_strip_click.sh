@@ -17,14 +17,20 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-TARGET="$ROOT/frontend/src/components/SegmentTimeline.svelte"
+TARGET="$ROOT/frontend/src/components/TimelineStrip.svelte"
 
 python3 - "$TARGET" <<'PY'
 import pathlib, sys
 
 path = pathlib.Path(sys.argv[1])
 text = path.read_text()
-needle = "    moveTo(ratio * total);\n"
+needle = "  onclick={(event) => onApplySeek(ratioAt(event) * total, null)}\n"
 assert text.count(needle) == 1, "the strip click is not where this script expects it"
-path.write_text(text.replace(needle, "    void play(0, total, null, ratio * total);\n", 1))
+path.write_text(
+    text.replace(
+        needle,
+        "  onclick={(event) => onApplySeek(ratioAt(event) * total, { fromMs: 0, toMs: total, segmentId: null })}\n",
+        1,
+    )
+)
 PY

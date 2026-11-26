@@ -125,7 +125,7 @@ export function within(
 /** Shift everything so playback starts at once, without an initial silence. */
 export function sounding(notes: readonly SynthNote[]): SynthNote[] {
   if (notes.length === 0) return [];
-  const first = Math.min(...notes.map((note) => note.onset));
+  const first = firstOnset(notes);
   if (first <= 0) return [...notes];
   return notes.map((note) => ({ ...note, onset: note.onset - first }));
 }
@@ -265,13 +265,7 @@ export function sustained(
 
   // The position itself, which is what the partial band is read from. Kept as one
   // entry per distinct instant: a pedal sends a dozen values on its way down.
-  const positions: { at: number; value: number }[] = [];
-  for (const pedal of ordered) {
-    const at = pedal.onset_ms / 1000;
-    const last = positions[positions.length - 1];
-    if (last !== undefined && last.at === at) positions[positions.length - 1] = { at, value: pedal.value };
-    else positions.push({ at, value: pedal.value });
-  }
+  const positions = pedalPositions(ordered);
 
   return notes.map((note) => {
     const release = note.onset + note.duration;
@@ -327,18 +321,23 @@ function rawPedalAt(positions: readonly { at: number; value: number }[], at: num
  * performance that starts under a held pedal begins with the damper down, and the
  * first phrase rings dry.
  */
-export function pedalValueAt(
-  pedals: readonly PedalPoint[],
-  seconds: number,
-): number {
+function pedalPositions(orderedPedals: readonly PedalPoint[]): { at: number; value: number }[] {
   const positions: { at: number; value: number }[] = [];
-  for (const pedal of [...pedals].sort((a, b) => a.onset_ms - b.onset_ms)) {
+  for (const pedal of orderedPedals) {
     const at = pedal.onset_ms / 1000;
     const last = positions[positions.length - 1];
     if (last !== undefined && last.at === at) positions[positions.length - 1] = { at, value: pedal.value };
     else positions.push({ at, value: pedal.value });
   }
-  return rawPedalAt(positions, seconds);
+  return positions;
+}
+
+export function pedalValueAt(
+  pedals: readonly PedalPoint[],
+  seconds: number,
+): number {
+  const ordered = [...pedals].sort((a, b) => a.onset_ms - b.onset_ms);
+  return rawPedalAt(pedalPositions(ordered), seconds);
 }
 
 /**

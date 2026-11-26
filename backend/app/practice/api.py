@@ -55,7 +55,6 @@ def get_conn():
         conn.close()
 
 
-# --- error mapping ---------------------------------------------------------
 # Only these three domain exceptions are mapped. Mapping bare ValueError or
 # LookupError would turn an unrelated bug into a 422 and hide it.
 
@@ -69,9 +68,6 @@ def _handle(call, *args, **kwargs):
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except store.ConfirmationRequired as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-
-# --- capture ---------------------------------------------------------------
 
 
 @router.post("/events", response_model=IngestResult)
@@ -142,9 +138,6 @@ def status(conn: sqlite3.Connection = Depends(get_conn)) -> PracticeStatus:
     )
 
 
-# --- sittings --------------------------------------------------------------
-
-
 @router.post("/capture-status", response_model=CaptureReport)
 def report_capture(body: CaptureReportIn) -> CaptureReport:
     """A client saying "I am capturing". Cheap on purpose: it is sent every 15 s."""
@@ -199,9 +192,6 @@ def resegment(
     return _handle(store.resegment_sitting, sitting_id, confirm=body.confirm)
 
 
-# --- segments --------------------------------------------------------------
-
-
 @router.patch("/segments/{segment_id}", response_model=list[SegmentSummary])
 def assign_segment(segment_id: int, body: AssignRequest) -> list[SegmentSummary]:
     return _handle(store.assign_piece, segment_id, body.piece_id)
@@ -227,9 +217,6 @@ def split(segment_id: int, body: SplitRequest) -> list[SegmentSummary]:
 @router.post("/segments/{segment_id}/merge", response_model=list[SegmentSummary])
 def merge(segment_id: int, body: MergeRequest) -> list[SegmentSummary]:
     return _handle(store.merge_segments, segment_id, body.other_id)
-
-
-# --- identifying a segment from your own labelled practice -----------------
 
 
 class IdentifyRequest(BaseModel):
@@ -265,9 +252,6 @@ def run_autotag() -> AutotagReport:
 def identification_quality() -> IdentificationQuality:
     """How well the matcher does on this library, by hiding one label at a time."""
     return _handle(store.identification_quality)
-
-
-# --- analytics -------------------------------------------------------------
 
 
 @router.get("/analytics/summary", response_model=AnalyticsSummary)

@@ -125,10 +125,6 @@ export class CaptureClient {
     this.midi.onPedalMonitor((pedal) => this.receivePedal(pedal));
   }
 
-  get isEnabled(): boolean {
-    return this.enabled;
-  }
-
   start(): void {
     if (this.enabled) return;
     this.enabled = true;
@@ -188,16 +184,7 @@ export class CaptureClient {
     }
 
     // Keep the batch in order, and keep the newest notes if the cap is hit.
-    this.buffer.sort((a, b) => a.epoch_ms - b.epoch_ms || a.pitch - b.pitch);
-    if (this.buffer.length > MAX_BUFFERED) {
-      this.buffer = this.buffer.slice(-MAX_BUFFERED);
-    }
-    this.pedals.sort((a, b) => a.epoch_ms - b.epoch_ms);
-    if (this.pedals.length > MAX_BUFFERED) {
-      this.pedals = this.pedals.slice(-MAX_BUFFERED);
-    }
-    this.marks.sort((a, b) => a.epoch_ms - b.epoch_ms);
-    if (this.marks.length > MAX_BUFFERED) this.marks = this.marks.slice(-MAX_BUFFERED);
+    this.sortAndCapBuffers();
 
     // Copied, not aliased. Notes and pedal moves keep arriving while the request is
     // in flight and are pushed onto these same arrays, so slicing by the *aliased*
@@ -215,12 +202,7 @@ export class CaptureClient {
         marks,
       });
       // Only now are they gone: a failure below leaves the whole batch queued.
-      this.buffer = this.buffer.slice(batch.length);
-      this.pedals = this.pedals.slice(pedals.length);
-      this.marks = this.marks.slice(marks.length);
-      this.sent += batch.length;
-      this.lastSentAt = batch[batch.length - 1]?.epoch_ms ?? this.lastSentAt;
-      this.lastError = null;
+      this.commitBatch(batch, pedals, marks);
     } catch (cause) {
       this.failed += 1;
       this.lastError = cause instanceof Error ? cause.message : String(cause);
@@ -258,12 +240,7 @@ export class CaptureClient {
 
     if (this.buffer.length === 0 && this.pedals.length === 0 && this.marks.length === 0) return;
 
-    this.buffer.sort((a, b) => a.epoch_ms - b.epoch_ms || a.pitch - b.pitch);
-    if (this.buffer.length > MAX_BUFFERED) this.buffer = this.buffer.slice(-MAX_BUFFERED);
-    this.pedals.sort((a, b) => a.epoch_ms - b.epoch_ms);
-    if (this.pedals.length > MAX_BUFFERED) this.pedals = this.pedals.slice(-MAX_BUFFERED);
-    this.marks.sort((a, b) => a.epoch_ms - b.epoch_ms);
-    if (this.marks.length > MAX_BUFFERED) this.marks = this.marks.slice(-MAX_BUFFERED);
+    this.sortAndCapBuffers();
 
     const batch = this.buffer.slice();
     const pedals = this.pedals.slice();
@@ -273,13 +250,34 @@ export class CaptureClient {
     // out not to be going away — `pagehide` also fires for a bfcache entry — loses nothing.
     if (!api.practice.ingestOnHide({ source: this.source(), events: batch, pedals, marks })) return;
 
+    this.commitBatch(batch, pedals, marks);
+    this.publish();
+  }
+
+  private sortAndCapBuffers(): void {
+    this.buffer.sort((a, b) => a.epoch_ms - b.epoch_ms || a.pitch - b.pitch);
+    if (this.buffer.length > MAX_BUFFERED) {
+      this.buffer = this.buffer.slice(-MAX_BUFFERED);
+    }
+    this.pedals.sort((a, b) => a.epoch_ms - b.epoch_ms);
+    if (this.pedals.length > MAX_BUFFERED) {
+      this.pedals = this.pedals.slice(-MAX_BUFFERED);
+    }
+    this.marks.sort((a, b) => a.epoch_ms - b.epoch_ms);
+    if (this.marks.length > MAX_BUFFERED) this.marks = this.marks.slice(-MAX_BUFFERED);
+  }
+
+  private commitBatch(
+    batch: readonly CapturedNote[],
+    pedals: readonly CapturedPedal[],
+    marks: readonly CapturedMark[],
+  ): void {
     this.buffer = this.buffer.slice(batch.length);
     this.pedals = this.pedals.slice(pedals.length);
     this.marks = this.marks.slice(marks.length);
     this.sent += batch.length;
     this.lastSentAt = batch[batch.length - 1]?.epoch_ms ?? this.lastSentAt;
     this.lastError = null;
-    this.publish();
   }
 
   private receiveOn(note: MonitorNote): void {

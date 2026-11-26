@@ -15,20 +15,25 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-TARGET="$ROOT/backend/app/practice/store.py"
+MAT="$ROOT/backend/app/practice/materialise.py"
+AUTO="$ROOT/backend/app/practice/autotag.py"
 
-python3 - "$TARGET" <<'PY'
+python3 - "$MAT" "$AUTO" <<'PY'
 import pathlib, sys
 
-path = pathlib.Path(sys.argv[1])
-text = path.read_text()
-needles = [
+mat = pathlib.Path(sys.argv[1])
+mat_text = mat.read_text()
+for needle in [
     '                piece_opus=data["piece_opus"],\n',
-    '                opus=label.get("opus"),\n',
     '                piece_opus=label.get("opus"),\n',
-]
-for needle in needles:
-    assert text.count(needle) == 1, f"{needle.strip()} is not where this script expects it"
-    text = text.replace(needle, "", 1)
-path.write_text(text)
+]:
+    assert mat_text.count(needle) == 1, f"{needle.strip()} is not where this script expects it"
+    mat_text = mat_text.replace(needle, "", 1)
+mat.write_text(mat_text)
+
+auto = pathlib.Path(sys.argv[2])
+auto_text = auto.read_text()
+needle = '                opus=label.get("opus"),\n'
+assert auto_text.count(needle) == 1, f"{needle.strip()} is not where this script expects it"
+auto.write_text(auto_text.replace(needle, "", 1))
 PY

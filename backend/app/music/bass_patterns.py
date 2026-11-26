@@ -20,7 +20,15 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass, field
 from fractions import Fraction
-from typing import Callable, Iterable, Sequence
+from typing import Callable, Iterable, Sequence, TypedDict
+
+
+class PatternCatalogueEntry(TypedDict):
+    id: str
+    name: str
+    description: str
+    min_texture: int
+    meters: list[str] | None
 
 from .events import Event, events_from_cells, fill_bar, fit_to_length, pulse_durations
 from .harmony import FIFTH, ROOT, THIRD, nearest_chord_tone
@@ -64,7 +72,6 @@ class BassContext:
     #: The previous bar's pitches, for the contour ``countermelody`` moves against.
     melody_pitches: Sequence[int] = field(default_factory=tuple)
 
-    # --- pitch helpers -------------------------------------------------
     def degree(self, offset: int, *, octave_shift: int = 0) -> int:
         return self.tonality.midi_for_degree(
             self.base_midi + 12 * octave_shift, self.chord_degree + offset
@@ -75,7 +82,6 @@ class BassContext:
             self.base_midi + 12 * octave_shift, self.chord_degree, size
         )
 
-    # --- rhythm helpers ------------------------------------------------
     def beat_pulses(self) -> list[Fraction]:
         return pulse_durations(self.bar_length, self.beat_unit)
 
@@ -89,11 +95,6 @@ class BassContext:
 
 def _single(ctx: BassContext, duration: Fraction, pitch: int) -> Event:
     return Event(duration=duration, pitches=(pitch,))
-
-
-# --------------------------------------------------------------------------
-# Sustained accompaniments
-# --------------------------------------------------------------------------
 
 
 def sustained_root(ctx: BassContext) -> list[Event]:
@@ -113,11 +114,6 @@ def block_chords(ctx: BassContext) -> list[Event]:
     """Root-position triads on every beat — hymnal style."""
     chord = ctx.triad()
     return [Event(duration=duration, pitches=chord) for duration in ctx.beat_pulses()]
-
-
-# --------------------------------------------------------------------------
-# Pulse basses
-# --------------------------------------------------------------------------
 
 
 def root_fifth_pulse(ctx: BassContext) -> list[Event]:
@@ -181,11 +177,6 @@ def tenths(ctx: BassContext) -> list[Event]:
     return events
 
 
-# --------------------------------------------------------------------------
-# Broken chords and arpeggios
-# --------------------------------------------------------------------------
-
-
 def _figure(ctx: BassContext, steps: Sequence[int]) -> list[Event]:
     pitches = [ctx.degree(step) for step in steps]
     # Shift the whole figure by octaves rather than clamping individual notes:
@@ -222,11 +213,6 @@ def arpeggio_wide(ctx: BassContext) -> list[Event]:
 def broken_octaves(ctx: BassContext) -> list[Event]:
     """Alternating low root and its octave."""
     return _figure(ctx, (ROOT, OCTAVE))
-
-
-# --------------------------------------------------------------------------
-# Independent lines
-# --------------------------------------------------------------------------
 
 
 def walking_bass(ctx: BassContext) -> list[Event]:
@@ -367,11 +353,6 @@ def mirror_melody(ctx: BassContext) -> list[Event]:
         pitch = chord if index % 2 == 0 else ctx.degree(FIFTH)
         events.append(_single(ctx, event.duration, pitch))
     return fit_to_length(events, ctx.bar_length)
-
-
-# --------------------------------------------------------------------------
-# Registry and selection
-# --------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -557,7 +538,7 @@ def select_pattern(
     return rng.choice(candidates)
 
 
-def pattern_catalogue() -> list[dict[str, object]]:
+def pattern_catalogue() -> list[PatternCatalogueEntry]:
     """The library as plain data, for the API and for documentation."""
     return [
         {

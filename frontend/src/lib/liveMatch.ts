@@ -86,13 +86,4 @@ export class LiveMatcher {
   get isComplete(): boolean {
     return this.claimed.size >= this.expected.length;
   }
-
-  /** Mark every note the player never reached as missed. */
-  finalSnapshot(): Map<number, NoteStatus> {
-    const result = new Map(this.statuses);
-    for (const note of this.expected) {
-      if (!result.has(note.index)) result.set(note.index, 'missed');
-    }
-    return result;
-  }
 }

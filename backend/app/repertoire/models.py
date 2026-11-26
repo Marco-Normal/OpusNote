@@ -156,10 +156,6 @@ class RepertoireStatus(BaseModel):
     media_dir: str
 
 
-# --------------------------------------------------------------------------
-# Editing
-# --------------------------------------------------------------------------
-
 #: Dates are stored as text and compared with SQL date functions, so the format
 #: is part of the contract rather than a display choice.
 DATE_PATTERN = r"^\d{4}-\d{2}-\d{2}$"

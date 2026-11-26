@@ -64,21 +64,20 @@ def events_from_cells(cells: Sequence[Cell], beat_unit: Fraction) -> list[Event]
     position = Fraction(0)
     pending: list[Event] = []
     group_counter = 0
-    for cell in cells:
-        for duration, kind in cell:
-            event = Event(duration=duration, rest=(kind == "r"))
-            event.beat = float(position / beat_unit) + 1.0
-            if duration == Fraction(1, 3):
-                pending.append(event)
-                if len(pending) == 3:
-                    group_counter += 1
-                    for member in pending:
-                        member.tuplet_group = group_counter
-                    pending = []
-            else:
-                pending = []
-            events.append(event)
-            position += duration
+    for duration, kind in (item for cell in cells for item in cell):
+        event = Event(duration=duration, rest=(kind == "r"))
+        event.beat = float(position / beat_unit) + 1.0
+        events.append(event)
+        position += duration
+        if duration != Fraction(1, 3):
+            pending.clear()
+            continue
+        pending.append(event)
+        if len(pending) == 3:
+            group_counter += 1
+            for member in pending:
+                member.tuplet_group = group_counter
+            pending.clear()
     return events
 
 

@@ -65,7 +65,7 @@ export interface PedalFire {
  * mid-phrase would stop the take being recorded. The sostenuto is the middle pedal almost
  * nobody touches, so it is the only one bound to anything — and the only one read.
  */
-export const HANDSFREE_CONTROLLERS: readonly number[] = [66];
+const HANDSFREE_CONTROLLERS: readonly number[] = [66];
 
 /** A press held at least this long is a hold rather than a tap. */
 export const HOLD_MS = 500;

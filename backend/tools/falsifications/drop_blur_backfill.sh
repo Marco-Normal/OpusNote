@@ -13,7 +13,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-TARGET="$ROOT/backend/app/practice/store.py"
+TARGET="$ROOT/backend/app/practice/materialise.py"
 
 python3 - "$TARGET" <<'PY'
 import pathlib, sys

@@ -66,7 +66,7 @@ export const DEFAULT_BINDINGS: PedalBindings = {
   hold: 'toggle_audio_capture',
 };
 
-export const PEDAL_BINDINGS_STORAGE_KEY = 'srt.pedal.bindings';
+const PEDAL_BINDINGS_STORAGE_KEY = 'srt.pedal.bindings';
 
 /** Assign an action to a gesture, or clear one with null. One action, one gesture. */
 export function assignBinding(

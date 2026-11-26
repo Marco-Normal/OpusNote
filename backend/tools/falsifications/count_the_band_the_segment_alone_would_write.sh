@@ -12,7 +12,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-TARGET="$ROOT/backend/app/practice/store.py"
+TARGET="$ROOT/backend/app/practice/autotag.py"
 
 python3 - "$TARGET" <<'PY'
 import pathlib, sys
@@ -21,9 +21,9 @@ path = pathlib.Path(sys.argv[1])
 text = path.read_text()
 needle = """                band = sitting_sequence.band(
                     belief,
-                    auto_probability=settings.autotag_auto_probability,
-                    prompt_probability=settings.autotag_prompt_probability,
-                    min_notes=settings.autotag_min_notes,
+                    auto_probability=_store.settings.autotag_auto_probability,
+                    prompt_probability=_store.settings.autotag_prompt_probability,
+                    min_notes=_store.settings.autotag_min_notes,
                 )"""
 assert text.count(needle) == 1, "the report's band is not where this script expects it"
 path.write_text(text.replace(needle, "                band = ranked[segment_id].band", 1))

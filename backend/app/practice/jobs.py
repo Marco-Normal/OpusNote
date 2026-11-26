@@ -75,8 +75,6 @@ class JobRunner:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
-    # --- what a caller asks --------------------------------------------------------------
-
     def submit(self, sitting_id: int) -> bool:
         """Queue one sitting. False when it is already queued or running."""
         with self._lock:
@@ -106,8 +104,6 @@ class JobRunner:
                 last_error=self._last_error,
                 last_finished_ms=self._last_finished_ms,
             )
-
-    # --- the work ------------------------------------------------------------------------
 
     def work(self, sitting_id: int) -> None:
         """Prepare one sitting. The only place a job's meaning is defined."""
@@ -153,8 +149,6 @@ class JobRunner:
             self.work(sitting_id)
             done += 1
         return done
-
-    # --- the thread ----------------------------------------------------------------------
 
     def start(self) -> None:
         """Start the thread and take the first look. Idempotent."""

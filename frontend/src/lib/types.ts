@@ -283,10 +283,6 @@ export function midiToName(pitch: number): string {
   return `${NOTE_NAMES[((pitch % 12) + 12) % 12]}${Math.floor(pitch / 12) - 1}`;
 }
 
-// --------------------------------------------------------------------------
-// Repertoire — the piece library, its journal, and its recordings
-// --------------------------------------------------------------------------
-
 export interface JournalEntry {
   id: number;
   piece_id: number;
@@ -436,10 +432,6 @@ export interface PracticeSuggestion {
   suggested_level: number | null;
   notes: string[];
 }
-
-// --------------------------------------------------------------------------
-// Practice logging
-// --------------------------------------------------------------------------
 
 /** What produced a batch of notes. A closed set, matching the server's. */
 export type PracticeSource = 'web_midi' | 'sight_reading';
@@ -985,10 +977,6 @@ export interface PracticeImportReport {
   segments: number;
   note: string | null;
 }
-
-// --------------------------------------------------------------------------
-// Workouts
-// --------------------------------------------------------------------------
 
 export interface Workout {
   id: number;

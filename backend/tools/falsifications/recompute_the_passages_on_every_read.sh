@@ -14,14 +14,14 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-TARGET="$ROOT/backend/app/practice/store.py"
+TARGET="$ROOT/backend/app/practice/materialise.py"
 
 python3 - "$TARGET" <<'PY'
 import pathlib, sys
 
 path = pathlib.Path(sys.argv[1])
 text = path.read_text()
-needle = """    cached = _PASSAGES.get(_database_name(conn), {}).get(sitting_id)
+needle = """    cached = _PASSAGES.get(database, {}).get(sitting_id)
     if cached is not None and cached[0] == key:
         return cached[1], cached[2]
 

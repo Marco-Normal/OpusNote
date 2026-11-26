@@ -27,10 +27,10 @@ path = pathlib.Path(sys.argv[1])
 text = path.read_text()
 needle = """    const tick = () => {
       if (document.visibilityState === 'hidden') return;
-      void refreshQuietly();
+      void poll.fire();
     };"""
 unconditional = """    const tick = () => {
-      void refreshQuietly();
+      void poll.fire();
     };"""
 assert needle in text, "the visibility guard is not where this script expects it"
 path.write_text(text.replace(needle, unconditional, 1))

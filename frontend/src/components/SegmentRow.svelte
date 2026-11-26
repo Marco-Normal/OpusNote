@@ -62,10 +62,6 @@
     seg.piece_id === null && seg.candidates.length > 0 && seg.candidates[0].band === 'suggest';
   const percent = (value: number): string => `${Math.round(value * 100)}%`;
 
-  function offset(ms: number): string {
-    return formatClock(ms / 1000);
-  }
-
   function balanceLabel(metrics: SegmentMetrics): string | null {
     const low = metrics.mean_velocity_low;
     const high = metrics.mean_velocity_high;
@@ -93,7 +89,7 @@
   data-segment={segment.id}
 >
   <div class="head row wrap">
-    <span class="mono range">{offset(segment.start_ms)}–{offset(segment.end_ms)}</span>
+    <span class="mono range">{formatClock(segment.start_ms / 1000)}–{formatClock(segment.end_ms / 1000)}</span>
     <span class="muted small">{segment.note_count} notes</span>
     {#if segment.metrics?.median_tempo}
       <span class="pill mono">{Math.round(segment.metrics.median_tempo)} BPM</span>

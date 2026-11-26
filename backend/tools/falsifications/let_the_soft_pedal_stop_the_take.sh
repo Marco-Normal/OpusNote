@@ -25,9 +25,9 @@ import pathlib, sys
 
 path = pathlib.Path(sys.argv[1])
 text = path.read_text()
-needle = "export const HANDSFREE_CONTROLLERS: readonly number[] = [66];"
+needle = "const HANDSFREE_CONTROLLERS: readonly number[] = [66];"
 assert needle in text, "the binding is not where this script expects it"
 path.write_text(
-    text.replace(needle, "export const HANDSFREE_CONTROLLERS: readonly number[] = [66, 67];", 1)
+    text.replace(needle, "const HANDSFREE_CONTROLLERS: readonly number[] = [66, 67];", 1)
 )
 PY

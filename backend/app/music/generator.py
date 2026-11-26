@@ -39,6 +39,7 @@ from music21 import (
     tempo as m21tempo,
 )
 from music21.duration import Tuplet
+from music21.exceptions21 import Music21Exception
 
 from .bass_patterns import BassContext, select_pattern
 from .events import Event, events_from_cells, fill_bar
@@ -81,11 +82,6 @@ class GeneratedExercise:
     def meter_label(self) -> str:
         unique = list(dict.fromkeys(self.meters))
         return unique[0] if len(unique) == 1 else "mixed"
-
-
-# --------------------------------------------------------------------------
-# Structure
-# --------------------------------------------------------------------------
 
 
 def _bar_plan(
@@ -223,7 +219,7 @@ def _apply_articulation(
             for left, right in zip(group, group[1:]):
                 try:
                     container.insert(0, spanner.Slur(left, right))
-                except Exception:  # pragma: no cover - spanner edge cases
+                except Music21Exception:  # pragma: no cover - spanner edge cases
                     pass
             index += length
 
@@ -232,7 +228,7 @@ def _apply_articulation(
         mark = dynamics.Dynamic(rng.choice(tuple(dynamic_names)))
         try:
             container.insert(created[0][0].offset, mark)
-        except Exception:  # pragma: no cover
+        except Music21Exception:  # pragma: no cover
             pass
 
     if params.get("hairpins") and len(elements) >= 3:
@@ -241,7 +237,7 @@ def _apply_articulation(
         try:
             wedge.addSpannedElements(elements[0], elements[-1])
             container.insert(elements[0].offset, wedge)
-        except Exception:  # pragma: no cover - best effort
+        except Music21Exception:  # pragma: no cover - best effort
             pass
 
 
@@ -250,9 +246,7 @@ def _inner_voice_events(
     beat_unit: Fraction,
     tonality: Tonality,
     base_midi: int,
-    span: int,
     chord_degree: int,
-    rng: random.Random,
 ) -> list[Event]:
     """A slow chord-tone line used as a second voice in the melody hand."""
     unit = beat_unit * 2 if beat_unit * 2 <= bar_length else bar_length
@@ -268,11 +262,6 @@ def _inner_voice_events(
         remaining -= step
         index += 1
     return events
-
-
-# --------------------------------------------------------------------------
-# Entry point
-# --------------------------------------------------------------------------
 
 
 def generate_exercise(
@@ -346,12 +335,10 @@ def generate_exercise(
     melody_hand: Hand = "LH" if texture["hands"] == ("LH",) else "RH"
     melody_base = tonality.base_midi(melody_hand)
 
-    # ---- harmony ---------------------------------------------------------
     # Complexity follows `texture`: the progression is part of the
     # accompaniment's character, and richer textures unlock richer harmony.
     chords = bar_chords(bars, texture_level, rng)
 
-    # ---- rhythm ----------------------------------------------------------
     bar_events: list[list[Event]] = [
         events_from_cells(fill_bar(lengths[index], rhythm_cells, rng), beat_units[index])
         for index in range(bars)
@@ -359,7 +346,6 @@ def generate_exercise(
     flat_events: list[Event] = [event for bar in bar_events for event in bar]
     bar_of_event: list[int] = [index for index, bar in enumerate(bar_events) for _ in bar]
 
-    # ---- melody ----------------------------------------------------------
     degrees = generate_degrees(
         flat_events,
         span=span,
@@ -400,7 +386,6 @@ def generate_exercise(
                 continue
         event.pitches = (midi,)
 
-    # ---- melody part -----------------------------------------------------
     melody_part = _make_part(
         "P1",
         "I1",
@@ -436,9 +421,7 @@ def generate_exercise(
                     beat_units[index],
                     tonality,
                     melody_base,
-                    span,
                     chords[index],
-                    rng,
                 ),
                 tonality,
             )
@@ -452,7 +435,6 @@ def generate_exercise(
             _apply_articulation(created, level=resolved["articulation"], rng=rng, container=measure)
         melody_part.append(measure)
 
-    # ---- accompaniment ---------------------------------------------------
     bass_part: stream.Part | None = None
     bass_pattern_id: str | None = None
     if two_hands:
@@ -504,7 +486,6 @@ def generate_exercise(
             offset = sum(len(bar) for bar in bar_events[: index + 1])
             melody_so_far = [midi for midi in melody_midis[:offset] if midi is not None]
 
-    # ---- score -----------------------------------------------------------
     score = stream.Score()
     score.metadata = m21metadata.Metadata()
     score.metadata.title = f"Sight-reading exercise in {key_name}"

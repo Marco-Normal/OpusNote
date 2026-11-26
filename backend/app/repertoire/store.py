@@ -76,6 +76,7 @@ def list_pieces(
     *,
     status: str | None = None,
     composer_id: int | None = None,
+    piece_id: int | None = None,
     search: str | None = None,
 ) -> list[dict[str, Any]]:
     """Pieces with the aggregates the library view needs, in one query.
@@ -91,6 +92,9 @@ def list_pieces(
     if composer_id is not None:
         clauses.append("p.composer_id = ?")
         params.append(composer_id)
+    if piece_id is not None:
+        clauses.append("p.id = ?")
+        params.append(piece_id)
     if search:
         # Journal prose is searchable too. "Where did I write about the coda?" is a
         # question the library should be able to answer, and the text is already
@@ -130,8 +134,8 @@ def list_pieces(
 
 
 def get_piece(conn: sqlite3.Connection, piece_id: int) -> dict[str, Any] | None:
-    rows = list_pieces(conn)
-    piece = next((row for row in rows if row["id"] == piece_id), None)
+    rows = list_pieces(conn, piece_id=piece_id)
+    piece = rows[0] if rows else None
     if piece is None:
         return None
     piece["journal"] = [
@@ -254,6 +258,20 @@ def list_composers(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     ]
 
 
+def get_composer(conn: sqlite3.Connection, composer_id: int) -> dict[str, Any] | None:
+    row = conn.execute(
+        """
+        SELECT c.id, c.name, c.notes,
+               (SELECT COUNT(*) FROM pieces p WHERE p.composer_id = c.id)
+                   AS piece_count
+        FROM composers c
+        WHERE c.id = ?
+        """,
+        (composer_id,),
+    ).fetchone()
+    return dict(row) if row is not None else None
+
+
 def counts(conn: sqlite3.Connection) -> dict[str, int]:
     def count(table: str) -> int:
         # Table names come from this module, never from input.
@@ -329,13 +347,11 @@ def find_media_by_file_name(conn: sqlite3.Connection, file_name: str) -> dict[st
     return dict(row) if row is not None else None
 
 
-# --------------------------------------------------------------------------
 # Editing
 #
 # Every write returns the affected row count so a caller cannot mistake "no such
 # row" for "updated nothing", and none of them commit: the request handler owns
 # the transaction.
-# --------------------------------------------------------------------------
 
 
 def composer_exists(conn: sqlite3.Connection, composer_id: int) -> bool:
